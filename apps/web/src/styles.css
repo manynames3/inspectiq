@@ -397,6 +397,128 @@ textarea {
   overflow: auto;
 }
 
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.summary-card {
+  min-height: 82px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.summary-card svg {
+  color: var(--teal);
+}
+
+.summary-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.summary-card strong {
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.review-table table {
+  min-width: 1000px;
+}
+
+.review-table th,
+.review-table td {
+  padding: 12px;
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.table-actions .accept-button,
+.table-actions .reject-button {
+  min-height: 32px;
+  padding-inline: 10px;
+}
+
+.reviewed-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.queue-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border-radius: 999px;
+  padding: 0 9px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.status-accepted,
+.severity-minor {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.status-rejected,
+.severity-severe {
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.severity-moderate {
+  background: #fff7ed;
+  color: #b45309;
+}
+
+.json-snippet {
+  max-width: 190px;
+  max-height: 96px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.empty-state {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--muted);
+  text-align: center;
+  padding: 32px;
+}
+
+.empty-state strong {
+  color: var(--text);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -1257,7 +1379,8 @@ pre {
 
   .photo-grid,
   .checklist,
-  .scorecard-grid {
+  .scorecard-grid,
+  .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1298,6 +1421,7 @@ pre {
   .checklist,
   .evidence-photos,
   .scorecard-grid,
+  .summary-grid,
   .damage-form {
     grid-template-columns: 1fr;
   }

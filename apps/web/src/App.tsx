@@ -20,8 +20,8 @@ const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/new", label: "New Inspection", icon: Plus },
   { to: "/", label: "Inspection", icon: CarFront },
-  { to: "/", label: "Suggestions", icon: Sparkles },
-  { to: "/", label: "Damage", icon: TriangleAlert },
+  { to: "/suggestions", label: "Suggestions", icon: Sparkles },
+  { to: "/damage", label: "Damage", icon: TriangleAlert },
   { to: "/", label: "Report", icon: FileText },
   { to: "/", label: "Audit", icon: ShieldCheck },
   { to: "/platform-health", label: "Platform Health", icon: Activity }
@@ -40,6 +40,8 @@ export function App() {
     if (label === "Dashboard") return location.pathname === "/";
     if (label === "New Inspection") return location.pathname === "/new";
     if (label === "Inspection") return location.pathname.startsWith("/inspections");
+    if (label === "Suggestions") return location.pathname === "/suggestions";
+    if (label === "Damage") return location.pathname === "/damage";
     if (label === "Platform Health") return location.pathname === "/platform-health";
     return false;
   };
