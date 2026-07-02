@@ -434,6 +434,11 @@ textarea {
   min-width: 1000px;
 }
 
+.report-table table,
+.audit-table table {
+  min-width: 1040px;
+}
+
 .review-table th,
 .review-table td {
   padding: 12px;
@@ -473,7 +478,8 @@ textarea {
 }
 
 .status-accepted,
-.severity-minor {
+.severity-minor,
+.report-finalized {
   background: #ecfdf5;
   color: #047857;
 }
@@ -487,6 +493,16 @@ textarea {
 .severity-moderate {
   background: #fff7ed;
   color: #b45309;
+}
+
+.report-draft {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.report-not-started {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .json-snippet {

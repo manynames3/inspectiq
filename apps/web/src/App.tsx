@@ -19,11 +19,11 @@ export function useActor(): ActorContextValue {
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/new", label: "New Inspection", icon: Plus },
-  { to: "/", label: "Inspection", icon: CarFront },
+  { to: "/inspections", label: "Inspection", icon: CarFront },
   { to: "/suggestions", label: "Suggestions", icon: Sparkles },
   { to: "/damage", label: "Damage", icon: TriangleAlert },
-  { to: "/", label: "Report", icon: FileText },
-  { to: "/", label: "Audit", icon: ShieldCheck },
+  { to: "/reports", label: "Report", icon: FileText },
+  { to: "/audit", label: "Audit", icon: ShieldCheck },
   { to: "/platform-health", label: "Platform Health", icon: Activity }
 ];
 
@@ -42,6 +42,8 @@ export function App() {
     if (label === "Inspection") return location.pathname.startsWith("/inspections");
     if (label === "Suggestions") return location.pathname === "/suggestions";
     if (label === "Damage") return location.pathname === "/damage";
+    if (label === "Report") return location.pathname === "/reports";
+    if (label === "Audit") return location.pathname === "/audit";
     if (label === "Platform Health") return location.pathname === "/platform-health";
     return false;
   };
