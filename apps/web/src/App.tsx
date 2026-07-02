@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, CarFront, CheckCircle2, CircleHelp, ClipboardList, FileText, LayoutDashboard, Menu, Plus, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, CircleHelp, ClipboardList, FileText, LayoutDashboard, Menu, Plus, Search, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
 import { createContext, useContext, useMemo, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import type { Actor } from "./types.js";
@@ -19,7 +19,7 @@ export function useActor(): ActorContextValue {
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/new", label: "New Inspection", icon: Plus },
-  { to: "/inspections", label: "Inspection", icon: CarFront },
+  { to: "/inspections", label: "Inspection", icon: Search },
   { to: "/suggestions", label: "Suggestions", icon: Sparkles },
   { to: "/damage", label: "Damage", icon: TriangleAlert },
   { to: "/reports", label: "Report", icon: FileText },
@@ -53,11 +53,7 @@ export function App() {
       <div className="app-shell">
         <aside className="sidebar">
           <Link to="/" className="brand">
-            <span className="brand-mark">IQ</span>
-            <span>
-              <strong>InspectIQ</strong>
-              <small>Inspection workflow</small>
-            </span>
+            <strong>InspectIQ</strong>
           </Link>
           <nav className="nav-list" aria-label="Main navigation">
             {navItems.map((item) => {
