@@ -16,3 +16,13 @@
 14. AI coding tools? Use them to draft, then validate with tests, schemas, and manual review.
 15. MVP tradeoff? Complete workflow beats broad unfinished infrastructure.
 
+## 5-Minute Demo Script
+
+1. Start on Dashboard: "This is an inspection workbench for evidence completeness, AI suggestions, deterministic grading, and reviewer approval."
+2. Open New Inspection, create a vehicle, then attach the complete sample set: "The sample images keep the demo deterministic, but the data model matches an S3 upload flow."
+3. Run analysis: "The mock provider stands in for Bedrock multimodal analysis, and the API validates the model output before storing raw and normalized results."
+4. Open Suggestions: "AI is advisory. Photo angles and damage candidates stay pending until a human accepts, rejects, or edits them."
+5. Accept required photo-angle suggestions and one damage candidate: "Accepted evidence updates completeness, and accepted damage materializes as a damage item with an audit event."
+6. Open Damage and Report: "Manual and AI-sourced damage feed a deterministic grade. The report draft only uses confirmed facts."
+7. Generate the AI draft, edit if needed, then finalize: "Finalization is a terminal state. After this, material workflow endpoints reject edits."
+8. Open Audit and Platform Health: "This is the operational story: request IDs, provider metadata, human decisions, state changes, and deployment tradeoffs."

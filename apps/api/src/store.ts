@@ -1,4 +1,6 @@
 import {
+  DamageCandidateSchema,
+  PhotoAngleSchema,
   requiredPhotoAngles,
   type CreateInspectionSchema,
   type DamageSeverity,
@@ -6,7 +8,7 @@ import {
   type InspectionStatus,
   type PhotoAngle
 } from "@inspectiq/shared";
-import type { z } from "zod";
+import { z } from "zod";
 import type {
   Actor,
   AiReportDraft,
@@ -29,6 +31,36 @@ type CreateInspectionInput = z.infer<typeof CreateInspectionSchema>;
 
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
+const mutableInspectionFields = [
+  "vin",
+  "year",
+  "make",
+  "model",
+  "trim",
+  "mileage",
+  "exteriorColor",
+  "sellerSource",
+  "inspectorName"
+] as const;
+const PhotoAngleSuggestionSchema = z.object({ photoAngle: PhotoAngleSchema }).strict();
+const QualityWarningSuggestionSchema = z.object({ warning: z.string().trim().min(1).max(160) }).strict();
+const ExtractedTextSuggestionSchema = z.object({
+  odometer: z.string().nullable().optional(),
+  vin: z.string().nullable().optional()
+}).strict();
+
+function validateSuggestionValue(suggestion: VisionSuggestion): unknown {
+  if (suggestion.suggestionType === "photo_angle") {
+    return PhotoAngleSuggestionSchema.parse(suggestion.suggestedValueJson);
+  }
+  if (suggestion.suggestionType === "damage_candidate") {
+    return DamageCandidateSchema.parse(suggestion.suggestedValueJson);
+  }
+  if (suggestion.suggestionType === "quality_warning") {
+    return QualityWarningSuggestionSchema.parse(suggestion.suggestedValueJson);
+  }
+  return ExtractedTextSuggestionSchema.parse(suggestion.suggestedValueJson);
+}
 
 export class MemoryStore {
   users = new Map<string, User>();
@@ -42,6 +74,14 @@ export class MemoryStore {
   reportDrafts = new Map<string, AiReportDraft>();
   finalReports = new Map<string, FinalReport>();
   auditEvents = new Map<string, AuditEvent>();
+
+  assertMutableInspection(inspectionId: string, action: string): Inspection {
+    const inspection = this.getInspection(inspectionId);
+    if (inspection.status === "FINALIZED") {
+      throw conflict(`Cannot ${action} on a finalized inspection.`);
+    }
+    return inspection;
+  }
 
   reset(): void {
     this.users.clear();
@@ -110,6 +150,16 @@ export class MemoryStore {
 
   patchInspection(idValue: string, patch: Partial<CreateInspectionInput> & { status?: InspectionStatus }, actor: Actor): Inspection {
     const inspection = this.getInspection(idValue);
+    const hasFieldPatch = mutableInspectionFields.some((field) => Object.prototype.hasOwnProperty.call(patch, field));
+    if (patch.status === "FINALIZED") {
+      throw conflict("Finalize inspections through the report finalization endpoint.");
+    }
+    if (inspection.status === "FINALIZED") {
+      throw conflict("Cannot edit inspection fields on a finalized inspection.");
+    }
+    if (hasFieldPatch) {
+      this.assertMutableInspection(idValue, "edit inspection fields");
+    }
     const before = { ...inspection };
     if (patch.status) {
       this.transition(inspection.id, patch.status, actor, "inspection.status_changed");
@@ -151,8 +201,7 @@ export class MemoryStore {
     uploadedBy: string;
     declaredAngle?: PhotoAngle | null;
   }, actor: Actor): VehiclePhoto {
-    const inspection = this.getInspection(input.inspectionId);
-    if (inspection.status === "FINALIZED") throw conflict("Cannot upload photos to a finalized inspection.");
+    const inspection = this.assertMutableInspection(input.inspectionId, "upload photos");
     const photo: VehiclePhoto = {
       id: id(),
       inspectionId: inspection.id,
@@ -210,6 +259,7 @@ export class MemoryStore {
       humanReviewRequired: boolean;
     };
   }, actor: Actor): PhotoAnalysisResult {
+    this.assertMutableInspection(photo.inspectionId, "analyze photos");
     const duplicate = [...this.analyses.values()].find((analysis) => analysis.photoId === photo.id && analysis.status === "completed");
     if (duplicate) return duplicate;
 
@@ -284,6 +334,7 @@ export class MemoryStore {
   }
 
   failAnalysis(photo: VehiclePhoto, provider: string, promptVersion: string, errorMessage: string, actor: Actor): PhotoAnalysisResult {
+    this.assertMutableInspection(photo.inspectionId, "record photo analysis failures");
     photo.analysisStatus = "failed";
     photo.qualityStatus = "fail";
     const analysis: PhotoAnalysisResult = {
@@ -337,9 +388,11 @@ export class MemoryStore {
 
   editSuggestion(idValue: string, patch: { suggestedValue: unknown; explanation?: string }, actor: Actor): VisionSuggestion {
     const suggestion = this.getSuggestion(idValue);
+    this.assertMutableInspection(suggestion.inspectionId, "edit suggestions");
     if (suggestion.status === "accepted" || suggestion.status === "rejected") {
       throw conflict("Reviewed suggestions cannot be edited.");
     }
+    validateSuggestionValue({ ...suggestion, suggestedValueJson: patch.suggestedValue });
     suggestion.suggestedValueJson = patch.suggestedValue;
     suggestion.explanation = patch.explanation ?? suggestion.explanation;
     suggestion.status = "edited";
@@ -355,49 +408,54 @@ export class MemoryStore {
 
   acceptSuggestion(idValue: string, actor: Actor): VisionSuggestion {
     const suggestion = this.getSuggestion(idValue);
+    this.assertMutableInspection(suggestion.inspectionId, "accept suggestions");
     if (suggestion.status === "accepted") return suggestion;
     if (suggestion.status === "rejected") throw conflict("Rejected suggestions cannot be accepted without a new review.");
+    const value = validateSuggestionValue(suggestion);
+    let materializedDamageItemId: string | null = null;
     suggestion.status = "accepted";
     suggestion.reviewedBy = actor.id;
     suggestion.reviewedAt = now();
 
     if (suggestion.suggestionType === "photo_angle") {
-      const value = suggestion.suggestedValueJson as { photoAngle?: PhotoAngle };
+      const angleValue = value as { photoAngle: PhotoAngle };
       const photo = this.getPhoto(suggestion.photoId);
-      if (value.photoAngle) photo.declaredAngle = value.photoAngle;
+      photo.declaredAngle = angleValue.photoAngle;
     }
 
     if (suggestion.suggestionType === "damage_candidate") {
-      const value = suggestion.suggestedValueJson as {
-        location?: string;
-        damageType?: DamageType;
-        severityEstimate?: DamageSeverity;
-        severity?: DamageSeverity;
-        explanation?: string;
+      const damageValue = value as {
+        location: string;
+        damageType: DamageType;
+        severityEstimate: DamageSeverity;
+        explanation: string;
       };
-      this.addDamage({
+      const item = this.addDamage({
         inspectionId: suggestion.inspectionId,
         photoId: suggestion.photoId,
-        location: value.location ?? "unknown location",
-        damageType: value.damageType ?? "unknown",
-        severity: value.severity ?? value.severityEstimate ?? "unknown",
-        notes: value.explanation ?? "Accepted AI-suggested damage candidate.",
+        location: damageValue.location,
+        damageType: damageValue.damageType,
+        severity: damageValue.severityEstimate,
+        notes: damageValue.explanation,
         source: "vision_suggestion",
         confirmedBy: actor.id
-      }, actor, false);
+      }, actor);
+      materializedDamageItemId = item.id;
     }
 
     this.recomputeCompleteness(suggestion.inspectionId, actor);
     this.addAudit(suggestion.inspectionId, actor, "suggestion.accepted", {
       suggestionId: suggestion.id,
       suggestionType: suggestion.suggestionType,
-      value: suggestion.suggestedValueJson
+      value: suggestion.suggestedValueJson,
+      materializedDamageItemId
     });
     return suggestion;
   }
 
   rejectSuggestion(idValue: string, actor: Actor): VisionSuggestion {
     const suggestion = this.getSuggestion(idValue);
+    this.assertMutableInspection(suggestion.inspectionId, "reject suggestions");
     if (suggestion.status === "accepted") throw conflict("Accepted suggestions cannot be rejected.");
     suggestion.status = "rejected";
     suggestion.reviewedBy = actor.id;
@@ -419,7 +477,7 @@ export class MemoryStore {
     source: "manual" | "vision_suggestion";
     confirmedBy?: string | null;
   }, actor: Actor, writeAudit = true): DamageItem {
-    this.getInspection(input.inspectionId);
+    this.assertMutableInspection(input.inspectionId, "add damage");
     const item: DamageItem = {
       id: id(),
       inspectionId: input.inspectionId,
@@ -441,6 +499,7 @@ export class MemoryStore {
   patchDamage(idValue: string, patch: Partial<DamageItem>, actor: Actor): DamageItem {
     const item = this.damageItems.get(idValue);
     if (!item) throw notFound("Damage item");
+    this.assertMutableInspection(item.inspectionId, "edit damage");
     const before = { ...item };
     Object.assign(item, {
       photoId: patch.photoId ?? item.photoId,
@@ -457,6 +516,7 @@ export class MemoryStore {
   deleteDamage(idValue: string, actor: Actor): void {
     const item = this.damageItems.get(idValue);
     if (!item) throw notFound("Damage item");
+    this.assertMutableInspection(item.inspectionId, "delete damage");
     this.damageItems.delete(idValue);
     this.addAudit(item.inspectionId, actor, "damage.deleted", { damageItemId: idValue, item });
   }
@@ -672,9 +732,9 @@ export class MemoryStore {
   missingRequiredEvidence(inspectionId: string): string[] {
     const acceptedAngles = new Set<PhotoAngle>();
     for (const suggestion of this.listSuggestions(inspectionId)) {
-      if ((suggestion.status === "accepted" || suggestion.status === "edited") && suggestion.suggestionType === "photo_angle") {
-        const value = suggestion.suggestedValueJson as { photoAngle?: PhotoAngle };
-        if (value.photoAngle) acceptedAngles.add(value.photoAngle);
+      if (suggestion.status === "accepted" && suggestion.suggestionType === "photo_angle") {
+        const parsed = PhotoAngleSuggestionSchema.safeParse(suggestion.suggestedValueJson);
+        if (parsed.success) acceptedAngles.add(parsed.data.photoAngle);
       }
     }
     return requiredPhotoAngles.filter((angle) => !acceptedAngles.has(angle));

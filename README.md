@@ -35,17 +35,21 @@ Vehicle condition reports need consistent photo evidence, clear damage facts, ex
 flowchart TD
   Web[React + TypeScript workbench] --> API[Node.js Express API]
   API --> Shared[Shared Zod schemas]
-  API --> Store[Local demo store + Postgres schema]
+  API --> Store[Demo memory store + Postgres schema]
   API --> Vision[Vision provider interface]
   Vision --> MockVision[Mock deterministic analysis]
-  Vision --> BedrockVision[Bedrock-ready stub]
+  Vision --> BedrockVision[Production Bedrock adapter seam]
   API --> Grade[Java Spring Boot grading service]
   API --> Report[Report provider interface]
   Report --> MockReport[Mock report provider]
-  Report --> BedrockReport[Bedrock Claude-ready stub]
+  Report --> BedrockReport[Production Claude adapter seam]
   API --> Audit[Audit events]
   Store --> PG[(Postgres production target)]
 ```
+
+## Demo Scope
+
+This is a working portfolio/demo application, not a claimed production inspection platform. The local and Cloudflare Pages demos use deterministic mock AI providers and lightweight persistence so the end-to-end flow is reliable without paid model credentials or a database. The repo includes Postgres schema, Terraform skeleton, provider interfaces, and AWS design notes to show the production direction, but real Bedrock calls, binary image storage, production auth, and durable relational persistence are intentionally left as next steps.
 
 ## Tech Stack
 
@@ -56,7 +60,7 @@ flowchart TD
 - Postgres schema and Drizzle table definitions.
 - S3-style sample image storage.
 - Step Functions-style async report job model.
-- Mock Bedrock/Claude provider abstractions.
+- Provider interfaces with deterministic mock AI implementations.
 - Vitest, Supertest, React Testing Library, JUnit.
 - Terraform AWS skeleton.
 
@@ -187,7 +191,8 @@ AI never finalizes reports.
 ## Human-In-The-Loop Governance
 
 - Suggestions stay pending until reviewed.
-- Only accepted or edited suggestions become facts.
+- Edited suggestions remain review records until a reviewer explicitly accepts them.
+- Only accepted suggestions become facts.
 - Damage candidates create damage items only after acceptance.
 - Low confidence or missing evidence forces human review.
 - Finalization requires valid state and complete evidence.
@@ -198,8 +203,11 @@ AI never finalizes reports.
 ```bash
 npm test
 npm run typecheck
+npm run lint
 npm run build
 ```
+
+The API tests cover the full create-to-finalize flow, schema validation failures, evidence completeness gates, AI suggestion review, audit trail events, and post-finalization immutability guards. The web tests cover reusable UI components; broader browser flow tests are a known next step.
 
 Java tests:
 
@@ -226,7 +234,22 @@ Local demo uses a role selector. Production design should use Cognito or enterpr
 
 ## AWS Deployment Architecture
 
-The `infra/terraform` skeleton includes S3, SQS, CloudWatch, Secrets Manager, Aurora Postgres, and Step Functions. A production deployment would add VPC wiring, ECS/Fargate or Lambda packaging, API Gateway or ALB routing, IAM policies, alarms, and Bedrock permissions.
+The simple production AWS shape is:
+
+```txt
+CloudFront/S3 or Amplify frontend
+-> API Gateway or ALB
+-> ECS/Fargate API
+-> Aurora PostgreSQL for inspection state and audit events
+-> S3 presigned uploads for vehicle images
+-> EventBridge/SQS image-analysis queue
+-> ECS/Fargate or Lambda worker
+-> Bedrock multimodal analysis and Claude report drafting
+-> Step Functions for report-generation retries and status
+-> CloudWatch/X-Ray, Secrets Manager, KMS, IAM least privilege
+```
+
+The `infra/terraform` skeleton covers the main resource categories, but it is not a one-command production deployment. A real deployment still needs account-specific networking, service packaging, IAM policies, alarms, Bedrock model access, and environment promotion.
 
 ## Cost Awareness
 
@@ -259,13 +282,13 @@ Handled or documented:
 
 I would discuss:
 
-- When to replace the in-memory demo store with a Postgres repository.
-- Whether Java grading deserves its own service or should be collapsed.
-- Lambda vs ECS/Fargate for API and workers.
-- Bedrock prompt/schema guardrails.
-- Presigned image upload security.
-- Reviewer workload queues and SLA metrics.
-- Audit event durability requirements.
+- Replace the in-memory demo store with Postgres before multiple reviewers, real uploads, or audit retention matter.
+- Keep Java grading separate only if condition rules are independently owned, versioned, or reused outside the Node API.
+- Use ECS/Fargate for long-running image/report workers when model calls, retries, or native image tooling outgrow Lambda limits.
+- Treat Bedrock output as untrusted input: validate schemas, store raw and validated output, and require human confirmation before facts affect reports.
+- Use presigned S3 uploads with MIME validation, object-level authorization, checksum capture, and lifecycle policies.
+- Add reviewer queues and SLA metrics only after the core evidence-to-report workflow is stable.
+- Put audit events in durable relational storage with append-only conventions before using this for compliance.
 
 ## Future Improvements
 
@@ -280,4 +303,3 @@ I would discuss:
 ## Resume Bullets
 
 See `docs/resume-bullets.md` for short, technical, and business-impact versions.
-
