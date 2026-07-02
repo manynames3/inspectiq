@@ -3,8 +3,11 @@ import type { Actor } from "./types.js";
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export const assetUrl = (storageKey: string): string => {
-  if (storageKey.startsWith("http")) return storageKey;
-  return `${API_BASE}${storageKey}`;
+  const migratedStorageKey = storageKey.startsWith("/sample-images/")
+    ? storageKey.replace(/\.svg$/i, ".jpg")
+    : storageKey;
+  if (migratedStorageKey.startsWith("http")) return migratedStorageKey;
+  return `${API_BASE}${migratedStorageKey}`;
 };
 
 export async function api<T>(path: string, options: RequestInit = {}, actor?: Actor): Promise<T> {

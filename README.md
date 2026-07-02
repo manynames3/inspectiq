@@ -8,7 +8,7 @@ InspectIQ is a portfolio project that models an enterprise inspection and imagin
 
 I built this to show practical understanding of inspection/imaging systems: image ingestion, evidence completeness, damage documentation, deterministic condition grading, AI-assisted drafting, human review, auditability, and AWS-ready workflow design.
 
-It does not use Cox Automotive branding, proprietary data, or copyrighted assets. All vehicles and images are synthetic.
+It does not use Cox Automotive branding, proprietary data, or unlicensed assets. Vehicle records are synthetic, and bundled sample photos use license-safe public image sources documented in `sample-data/IMAGE_CREDITS.md`.
 
 ## Business Problem
 
@@ -18,7 +18,7 @@ Vehicle condition reports need consistent photo evidence, clear damage facts, ex
 
 1. Open the dashboard and choose a seeded inspection.
 2. Create a new inspection when needed.
-3. Attach generated sample images or upload image metadata.
+3. Attach photographic sample images or upload image metadata.
 4. Analyze photos with the local mock vision provider.
 5. Review suggestions labelled `AI suggestion - requires human confirmation`.
 6. Accept, reject, or edit suggestions.
@@ -163,7 +163,7 @@ REPORT_FAILED -> AI_DRAFT_PENDING
 
 Local:
 
-1. Attach sample image metadata.
+1. Attach photographic sample image metadata.
 2. Run `mockVisionProvider`.
 3. Validate output with `VisionOutputSchema`.
 4. Save raw and validated output separately.

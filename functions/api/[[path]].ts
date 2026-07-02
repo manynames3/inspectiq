@@ -263,7 +263,7 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
     const input = UploadPhotoSchema.parse(body);
     return json(store.addPhoto({
       inspectionId: segments[1],
-      storageKey: input.storageKey ?? `/sample-images/front-clean.svg`,
+      storageKey: input.storageKey ?? `/sample-images/front-clean.jpg`,
       originalFilename: input.originalFilename,
       mimeType: input.mimeType,
       uploadedBy: actor.id,

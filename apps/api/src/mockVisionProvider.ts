@@ -30,7 +30,7 @@ export const mockVisionProvider: VisionProvider = {
           damageType: "dent",
           severityEstimate: "severe",
           confidence: 0.9,
-          explanation: "Synthetic fixture indicates a large rear bumper deformation.",
+          explanation: "Sample inspection photo indicates a rear bumper deformation.",
           requiresHumanConfirmation: true
         }],
         humanReviewRequired: true
@@ -43,7 +43,7 @@ export const mockVisionProvider: VisionProvider = {
           damageType: "scratch",
           severityEstimate: "minor",
           confidence: 0.86,
-          explanation: "Synthetic fixture marks a visible linear scratch on the driver door.",
+          explanation: "Sample inspection photo indicates a visible linear scratch on the driver door.",
           requiresHumanConfirmation: true
         }]
       };
@@ -55,7 +55,7 @@ export const mockVisionProvider: VisionProvider = {
           damageType: "interior_wear",
           severityEstimate: "moderate",
           confidence: 0.8,
-          explanation: "Synthetic fixture marks moderate wear on the driver seat bolster.",
+          explanation: "Sample inspection photo indicates moderate wear on the driver seat bolster.",
           requiresHumanConfirmation: true
         }],
         humanReviewRequired: true
@@ -114,4 +114,3 @@ export const bedrockVisionProvider: VisionProvider = {
 export function getVisionProvider(): VisionProvider {
   return process.env.VISION_PROVIDER === "bedrock" ? bedrockVisionProvider : mockVisionProvider;
 }
-

@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720" viewBox="0 0 960 720">
-  <rect width="960" height="720" fill="#eef6ff"/>
-  <path d="M155 370h650l-88-128H275z" fill="#ffffff" stroke="#334155" stroke-width="10" stroke-linejoin="round"/>
-  <path d="M338 250v120M548 250v120" stroke="#94a3b8" stroke-width="8"/>
-  <circle cx="290" cy="430" r="54" fill="#0f172a"/>
-  <circle cx="680" cy="430" r="54" fill="#0f172a"/>
-  <text x="480" y="635" text-anchor="middle" font-family="Arial" font-size="44" font-weight="700" fill="#18212f">passenger-side-clean</text>
-</svg>
-

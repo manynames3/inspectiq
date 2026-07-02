@@ -76,7 +76,7 @@ export function InspectionDetailPage() {
   const confirmedAngles = useMemo(() => {
     const values = new Set<string>();
     for (const suggestion of bundle?.suggestions ?? []) {
-      if (suggestion.suggestionType === "photo_angle" && (suggestion.status === "accepted" || suggestion.status === "edited")) {
+      if (suggestion.suggestionType === "photo_angle" && suggestion.status === "accepted") {
         values.add(suggestion.suggestedValueJson.photoAngle);
       }
     }

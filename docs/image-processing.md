@@ -2,7 +2,7 @@
 
 Local flow:
 
-1. Attach a sample image or upload image metadata.
+1. Attach a photographic sample image or upload image metadata.
 2. Store S3-style object metadata on the inspection.
 3. Run the selected vision provider.
 4. Validate output against `VisionOutputSchema`.
@@ -22,4 +22,3 @@ flowchart LR
   Validate --> DB[(Postgres)]
   DB --> Audit[Audit event]
 ```
-
