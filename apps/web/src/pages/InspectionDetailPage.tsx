@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, assetUrl } from "../api.js";
 import { useActor } from "../App.js";
 import { StatusPill } from "../components/StatusPill.js";
-import type { Inspection, InspectionBundle, SampleImage, VisionSuggestion } from "../types.js";
+import type { Inspection, InspectionBundle, SampleImage, VehiclePhoto, VisionSuggestion } from "../types.js";
 
 const requiredAngles = ["front", "rear", "driver_side", "passenger_side", "interior", "engine_bay", "odometer", "vin_plate"];
 
@@ -23,6 +23,39 @@ function formatAngleLabel(value: string | null | undefined) {
 
 function photoDisplayName(photo: InspectionBundle["photos"][number]) {
   return formatAngleLabel(photo.detectedAngle ?? photo.declaredAngle ?? photo.originalFilename.replace(/\.[^.]+$/, ""));
+}
+
+function formatSuggestionType(value: string) {
+  return value.replaceAll("_", " ");
+}
+
+function formatSuggestionValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "N/A";
+  if (typeof value === "number") return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(2);
+  return String(value).replaceAll("_", " ");
+}
+
+function suggestionRows(suggestion: VisionSuggestion): Array<[string, string]> {
+  const value = suggestion.suggestedValueJson as Record<string, unknown>;
+  if (suggestion.suggestionType === "damage_candidate") {
+    return [
+      ["Damage Type", formatSuggestionValue(value.damageType)],
+      ["Severity", formatSuggestionValue(value.severityEstimate)],
+      ["Location", formatSuggestionValue(value.location)],
+      ["Confidence", `${Math.round(suggestion.confidence * 100)}%`]
+    ];
+  }
+  if (suggestion.suggestionType === "photo_angle") {
+    return [
+      ["Detected Angle", formatAngleLabel(formatSuggestionValue(value.photoAngle))],
+      ["Confidence", `${Math.round(suggestion.confidence * 100)}%`]
+    ];
+  }
+  if (suggestion.suggestionType === "extracted_text") {
+    const extracted = Object.entries(value).map(([key, rowValue]) => [formatAngleLabel(key), formatSuggestionValue(rowValue)] as [string, string]);
+    return [...extracted, ["Confidence", `${Math.round(suggestion.confidence * 100)}%`]];
+  }
+  return Object.entries(value).slice(0, 4).map(([key, rowValue]) => [formatAngleLabel(key), formatSuggestionValue(rowValue)] as [string, string]);
 }
 
 export function InspectionDetailPage() {
@@ -93,6 +126,7 @@ export function InspectionDetailPage() {
     }
     return values;
   }, [bundle, confirmedAngles]);
+  const photosById = useMemo(() => new Map((bundle?.photos ?? []).map((photo) => [photo.id, photo])), [bundle]);
 
   if (!bundle || !id) return <section className="page"><div className="loading">Loading inspection...</div></section>;
 
@@ -333,6 +367,7 @@ export function InspectionDetailPage() {
             <SuggestionCard
               key={suggestion.id}
               suggestion={suggestion}
+              photo={photosById.get(suggestion.photoId)}
               disabled={busy !== null}
               onAccept={() => runAction("accept", () => api(`/api/vision-suggestions/${suggestion.id}/accept`, { method: "POST", body: JSON.stringify({}) }, actor))}
               onReject={() => runAction("reject", () => api(`/api/vision-suggestions/${suggestion.id}/reject`, { method: "POST", body: JSON.stringify({}) }, actor))}
@@ -345,25 +380,41 @@ export function InspectionDetailPage() {
   );
 }
 
-function SuggestionCard({ suggestion, disabled, onAccept, onReject, onEdit }: {
+function SuggestionCard({ suggestion, photo, disabled, onAccept, onReject, onEdit }: {
   suggestion: VisionSuggestion;
+  photo?: VehiclePhoto;
   disabled: boolean;
   onAccept: () => Promise<unknown>;
   onReject: () => Promise<unknown>;
   onEdit: (value: { suggestedValue: unknown; explanation?: string }) => Promise<unknown>;
 }) {
   const readableValue = JSON.stringify(suggestion.suggestedValueJson, null, 2);
+  const rows = suggestionRows(suggestion);
   return (
     <article className="suggestion-card">
-      <div>
-        <strong>{suggestion.suggestionType.replaceAll("_", " ")}</strong>
+      {photo ? (
+        <div className="suggestion-photo">
+          <img src={assetUrl(photo.storageKey)} alt={photo.originalFilename} />
+          <span>{photoDisplayName(photo)}</span>
+        </div>
+      ) : null}
+      <div className="suggestion-summary">
+        <strong>{formatSuggestionType(suggestion.suggestionType)}</strong>
         <span>{Math.round(suggestion.confidence * 100)}% confidence</span>
       </div>
-      <pre>{readableValue}</pre>
+      <dl className="suggestion-facts">
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
       <p>{suggestion.explanation}</p>
       <div className="suggestion-actions">
         <button disabled={disabled} className="accept-button" onClick={() => void onAccept()}><Check size={15} /> Accept</button>
-        <button disabled={disabled} className="secondary-button" onClick={() => {
+        <button disabled={disabled} className="reject-button" onClick={() => void onReject()}><X size={15} /> Reject</button>
+        <button disabled={disabled} className="secondary-button edit-suggestion-button" onClick={() => {
           const next = window.prompt("Edit suggested JSON before accepting", readableValue);
           if (!next) return;
           try {
@@ -372,8 +423,11 @@ function SuggestionCard({ suggestion, disabled, onAccept, onReject, onEdit }: {
             window.alert("Edited value must be valid JSON.");
           }
         }}><Pencil size={15} /> Edit</button>
-        <button disabled={disabled} className="reject-button" onClick={() => void onReject()}><X size={15} /> Reject</button>
       </div>
+      <details className="schema-details">
+        <summary>Validated schema payload</summary>
+        <pre>{readableValue}</pre>
+      </details>
     </article>
   );
 }
