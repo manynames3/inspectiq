@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: inspectiq
+      POSTGRES_USER: inspectiq
+      POSTGRES_PASSWORD: inspectiq
+    ports:
+      - "5432:5432"
+    volumes:
+      - inspectiq_pg:/var/lib/postgresql/data
+      - ./apps/api/src/db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inspectiq -d inspectiq"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  grading-java:
+    build: ./services/grading-java
+    ports:
+      - "8080:8080"
+
+volumes:
+  inspectiq_pg:
+

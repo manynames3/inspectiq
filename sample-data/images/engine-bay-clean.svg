@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720" viewBox="0 0 960 720">
+  <rect width="960" height="720" fill="#f1f5f9"/>
+  <rect x="178" y="150" width="604" height="400" rx="28" fill="#e2e8f0" stroke="#334155" stroke-width="10"/>
+  <rect x="312" y="260" width="336" height="166" rx="20" fill="#0f172a"/>
+  <path d="M260 226h120M580 226h120M260 470h120M580 470h120" stroke="#0f766e" stroke-width="18" stroke-linecap="round"/>
+  <text x="480" y="635" text-anchor="middle" font-family="Arial" font-size="44" font-weight="700" fill="#18212f">engine-bay-clean</text>
+</svg>
+

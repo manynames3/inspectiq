@@ -1,0 +1,28 @@
+{
+  "name": "inspectiq",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-assisted vehicle inspection and condition report platform portfolio project.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @inspectiq/shared && npm run build -w @inspectiq/api && npm run build -w @inspectiq/web",
+    "dev": "concurrently -n api,web -c cyan,green \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "npm run build -w @inspectiq/shared && npm run dev -w @inspectiq/api",
+    "dev:web": "npm run dev -w @inspectiq/web",
+    "lint": "npm run build -w @inspectiq/shared && npm run lint -w @inspectiq/api && npm run lint -w @inspectiq/web",
+    "seed": "npm run seed -w @inspectiq/api",
+    "test": "npm run build -w @inspectiq/shared && npm run test -w @inspectiq/api && npm run test -w @inspectiq/web",
+    "typecheck": "npm run build -w @inspectiq/shared && npm run typecheck -w @inspectiq/api && npm run typecheck -w @inspectiq/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "playwright-core": "^1.61.1",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
