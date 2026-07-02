@@ -21,11 +21,87 @@ import type { Actor } from "../../apps/api/src/domain.js";
 
 const store = new MemoryStore();
 let seeded = false;
+const storeSnapshotKey = "inspectiq-store:v1";
+const storeMapNames = [
+  "users",
+  "inspections",
+  "photos",
+  "analyses",
+  "suggestions",
+  "damageItems",
+  "conditionGrades",
+  "reportJobs",
+  "reportDrafts",
+  "finalReports",
+  "auditEvents"
+] as const;
+
+type StoreMapName = typeof storeMapNames[number];
+type IdentifiedRecord = { id: string };
+type StoreSnapshot = Partial<Record<StoreMapName, IdentifiedRecord[]>>;
+type JsonKvNamespace = {
+  get(key: string, type: "json"): Promise<unknown | null>;
+  put(key: string, value: string): Promise<void>;
+};
+type PagesEnv = {
+  INSPECTIQ_STORE?: JsonKvNamespace;
+};
+type PagesContext = {
+  request: Request;
+  env?: PagesEnv;
+};
+
+function storeMap(name: StoreMapName): Map<string, IdentifiedRecord> {
+  return store[name] as Map<string, IdentifiedRecord>;
+}
 
 function ensureSeeded(): void {
   if (seeded) return;
   seedStore(store);
   seeded = true;
+}
+
+function snapshotStore(): StoreSnapshot {
+  return Object.fromEntries(
+    storeMapNames.map((name) => [name, [...storeMap(name).values()]])
+  ) as StoreSnapshot;
+}
+
+function restoreStore(snapshot: StoreSnapshot): void {
+  store.reset();
+  for (const name of storeMapNames) {
+    const records = snapshot[name] ?? [];
+    const map = storeMap(name);
+    for (const record of records) {
+      if (record && typeof record.id === "string") {
+        map.set(record.id, record);
+      }
+    }
+  }
+  seeded = true;
+}
+
+async function loadStore(env?: PagesEnv): Promise<void> {
+  const kv = env?.INSPECTIQ_STORE;
+  if (!kv) {
+    ensureSeeded();
+    return;
+  }
+
+  const snapshot = await kv.get(storeSnapshotKey, "json") as StoreSnapshot | null;
+  if (snapshot) {
+    restoreStore(snapshot);
+    return;
+  }
+
+  store.reset();
+  seedStore(store);
+  seeded = true;
+  await saveStore(env);
+}
+
+async function saveStore(env?: PagesEnv): Promise<void> {
+  await env?.INSPECTIQ_STORE?.put(storeSnapshotKey, JSON.stringify(snapshotStore()));
 }
 
 function json(data: unknown, requestId: string, status = 200): Response {
@@ -371,14 +447,19 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }, { status: 404 });
 }
 
-export async function onRequest(context: { request: Request }): Promise<Response> {
+export async function onRequest(context: PagesContext): Promise<Response> {
   if (context.request.method === "OPTIONS") {
     return new Response(null, { status: 204 });
   }
 
   const requestId = context.request.headers.get("x-request-id") ?? crypto.randomUUID();
   try {
-    return await handleApi(context.request, requestId);
+    await loadStore(context.env);
+    const response = await handleApi(context.request, requestId);
+    if (context.request.method !== "GET" && context.request.method !== "HEAD" && response.ok) {
+      await saveStore(context.env);
+    }
+    return response;
   } catch (error) {
     return errorJson(error, requestId);
   }

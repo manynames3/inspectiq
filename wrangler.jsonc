@@ -3,5 +3,11 @@
   "name": "inspectiq",
   "pages_build_output_dir": "apps/web/dist",
   "compatibility_date": "2026-07-02",
-  "compatibility_flags": ["nodejs_compat"]
+  "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [
+    {
+      "binding": "INSPECTIQ_STORE",
+      "id": "faae3236de84422e890ec3df99827b0d"
+    }
+  ]
 }
