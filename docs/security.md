@@ -1,6 +1,6 @@
 # Security
 
-Local demo:
+Local review:
 
 - Role selector for inspector, reviewer, and admin.
 - No hardcoded secrets.
@@ -16,4 +16,3 @@ Production plan:
 - Secrets Manager for database and provider credentials.
 - Least-privilege IAM for API, workers, Step Functions, and queues.
 - CloudTrail for infrastructure audit.
-

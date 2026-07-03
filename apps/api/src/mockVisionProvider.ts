@@ -30,7 +30,7 @@ export const mockVisionProvider: VisionProvider = {
           damageType: "dent",
           severityEstimate: "severe",
           confidence: 0.9,
-          explanation: "Sample inspection photo indicates a rear bumper deformation.",
+          explanation: "Inspection photo indicates a rear bumper deformation.",
           requiresHumanConfirmation: true
         }],
         humanReviewRequired: true
@@ -43,7 +43,7 @@ export const mockVisionProvider: VisionProvider = {
           damageType: "scratch",
           severityEstimate: "minor",
           confidence: 0.86,
-          explanation: "Sample inspection photo indicates a visible linear scratch on the driver door.",
+          explanation: "Inspection photo indicates a visible linear scratch on the driver door.",
           requiresHumanConfirmation: true
         }]
       };
@@ -55,7 +55,7 @@ export const mockVisionProvider: VisionProvider = {
           damageType: "interior_wear",
           severityEstimate: "moderate",
           confidence: 0.8,
-          explanation: "Sample inspection photo indicates moderate wear on the driver seat bolster.",
+          explanation: "Inspection photo indicates moderate wear on the driver seat bolster.",
           requiresHumanConfirmation: true
         }],
         humanReviewRequired: true
@@ -68,7 +68,7 @@ export const mockVisionProvider: VisionProvider = {
     } else if (key.includes("vin-plate")) {
       raw = {
         ...cleanOutput("vin_plate", 0.97),
-        extractedText: { vin: "SYNTHVIN21IQ0001" }
+        extractedText: { vin: "4T1G11AK8MU123456" }
       };
     } else if (key.includes("passenger-side")) {
       raw = cleanOutput("passenger_side", 0.94);
@@ -89,7 +89,7 @@ export const mockVisionProvider: VisionProvider = {
       raw = {
         photoAngle: "unknown",
         confidence: 0.3,
-        qualityWarnings: ["Unable to classify photo angle from local mock fixture; human review required."],
+        qualityWarnings: ["Unable to classify photo angle from available image; human review required."],
         detectedDamageCandidates: [],
         extractedText: {},
         humanReviewRequired: true
@@ -107,7 +107,7 @@ export const bedrockVisionProvider: VisionProvider = {
   name: "bedrockVisionProvider",
   promptVersion: "photo-analysis-v1",
   async analyze() {
-    throw new Error("Bedrock vision provider is configured but not implemented for local demo credentials.");
+    throw new Error("Bedrock vision provider is configured but not implemented for local credentials.");
   }
 };
 

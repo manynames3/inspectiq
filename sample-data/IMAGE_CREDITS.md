@@ -1,6 +1,6 @@
 # Sample Image Credits
 
-The bundled inspection photos are demo fixtures used for local and Cloudflare Pages workflows. They are served from `/sample-images/...` and classified by filename by the mock vision provider.
+The bundled inspection photos are fixtures used for local and Cloudflare Pages workflows. They are served from `/sample-images/...` and classified by filename by the mock vision provider.
 
 Unsplash photos are free to use under the Unsplash License. Attribution is not required by the license, but sources are documented here for reviewability.
 

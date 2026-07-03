@@ -23,14 +23,14 @@ describe("InspectIQ API", () => {
       .post("/api/inspections")
       .set(actorHeaders)
       .send({
-        vin: "SYNTHVIN24E2E0001",
+        vin: "JM3KFBDM7R0123456",
         year: 2024,
         make: "Mazda",
         model: "CX-5",
         trim: "Touring",
         mileage: 18420,
         exteriorColor: "Red",
-        sellerSource: "Portfolio demo",
+        sellerSource: "Portfolio inspection",
         inspectorName: "Test Reviewer"
       })
       .expect(201);

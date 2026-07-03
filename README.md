@@ -35,7 +35,7 @@ Vehicle condition reports need consistent photo evidence, clear damage facts, ex
 flowchart TD
   Web[React + TypeScript workbench] --> API[Node.js Express API]
   API --> Shared[Shared Zod schemas]
-  API --> Store[Demo memory store + Postgres schema]
+  API --> Store[In-memory store + Postgres schema]
   API --> Vision[Vision provider interface]
   Vision --> MockVision[Mock deterministic analysis]
   Vision --> BedrockVision[Production Bedrock adapter seam]
@@ -47,9 +47,9 @@ flowchart TD
   Store --> PG[(Postgres production target)]
 ```
 
-## Demo Scope
+## Scope
 
-This is a working portfolio/demo application, not a claimed production inspection platform. The local and Cloudflare Pages demos use deterministic mock AI providers and lightweight persistence so the end-to-end flow is reliable without paid model credentials or a database. The repo includes Postgres schema, Terraform skeleton, provider interfaces, and AWS design notes to show the production direction, but real Bedrock calls, binary image storage, production auth, and durable relational persistence are intentionally left as next steps.
+This is a working portfolio application, not a claimed production inspection platform. Local and Cloudflare Pages workflows use deterministic mock AI providers and lightweight persistence so the end-to-end flow is reliable without paid model credentials or a database. The repo includes Postgres schema, Terraform skeleton, provider interfaces, and AWS design notes to show the production direction, but real Bedrock calls, binary image storage, production auth, and durable relational persistence are intentionally left as next steps.
 
 ## Tech Stack
 
@@ -83,7 +83,7 @@ cd services/grading-java
 mvn spring-boot:run
 ```
 
-The API falls back to equivalent local grading rules when the Java service is not running so the portfolio demo remains usable.
+The API falls back to equivalent local grading rules when the Java service is not running so the portfolio workflow remains usable.
 
 ## Environment Variables
 
@@ -103,7 +103,7 @@ curl http://localhost:4000/api/inspections
 
 curl -X POST http://localhost:4000/api/inspections \
   -H 'content-type: application/json' \
-  -d '{"vin":"SYNTHVIN24DEMO01","year":2024,"make":"Hyundai","model":"Tucson","trim":"SEL","mileage":14250,"exteriorColor":"Gray","sellerSource":"Dealer trade","inspectorName":"Demo Inspector"}'
+  -d '{"vin":"5NMJBCAE4RH123456","year":2024,"make":"Hyundai","model":"Tucson","trim":"SEL","mileage":14250,"exteriorColor":"Gray","sellerSource":"Dealer trade","inspectorName":"John Smith"}'
 ```
 
 All responses use:
@@ -230,7 +230,7 @@ Production metrics include image analysis success rate, failed analysis count, r
 
 ## Security
 
-Local demo uses a role selector. Production design should use Cognito or enterprise OIDC, JWT validation, RBAC, S3 presigned uploads, object-level authorization, encrypted S3/RDS, Secrets Manager, least-privilege IAM, and CloudTrail.
+Local review uses a role selector. Production design should use Cognito or enterprise OIDC, JWT validation, RBAC, S3 presigned uploads, object-level authorization, encrypted S3/RDS, Secrets Manager, least-privilege IAM, and CloudTrail.
 
 ## AWS Deployment Architecture
 
@@ -282,7 +282,7 @@ Handled or documented:
 
 I would discuss:
 
-- Replace the in-memory demo store with Postgres before multiple reviewers, real uploads, or audit retention matter.
+- Replace the in-memory inspection store with Postgres before multiple reviewers, real uploads, or audit retention matter.
 - Keep Java grading separate only if condition rules are independently owned, versioned, or reused outside the Node API.
 - Use ECS/Fargate for long-running image/report workers when model calls, retries, or native image tooling outgrow Lambda limits.
 - Treat Bedrock output as untrusted input: validate schemas, store raw and validated output, and require human confirmation before facts affect reports.

@@ -109,7 +109,7 @@ export class MemoryStore {
   }
 
   defaultActor(): Actor {
-    const user = [...this.users.values()][0] ?? this.addUser({ name: "Demo Inspector", role: "inspector" });
+    const user = [...this.users.values()][0] ?? this.addUser({ name: "John Smith", role: "inspector" });
     return { id: user.id, name: user.name, role: user.role };
   }
 

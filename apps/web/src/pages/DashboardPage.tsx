@@ -27,7 +27,7 @@ export function DashboardPage() {
       <div className="page-heading">
         <div>
           <h1>Dashboard</h1>
-          <p>Seeded synthetic inspections for the local demo flow.</p>
+          <p>Active inspection queue with evidence completeness, grading, and review status.</p>
         </div>
         <button className="secondary-button" onClick={() => void load()}>
           <RefreshCw size={16} /> Refresh
@@ -79,4 +79,3 @@ export function DashboardPage() {
     </section>
   );
 }
-

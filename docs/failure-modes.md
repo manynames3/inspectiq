@@ -7,11 +7,10 @@
 - Unknown photo angle: keep angle unknown and require human review.
 - Low-confidence damage: store as pending suggestion only.
 - Duplicate analysis: return existing completed analysis unless forced.
-- Grading unavailable: local demo fallback mirrors Java rules; production should fail closed or retry based on policy.
+- Grading unavailable: local fallback mirrors Java rules; production should fail closed or retry based on policy.
 - Grading before evidence: API returns conflict with missing evidence.
 - Report provider failure: job moves to failed and inspection moves to `REPORT_FAILED`.
 - Duplicate report request: idempotency key returns or rejects active job.
 - Finalization too early: blocked unless report exists, evidence is complete, and status transition is valid.
 - Double-click finalize: endpoint returns the already finalized report.
 - Audit write failure: production should emit a structured error and fail the business action if accountability would be lost.
-

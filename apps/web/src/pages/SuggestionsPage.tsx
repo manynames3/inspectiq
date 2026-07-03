@@ -174,7 +174,7 @@ export function SuggestionsPage() {
           <div className="empty-state">
             <Sparkles size={22} />
             <strong>No suggestions yet</strong>
-            <span>Open an inspection, attach sample photos, and run analysis to populate this queue.</span>
+            <span>Open an inspection, attach required photos, and run analysis to populate this queue.</span>
           </div>
         ) : (
           <table>

@@ -10,7 +10,6 @@ Local checks:
 Common failures:
 
 - API unavailable: verify port 4000 is free and `npm run dev:api` is running.
-- Java grading service unavailable: the API falls back to identical local grading rules for demo continuity.
+- Java grading service unavailable: the API falls back to identical local grading rules for workflow continuity.
 - Report generation failed: check provider env vars and retry the job endpoint.
 - Incomplete inspection: accept photo-angle suggestions for all required photo angles.
-

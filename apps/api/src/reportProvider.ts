@@ -41,11 +41,10 @@ export const bedrockClaudeReportProvider: ReportProvider = {
   name: "bedrockClaudeReportProvider",
   promptVersion: "inspection-report-v1",
   async generate() {
-    throw new Error("Bedrock Claude report provider is configured but not implemented for local demo credentials.");
+    throw new Error("Bedrock Claude report provider is configured but not implemented for local credentials.");
   }
 };
 
 export function getReportProvider(): ReportProvider {
   return process.env.REPORT_PROVIDER === "bedrock" ? bedrockClaudeReportProvider : mockReportProvider;
 }
-

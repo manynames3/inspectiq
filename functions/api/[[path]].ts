@@ -203,10 +203,10 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
     return json({
       scorecard: [
         { pillar: "Operational excellence", status: "implemented", evidence: "Request IDs, structured logs, runbook, retryable report jobs, audit events." },
-        { pillar: "Security", status: "documented", evidence: "Role selector for demo; production plan covers Cognito/OIDC, RBAC, presigned S3, encryption, Secrets Manager." },
+        { pillar: "Security", status: "documented", evidence: "Role selector for local review; production plan covers Cognito/OIDC, RBAC, presigned S3, encryption, Secrets Manager." },
         { pillar: "Reliability", status: "implemented", evidence: "Provider failures captured, invalid schemas rejected, state machine guards finalization." },
         { pillar: "Performance efficiency", status: "designed", evidence: "CRUD stays in request path; report generation modeled as async-ready job." },
-        { pillar: "Cost optimization", status: "documented", evidence: "Mock providers for local work; cost model separates S3, model calls, RDS, logs." },
+        { pillar: "Cost optimization", status: "documented", evidence: "Cost model separates image storage, model calls, relational storage, and logs." },
         { pillar: "AI governance", status: "implemented", evidence: "AI suggestions require human confirmation and never directly finalize reports." }
       ],
       sampleImages,

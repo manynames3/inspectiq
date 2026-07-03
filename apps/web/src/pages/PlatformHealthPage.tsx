@@ -23,7 +23,7 @@ export function PlatformHealthPage() {
       <div className="page-heading">
         <div>
           <h1>Platform Health</h1>
-          <p>Well-Architected signals tied to the local workflow implementation.</p>
+          <p>Well-Architected signals tied to the inspection workflow implementation.</p>
         </div>
         <button className="secondary-button" onClick={() => void load()}>
           <RefreshCw size={16} /> Refresh
@@ -47,4 +47,3 @@ export function PlatformHealthPage() {
     </section>
   );
 }
-

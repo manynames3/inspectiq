@@ -31,8 +31,8 @@ export function App() {
   const [role, setRole] = useState<Actor["role"]>("reviewer");
   const location = useLocation();
   const actor = useMemo<Actor>(() => ({
-    id: `demo-${role}`,
-    name: role === "reviewer" ? "Review Lead" : role === "admin" ? "Admin Operator" : "Demo Inspector",
+    id: `operator-${role}`,
+    name: role === "reviewer" ? "Review Lead" : role === "admin" ? "Admin Operator" : "John Smith",
     role
   }), [role]);
 

@@ -6,7 +6,7 @@ import { useActor } from "../App.js";
 import type { Inspection } from "../types.js";
 
 const initialForm = {
-  vin: "SYNTHVIN24NEW001",
+  vin: "5NMJBCAE4RH123456",
   year: "2024",
   make: "Hyundai",
   model: "Tucson",
@@ -14,7 +14,7 @@ const initialForm = {
   mileage: "14250",
   exteriorColor: "Gray",
   sellerSource: "Dealer trade",
-  inspectorName: "Demo Inspector"
+  inspectorName: "John Smith"
 };
 
 export function NewInspectionPage() {
@@ -42,7 +42,7 @@ export function NewInspectionPage() {
       <div className="page-heading">
         <div>
           <h1>New Inspection</h1>
-          <p>Create a synthetic vehicle session for the demo workflow.</p>
+          <p>Create a vehicle inspection record for intake and review.</p>
         </div>
       </div>
       {error ? <div className="error-banner">{error}</div> : null}
@@ -63,4 +63,3 @@ export function NewInspectionPage() {
     </section>
   );
 }
-

@@ -396,11 +396,11 @@ export function InspectionDetailPage() {
 
               <div className="sample-actions evidence-actions">
                 <select value={sampleKey} onChange={(event) => setSampleKey(event.target.value)}>
-                  <option value="complete-clean-set">Complete sample set</option>
+                  <option value="complete-clean-set">Required photo set</option>
                   {sampleImages.map((sample) => <option key={sample.key} value={sample.key}>{sample.label}</option>)}
                 </select>
                 <button className="primary-button" disabled={busy !== null} onClick={() => void runAction("sample", () => api(`/api/inspections/${id}/photos/sample`, { method: "POST", body: JSON.stringify({ sampleKey }) }, actor))}>
-                  <ImagePlus size={16} /> Attach sample
+                  <ImagePlus size={16} /> Attach photo set
                 </button>
                 <label className="file-button">
                   <ImagePlus size={16} /> Upload metadata

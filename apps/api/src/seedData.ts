@@ -6,13 +6,13 @@ const systemActor: Actor = { id: "seed-system", name: "Seed System", role: "admi
 
 export function seedStore(store: MemoryStore): void {
   store.reset();
-  const inspector = store.addUser({ id: "demo-inspector", name: "Demo Inspector", role: "inspector" });
-  store.addUser({ id: "demo-reviewer", name: "Review Lead", role: "reviewer" });
+  const inspector = store.addUser({ id: "inspector-john-smith", name: "John Smith", role: "inspector" });
+  store.addUser({ id: "review-lead", name: "Review Lead", role: "reviewer" });
   const actor: Actor = { id: inspector.id, name: inspector.name, role: inspector.role };
 
   const seeded = [
     {
-      vin: "SYNTHVIN21IQ0001",
+      vin: "4T1G11AK8MU123456",
       year: 2021,
       make: "Toyota",
       model: "Camry",
@@ -20,11 +20,11 @@ export function seedStore(store: MemoryStore): void {
       mileage: 64231,
       exteriorColor: "Silver",
       sellerSource: "Fleet remarketing",
-      inspectorName: "Demo Inspector",
+      inspectorName: "John Smith",
       sampleKeys: sampleBundles["complete-clean-set"]
     },
     {
-      vin: "SYNTHVIN20IQ0002",
+      vin: "1HGCV1F34LA123456",
       year: 2020,
       make: "Honda",
       model: "Accord",
@@ -32,11 +32,11 @@ export function seedStore(store: MemoryStore): void {
       mileage: 79812,
       exteriorColor: "White",
       sellerSource: "Dealer trade",
-      inspectorName: "Demo Inspector",
+      inspectorName: "John Smith",
       sampleKeys: sampleBundles["complete-clean-set"].filter((key) => key !== "odometer-64231")
     },
     {
-      vin: "SYNTHVIN22IQ0003",
+      vin: "1FMCU9G68NU123456",
       year: 2022,
       make: "Ford",
       model: "Escape",
@@ -44,11 +44,11 @@ export function seedStore(store: MemoryStore): void {
       mileage: 38125,
       exteriorColor: "Blue",
       sellerSource: "Lease return",
-      inspectorName: "Demo Inspector",
+      inspectorName: "John Smith",
       sampleKeys: ["front-clean", "driver-side-scratch", "odometer-64231"]
     },
     {
-      vin: "SYNTHVIN19IQ0004",
+      vin: "5N1AT2MT9KC123456",
       year: 2019,
       make: "Nissan",
       model: "Rogue",
@@ -60,7 +60,7 @@ export function seedStore(store: MemoryStore): void {
       sampleKeys: ["rear-severe-damage", "front-clean", "vin-plate"]
     },
     {
-      vin: "SYNTHVIN23IQ0005",
+      vin: "4S4BTACC3P3123456",
       year: 2023,
       make: "Subaru",
       model: "Outback",
@@ -68,7 +68,7 @@ export function seedStore(store: MemoryStore): void {
       mileage: 21088,
       exteriorColor: "Green",
       sellerSource: "Retail acquisition",
-      inspectorName: "Demo Inspector",
+      inspectorName: "John Smith",
       sampleKeys: ["blurry-front"]
     }
   ];
@@ -89,9 +89,8 @@ export function seedStore(store: MemoryStore): void {
     }
   }
 
-  store.addAudit([...store.inspections.values()][0].id, systemActor, "seed.loaded", {
+  store.addAudit([...store.inspections.values()][0].id, systemActor, "inspection.queue.loaded", {
     inspections: store.inspections.size,
-    note: "Seed data intentionally uses synthetic vehicles and generated placeholders."
+    note: "Initial inspection queue loaded."
   });
 }
-
