@@ -11,8 +11,92 @@ type SuggestionRow = {
   suggestion: VisionSuggestion;
 };
 
-function valuePreview(value: unknown): string {
-  return JSON.stringify(value, null, 2);
+type EvidenceSummary = {
+  primary: string;
+  secondary?: string;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+}
+
+function displayValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "Not detected";
+  if (typeof value === "number") return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(2);
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value).replaceAll("_", " ");
+}
+
+function titleCase(value: unknown): string {
+  return displayValue(value)
+    .replace(/\b[a-z]/g, (match) => match.toUpperCase())
+    .replace(/\bVin\b/g, "VIN")
+    .replace(/\bAi\b/g, "AI");
+}
+
+function cleanExplanation(value: string): string {
+  return value
+    .replaceAll("_", " ")
+    .replace(/\s*AI suggestion\s*-\s*requires human confirmation\.?/i, "")
+    .replace(/\bvin\b/gi, "VIN")
+    .trim();
+}
+
+function suggestionTitle(value: string): string {
+  if (value === "damage_candidate") return "Damage Review";
+  if (value === "photo_angle") return "Photo Angle";
+  if (value === "extracted_text") return "Extracted Text";
+  if (value === "quality_warning") return "Photo Quality";
+  return titleCase(value);
+}
+
+function evidenceSummary(suggestion: VisionSuggestion): EvidenceSummary {
+  const value = asRecord(suggestion.suggestedValueJson);
+
+  if (suggestion.suggestionType === "photo_angle") {
+    return {
+      primary: `Photo angle: ${titleCase(value.photoAngle)}`,
+      secondary: "Used to complete the required photo checklist."
+    };
+  }
+
+  if (suggestion.suggestionType === "damage_candidate") {
+    return {
+      primary: `Damage: ${titleCase(value.location)} ${titleCase(value.damageType)}`,
+      secondary: `Severity: ${titleCase(value.severityEstimate)}`
+    };
+  }
+
+  if (suggestion.suggestionType === "extracted_text") {
+    const odometer = value.odometer ? `Odometer: ${formatOdometer(value.odometer)} mi` : null;
+    const vin = value.vin ? `VIN: ${displayValue(value.vin)}` : null;
+    return {
+      primary: [odometer, vin].filter(Boolean).join(" | ") || "Vehicle text extracted",
+      secondary: "Cross-check against vehicle metadata before approval."
+    };
+  }
+
+  if (suggestion.suggestionType === "quality_warning") {
+    return {
+      primary: `Photo quality: ${titleCase(value.warning)}`,
+      secondary: "Retake may be needed before final report."
+    };
+  }
+
+  const fallback = Object.entries(value)
+    .filter(([key, rowValue]) => key !== "requiresHumanConfirmation" && rowValue !== null && rowValue !== undefined && rowValue !== "")
+    .slice(0, 2)
+    .map(([key, rowValue]) => `${titleCase(key)}: ${displayValue(rowValue)}`);
+
+  return {
+    primary: fallback.join(" | ") || "Evidence available",
+    secondary: "Review source inspection for details."
+  };
+}
+
+function formatOdometer(value: unknown): string {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits ? Number(digits).toLocaleString() : displayValue(value);
 }
 
 export function SuggestionsPage() {
@@ -107,6 +191,7 @@ export function SuggestionsPage() {
             <tbody>
               {rows.map(({ record, suggestion }) => {
                 const actionable = suggestion.status === "pending" || suggestion.status === "edited";
+                const evidence = evidenceSummary(suggestion);
                 return (
                   <tr key={suggestion.id}>
                     <td>
@@ -114,12 +199,17 @@ export function SuggestionsPage() {
                       <small>{record.inspection.vin}</small>
                     </td>
                     <td>
-                      <strong>{suggestion.suggestionType.replaceAll("_", " ")}</strong>
-                      <small>{suggestion.explanation}</small>
+                      <strong>{suggestionTitle(suggestion.suggestionType)}</strong>
+                      <small>{cleanExplanation(suggestion.explanation)}</small>
                     </td>
                     <td><span className={`queue-status status-${suggestion.status}`}>{suggestion.status}</span></td>
                     <td>{Math.round(suggestion.confidence * 100)}%</td>
-                    <td><pre className="json-snippet">{valuePreview(suggestion.suggestedValueJson)}</pre></td>
+                    <td>
+                      <div className="evidence-summary">
+                        <strong>{evidence.primary}</strong>
+                        {evidence.secondary ? <small>{evidence.secondary}</small> : null}
+                      </div>
+                    </td>
                     <td>
                       <div className="table-actions">
                         <Link className="row-link" to={`/inspections/${record.inspection.id}`}>Open</Link>
