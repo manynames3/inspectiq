@@ -859,7 +859,7 @@ td small {
 .concept-workbench {
   height: calc(100vh - 60px);
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) 286px;
+  grid-template-columns: 370px minmax(0, 1fr) 286px;
   grid-template-rows: minmax(0, 1fr) 170px;
   align-items: stretch;
   border-bottom: 1px solid var(--border);
@@ -971,8 +971,8 @@ td small {
 .inspection-table-head,
 .inspection-row-link {
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr) 70px 46px;
-  column-gap: 4px;
+  grid-template-columns: 94px minmax(0, 1fr) 82px 56px;
+  column-gap: 8px;
   align-items: center;
 }
 
@@ -999,7 +999,7 @@ td small {
 }
 
 .inspection-row-link {
-  min-height: 58px;
+  min-height: 60px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   color: var(--text);
@@ -1016,11 +1016,14 @@ td small {
 .inspection-row-link strong,
 .inspection-row-link small {
   display: block;
+  min-width: 0;
 }
 
 .inspection-id-cell,
 .inspection-vehicle-cell {
   min-width: 0;
+  display: grid;
+  gap: 2px;
 }
 
 .inspection-id-cell strong {
@@ -1028,6 +1031,8 @@ td small {
   font-size: 10px;
   line-height: 1.2;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .inspection-vehicle-cell strong {
@@ -1039,14 +1044,17 @@ td small {
 }
 
 .inspection-vehicle-cell small {
-  margin-top: 3px;
   font-size: 10px;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .inspection-id-cell small {
-  margin-top: 3px;
   font-size: 8px;
   letter-spacing: 0;
+  line-height: 1.15;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1059,17 +1067,23 @@ td small {
 
 .inspection-row-link .status-pill {
   justify-self: start;
-  padding: 4px 6px;
-  font-size: 9px;
+  max-width: 82px;
+  min-height: 20px;
+  padding: 0 8px;
+  font-size: 10px;
   line-height: 1;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .inspection-row-link time {
   justify-self: end;
+  min-width: 56px;
   font-size: 11px;
   line-height: 1.15;
   text-align: right;
+  white-space: nowrap;
 }
 
 .inspection-pagination {
@@ -2082,6 +2096,39 @@ pre {
 
 .loading {
   color: var(--muted);
+}
+
+@media (max-width: 1280px) {
+  .concept-workbench {
+    grid-template-columns: 340px minmax(0, 1fr) 270px;
+  }
+
+  .inspection-table-head,
+  .inspection-row-link {
+    grid-template-columns: 88px minmax(0, 1fr) 76px 54px;
+    column-gap: 6px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .inspection-row-link.selected {
+    padding-left: 5px;
+  }
+
+  .inspection-id-cell strong {
+    font-size: 9px;
+  }
+
+  .inspection-row-link .status-pill {
+    max-width: 76px;
+    padding: 0 7px;
+    font-size: 9px;
+  }
+
+  .inspection-row-link time {
+    min-width: 54px;
+    font-size: 10px;
+  }
 }
 
 @media (max-width: 1120px) {
