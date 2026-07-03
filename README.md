@@ -18,13 +18,13 @@ Vehicle condition reports need consistent photo evidence, clear damage facts, ex
 
 1. Open the dashboard and choose a seeded inspection.
 2. Create a new inspection when needed.
-3. Attach photographic sample images or upload image metadata.
-4. Analyze photos with the local mock vision provider.
+3. Attach required photo evidence or upload vehicle photos.
+4. Analyze photos and validate the structured AI output.
 5. Review suggestions labelled `AI suggestion - requires human confirmation`.
 6. Accept, reject, or edit suggestions.
 7. Confirmed photo-angle suggestions update required evidence completeness.
 8. Accepted damage candidates become human-confirmed damage items.
-9. Run deterministic grading through the Java service interface.
+9. Calculate the condition grade from confirmed evidence.
 10. Generate a schema-validated AI report draft.
 11. Edit and finalize the report as a reviewer.
 12. Review the audit trail and Platform Health scorecard.
@@ -163,8 +163,8 @@ REPORT_FAILED -> AI_DRAFT_PENDING
 
 Local:
 
-1. Attach photographic sample image metadata.
-2. Run `mockVisionProvider`.
+1. Attach required photo evidence or upload a vehicle photo.
+2. Run the vision provider.
 3. Validate output with `VisionOutputSchema`.
 4. Save raw and validated output separately.
 5. Create pending suggestions.

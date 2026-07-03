@@ -20,7 +20,7 @@ export const mockReportProvider: ReportProvider = {
     const hasMissing = input.missingEvidence.length > 0;
     const lowConfidence = input.grade.score < 70 || hasMissing;
     const raw: AiReportOutput = {
-      summary: `${input.inspection.year} ${input.inspection.make} ${input.inspection.model} ${input.inspection.trim} graded ${input.grade.grade} with a deterministic score of ${input.grade.score}.`,
+      summary: `${input.inspection.year} ${input.inspection.make} ${input.inspection.model} ${input.inspection.trim} graded ${input.grade.grade} with a condition score of ${input.grade.score}.`,
       notableDefects: defects.length > 0 ? defects : ["No confirmed damage items were recorded."],
       missingEvidence: input.missingEvidence,
       recommendedDisclosure: defects.length > 0
@@ -28,7 +28,7 @@ export const mockReportProvider: ReportProvider = {
         : "Disclose that the condition grade is based on the confirmed photo set and human-reviewed inspection facts.",
       confidence: hasMissing ? 0.68 : lowConfidence ? 0.74 : 0.9,
       humanReviewRequired: hasMissing || input.grade.score < 75 || input.damageItems.some((item) => item.severity === "severe"),
-      reasoningSummary: "Draft uses only confirmed inspection facts, deterministic grade output, and missing-evidence checks. AI text is advisory and requires human approval."
+      reasoningSummary: "Draft uses confirmed inspection facts, the calculated condition grade, and missing-evidence checks. Reviewer approval is required before finalization."
     };
     return {
       raw,

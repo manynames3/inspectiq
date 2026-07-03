@@ -7,6 +7,8 @@ import { StatusPill } from "../components/StatusPill.js";
 import type { Inspection, InspectionBundle, SampleImage, VehiclePhoto, VisionSuggestion } from "../types.js";
 
 const requiredAngles = ["front", "rear", "driver_side", "passenger_side", "interior", "engine_bay", "odometer", "vin_plate"];
+const editablePhotoAngles = [...requiredAngles, "unknown"];
+const maxUploadBytes = 2_000_000;
 
 function formatAngleLabel(value: string | null | undefined) {
   if (!value) return "Angle pending";
@@ -46,7 +48,7 @@ function formatSuggestionType(value: string) {
 }
 
 function formatSuggestionValue(value: unknown) {
-  if (value === null || value === undefined || value === "") return "N/A";
+  if (value === null || value === undefined || value === "") return "Pending";
   if (typeof value === "number") return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(2);
   return String(value).replaceAll("_", " ");
 }
@@ -145,9 +147,90 @@ function suggestionFacts(suggestion: VisionSuggestion): SuggestionFact[] {
     const extracted = Object.entries(value)
       .filter(([, rowValue]) => rowValue !== null && rowValue !== undefined && rowValue !== "")
       .map(([key, rowValue]) => ({ label: formatAngleLabel(key), value: formatSuggestionValue(rowValue) }));
-    return extracted.length > 0 ? extracted : [{ label: "Extracted Text", value: "N/A" }];
+    return extracted.length > 0 ? extracted : [{ label: "Extracted Text", value: "No text found" }];
   }
   return Object.entries(value).slice(0, 4).map(([key, rowValue]) => ({ label: formatAngleLabel(key), value: formatSuggestionValue(rowValue) }));
+}
+
+function normalizePhotoAngleInput(value: string) {
+  const normalized = value.trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+  return editablePhotoAngles.includes(normalized) ? normalized : null;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  if (!/^image\/(jpeg|png|webp|svg\+xml)$/.test(file.type)) {
+    return Promise.reject(new Error("Upload a JPEG, PNG, WebP, or SVG image."));
+  }
+  if (file.size > maxUploadBytes) {
+    return Promise.reject(new Error("Upload an image under 2 MB for browser preview."));
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Could not read the selected image."));
+    });
+    reader.addEventListener("error", () => reject(new Error("Could not read the selected image.")));
+    reader.readAsDataURL(file);
+  });
+}
+
+function editSuggestionPayload(suggestion: VisionSuggestion): { suggestedValue: unknown; explanation?: string } | null {
+  const value = suggestionValueRecord(suggestion);
+
+  if (suggestion.suggestionType === "damage_candidate") {
+    const nextLocation = window.prompt("Update damage location", String(value.location ?? ""));
+    if (nextLocation === null) return null;
+    const trimmed = nextLocation.trim();
+    if (!trimmed) {
+      window.alert("Damage location is required.");
+      return null;
+    }
+    return {
+      suggestedValue: { ...value, location: trimmed },
+      explanation: "Reviewer updated the damage location before acceptance."
+    };
+  }
+
+  if (suggestion.suggestionType === "photo_angle") {
+    const nextAngle = window.prompt(
+      "Update photo angle",
+      formatAngleLabel(String(value.photoAngle ?? "unknown"))
+    );
+    if (nextAngle === null) return null;
+    const normalized = normalizePhotoAngleInput(nextAngle);
+    if (!normalized) {
+      window.alert("Use front, rear, driver side, passenger side, interior, engine bay, odometer, VIN plate, or unknown.");
+      return null;
+    }
+    return {
+      suggestedValue: { ...value, photoAngle: normalized },
+      explanation: "Reviewer updated the detected photo angle before acceptance."
+    };
+  }
+
+  if (suggestion.suggestionType === "extracted_text") {
+    const key = value.vin ? "vin" : "odometer";
+    const label = key === "vin" ? "VIN" : "odometer";
+    const nextText = window.prompt(`Update ${label}`, String(value[key] ?? ""));
+    if (nextText === null) return null;
+    const trimmed = nextText.trim();
+    if (!trimmed) {
+      window.alert(`${label.toUpperCase()} value is required.`);
+      return null;
+    }
+    return {
+      suggestedValue: { ...value, [key]: trimmed },
+      explanation: `Reviewer updated the extracted ${label} before acceptance.`
+    };
+  }
+
+  const nextNote = window.prompt("Update reviewer note", suggestion.explanation);
+  if (nextNote === null) return null;
+  return {
+    suggestedValue: value,
+    explanation: nextNote.trim() || suggestion.explanation
+  };
 }
 
 function suggestionFocus(suggestion: VisionSuggestion) {
@@ -385,7 +468,7 @@ export function InspectionDetailPage() {
                         <div>
                           <strong>{photoDisplayName(photo)}</strong>
                           <span>{photo.originalFilename.replace(/\.[^.]+$/, "")}</span>
-                          <span>{photo.detectedAngleConfidence ? `${Math.round(photo.detectedAngleConfidence * 100)}%` : "N/A"}</span>
+                          <span>{photo.detectedAngleConfidence ? `${Math.round(photo.detectedAngleConfidence * 100)}%` : "Pending"}</span>
                           {photo.qualityStatus === "warning" ? <em><AlertTriangle size={13} /> warning</em> : null}
                         </div>
                       </article>
@@ -403,14 +486,17 @@ export function InspectionDetailPage() {
                   <ImagePlus size={16} /> Attach photo set
                 </button>
                 <label className="file-button">
-                  <ImagePlus size={16} /> Upload metadata
+                  <ImagePlus size={16} /> Upload photo
                   <input type="file" accept="image/*" onChange={(event) => {
                     const file = event.target.files?.[0];
                     if (!file) return;
-                    void runAction("upload", () => api(`/api/inspections/${id}/photos/upload`, {
-                      method: "POST",
-                      body: JSON.stringify({ originalFilename: file.name, mimeType: file.type || "image/jpeg" })
-                    }, actor));
+                    void runAction("upload", async () => {
+                      const storageKey = await readFileAsDataUrl(file);
+                      return api(`/api/inspections/${id}/photos/upload`, {
+                        method: "POST",
+                        body: JSON.stringify({ originalFilename: file.name, mimeType: file.type || "image/jpeg", storageKey })
+                      }, actor);
+                    });
                   }} />
                 </label>
                 <button className="secondary-button" disabled={busy !== null} onClick={() => void runAction("analyze", async () => {
@@ -429,7 +515,7 @@ export function InspectionDetailPage() {
 
           <section className="bottom-dock">
             <article className="dock-panel">
-              <div className="dock-tabs"><strong>Deterministic grading</strong><span>Damage items</span></div>
+              <div className="dock-tabs"><strong>Condition grading</strong><span>Damage items</span></div>
               <div className="panel-header">
                 <h2>Damage items</h2>
                 <span>{bundle.damageItems.length} confirmed</span>
@@ -458,27 +544,27 @@ export function InspectionDetailPage() {
             </article>
 
             <article className="dock-panel report-panel">
-              <div className="dock-tabs"><strong>AI report draft</strong><span>Condition summary</span></div>
+              <div className="dock-tabs"><strong>Report draft</strong><span>Condition summary</span></div>
               <div className="report-actions dock-actions">
                 <button className="secondary-button" disabled={busy !== null} onClick={() => void runAction("grade", () => api(`/api/inspections/${id}/grade`, { method: "POST", body: JSON.stringify({ idempotencyKey: `grade-${id}` }) }, actor))}>
-                  <ShieldCheck size={16} /> Run Java grade
+                  <ShieldCheck size={16} /> Calculate grade
                 </button>
                 <button className="secondary-button" disabled={busy !== null} onClick={() => void runAction("report", () => api(`/api/inspections/${id}/ai-report`, { method: "POST", body: JSON.stringify({ idempotencyKey: `report-${id}` }) }, actor))}>
-                  <Bot size={16} /> Generate AI draft
+                  <Bot size={16} /> Draft report
                 </button>
               </div>
               <div className="grade-strip">
-                <strong>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} · ${bundle.conditionGrade.score}` : "No grade yet"}</strong>
-                <span>{bundle.conditionGrade?.gradingVersion ?? "Deterministic score generated by grading service"}</span>
+                <strong>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} · ${bundle.conditionGrade.score}` : "Grade not calculated"}</strong>
+                <span>{bundle.conditionGrade ? "Score based on evidence completeness, mileage, age, and confirmed damage." : "Condition score appears after grading."}</span>
               </div>
               {bundle.aiReportDraft ? (
                 <div className="ai-draft">
-                  <h3>AI draft output</h3>
+                  <h3>Draft summary</h3>
                   <p>{bundle.aiReportDraft.outputJson.summary}</p>
                   <small>Confidence {Math.round(bundle.aiReportDraft.confidence * 100)}% · human review {bundle.aiReportDraft.humanReviewRequired ? "required" : "optional"}</small>
                 </div>
               ) : null}
-              <textarea value={reportBody} onChange={(event) => setReportBody(event.target.value)} placeholder="AI-assisted report draft appears here after generation." />
+              <textarea value={reportBody} onChange={(event) => setReportBody(event.target.value)} placeholder="Report draft appears here after generation." />
               <div className="report-actions">
                 <button className="secondary-button" disabled={!bundle.finalReport} onClick={() => bundle.finalReport && void runAction("save-report", () => api(`/api/reports/${bundle.finalReport!.id}`, { method: "PATCH", body: JSON.stringify({ reportBody }) }, actor))}>
                   <FileText size={16} /> Save report edits
@@ -531,7 +617,6 @@ function SuggestionCard({ suggestion, photo, disabled, onAccept, onReject, onEdi
   onReject: () => Promise<unknown>;
   onEdit: (value: { suggestedValue: unknown; explanation?: string }) => Promise<unknown>;
 }) {
-  const readableValue = JSON.stringify(suggestion.suggestedValueJson, null, 2);
   const rows = suggestionFacts(suggestion);
   const confidencePercent = Math.round(suggestion.confidence * 100);
   return (
@@ -565,13 +650,8 @@ function SuggestionCard({ suggestion, photo, disabled, onAccept, onReject, onEdi
         <button disabled={disabled} className="accept-button" onClick={() => void onAccept()}><Check size={15} /> Accept</button>
         <button disabled={disabled} className="reject-button" onClick={() => void onReject()}><X size={15} /> Reject</button>
         <button disabled={disabled} className="secondary-button edit-suggestion-button" onClick={() => {
-          const next = window.prompt("Edit suggested JSON before accepting", readableValue);
-          if (!next) return;
-          try {
-            void onEdit({ suggestedValue: JSON.parse(next), explanation: "Edited by reviewer before acceptance." });
-          } catch {
-            window.alert("Edited value must be valid JSON.");
-          }
+          const payload = editSuggestionPayload(suggestion);
+          if (payload) void onEdit(payload);
         }}><Pencil size={15} /> Edit</button>
       </div>
     </article>

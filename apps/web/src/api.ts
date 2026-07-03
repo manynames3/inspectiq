@@ -6,6 +6,7 @@ export const assetUrl = (storageKey: string): string => {
   const migratedStorageKey = storageKey.startsWith("/sample-images/")
     ? storageKey.replace(/\.svg$/i, ".jpg")
     : storageKey;
+  if (migratedStorageKey.startsWith("data:") || migratedStorageKey.startsWith("blob:")) return migratedStorageKey;
   if (migratedStorageKey.startsWith("http")) return migratedStorageKey;
   return `${API_BASE}${migratedStorageKey}`;
 };

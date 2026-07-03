@@ -175,7 +175,7 @@ function reportBodyFromDraft(output: unknown): string {
     "",
     `Recommended disclosure: ${draft.recommendedDisclosure ?? ""}`,
     "",
-    `Reasoning summary: ${draft.reasoningSummary ?? ""}`
+    `Review rationale: ${draft.reasoningSummary ?? ""}`
   ].join("\n");
 }
 
@@ -263,7 +263,7 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
     const input = UploadPhotoSchema.parse(body);
     return json(store.addPhoto({
       inspectionId: segments[1],
-      storageKey: input.storageKey ?? `/sample-images/front-clean.jpg`,
+      storageKey: input.storageKey ?? `/uploads/${crypto.randomUUID()}-${input.originalFilename}`,
       originalFilename: input.originalFilename,
       mimeType: input.mimeType,
       uploadedBy: actor.id,
@@ -375,7 +375,7 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   if (segments[0] === "inspections" && segments[1] && segments[2] === "ai-report" && method === "POST") {
     const inspection = store.getInspection(segments[1]);
     const grade = store.latestGrade(inspection.id);
-    if (!grade) throw conflict("Generate a deterministic condition grade before requesting an AI report.");
+    if (!grade) throw conflict("Calculate the condition grade before requesting a report draft.");
     if (inspection.status !== "GRADED" && inspection.status !== "REPORT_FAILED" && inspection.status !== "HUMAN_REVIEW_REQUIRED") {
       throw conflict(`Cannot request AI report from status ${inspection.status}.`);
     }

@@ -6,7 +6,7 @@ import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./revi
 function reportSummary(record: InspectionReviewRecord): string {
   const output = record.bundle.aiReportDraft?.outputJson as { summary?: string } | undefined;
   if (output?.summary) return output.summary;
-  return record.bundle.finalReport?.reportBody.split("\n").find(Boolean) ?? "Generate an AI draft from the inspection workbench.";
+  return record.bundle.finalReport?.reportBody.split("\n").find(Boolean) ?? "Generate a report draft from the inspection workbench.";
 }
 
 export function ReportsPage() {
@@ -36,7 +36,7 @@ export function ReportsPage() {
       <div className="page-heading">
         <div>
           <h1>Report</h1>
-          <p>AI-assisted condition report drafts, reviewer status, and finalization coverage.</p>
+          <p>Condition report drafts, reviewer status, and finalization coverage.</p>
         </div>
         <button className="secondary-button" onClick={() => void load()}>
           <RefreshCw size={16} /> Refresh
@@ -96,8 +96,8 @@ export function ReportsPage() {
                     </td>
                     <td><span className={`queue-status report-${status.toLowerCase().replaceAll(" ", "-")}`}>{status}</span></td>
                     <td>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} ${bundle.conditionGrade.score}` : "Not graded"}</td>
-                    <td>{bundle.aiReportDraft ? `${Math.round(bundle.aiReportDraft.confidence * 100)}%` : "N/A"}</td>
-                    <td>{bundle.finalReport?.version ?? "N/A"}</td>
+                    <td>{bundle.aiReportDraft ? `${Math.round(bundle.aiReportDraft.confidence * 100)}%` : "Pending"}</td>
+                    <td>{bundle.finalReport?.version ?? "Pending"}</td>
                     <td>{reportSummary(record)}</td>
                     <td><Link className="row-link" to={`/inspections/${inspection.id}`}>Open</Link></td>
                   </tr>

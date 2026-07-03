@@ -4,7 +4,7 @@ Local review:
 
 - Role selector for inspector, reviewer, and admin.
 - No hardcoded secrets.
-- Synthetic data and generated placeholder images only.
+- Synthetic vehicle records and license-safe photographic fixtures only.
 
 Production plan:
 

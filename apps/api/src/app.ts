@@ -67,7 +67,7 @@ function reportBodyFromDraft(output: unknown): string {
     "",
     `Recommended disclosure: ${draft.recommendedDisclosure ?? ""}`,
     "",
-    `Reasoning summary: ${draft.reasoningSummary ?? ""}`
+    `Review rationale: ${draft.reasoningSummary ?? ""}`
   ].join("\n");
 }
 
@@ -84,7 +84,7 @@ export function createApp(appStore = defaultStore): express.Express {
     customProps: (_req, res) => ({ requestId: res.locals.requestId })
   }));
   app.use(cors({ origin: process.env.WEB_ORIGIN ?? true }));
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "4mb" }));
 
   const sampleImagePath = path.resolve(process.cwd(), "../../sample-data/images");
   app.use("/sample-images", express.static(sampleImagePath));
@@ -274,7 +274,7 @@ export function createApp(appStore = defaultStore): express.Express {
     const actor = actorFromRequest(req, appStore);
     const inspection = appStore.getInspection(req.params.id);
     const grade = appStore.latestGrade(inspection.id);
-    if (!grade) throw conflict("Generate a deterministic condition grade before requesting an AI report.");
+    if (!grade) throw conflict("Calculate the condition grade before requesting a report draft.");
     if (inspection.status !== "GRADED" && inspection.status !== "REPORT_FAILED" && inspection.status !== "HUMAN_REVIEW_REQUIRED") {
       throw conflict(`Cannot request AI report from status ${inspection.status}.`);
     }

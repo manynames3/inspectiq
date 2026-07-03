@@ -76,7 +76,7 @@ export const UploadPhotoSchema = z.object({
   originalFilename: z.string().trim().min(1).max(180),
   mimeType: z.string().trim().regex(/^image\/(jpeg|png|webp|svg\+xml)$/),
   declaredAngle: PhotoAngleSchema.optional().nullable(),
-  storageKey: z.string().trim().max(240).optional()
+  storageKey: z.string().trim().max(3_000_000).optional()
 });
 
 export const SamplePhotoSchema = z.object({
@@ -187,4 +187,3 @@ export type ApiEnvelope<T> = {
 export function formatAngle(angle: string): string {
   return angle.replaceAll("_", " ");
 }
-
