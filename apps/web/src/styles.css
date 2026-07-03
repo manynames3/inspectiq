@@ -871,7 +871,7 @@ td small {
   height: calc(100vh - 60px);
   display: grid;
   grid-template-columns: 370px minmax(0, 1fr) 286px;
-  grid-template-rows: minmax(0, 1fr) 170px;
+  grid-template-rows: minmax(0, 1fr) clamp(330px, 36vh, 380px);
   align-items: stretch;
   border-bottom: 1px solid var(--border);
   overflow: hidden;
@@ -1487,20 +1487,24 @@ td small {
   grid-column: 1 / -1;
   grid-row: 2;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: minmax(290px, 1fr) minmax(340px, 1.08fr) minmax(290px, 1fr);
   min-height: 0;
+  overflow: hidden;
   border-top: 1px solid var(--border);
   background: #ffffff;
 }
 
 .dock-panel {
+  display: grid;
+  grid-template-rows: 32px minmax(0, 1fr);
   border-radius: 0;
   border-left: 0;
   border-top: 0;
   border-bottom: 0;
   padding: 0;
   min-width: 0;
-  overflow: auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .dock-panel + .dock-panel {
@@ -1508,7 +1512,7 @@ td small {
 }
 
 .dock-tabs {
-  height: 34px;
+  height: 32px;
   display: flex;
   align-items: center;
   gap: 18px;
@@ -1529,33 +1533,56 @@ td small {
   color: var(--muted);
 }
 
-.dock-panel .panel-header,
-.dock-panel .damage-list,
-.dock-panel .damage-form,
-.dock-panel .grade-strip,
-.dock-panel .ai-draft,
-.dock-panel textarea,
-.dock-panel .report-actions {
-  margin-left: 14px;
-  margin-right: 14px;
+.dock-body {
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px 14px 10px;
+}
+
+.dock-body > * {
+  min-width: 0;
+}
+
+.damage-dock-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.report-dock-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.audit-list {
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
 }
 
 .dock-panel .panel-header {
-  margin-top: 10px;
+  margin: 0;
 }
 
 .dock-actions {
   justify-content: flex-end;
-  margin-top: 12px;
+  margin: 0;
 }
 
 .dock-panel textarea {
-  min-height: 76px;
-  width: calc(100% - 28px);
+  flex: 1 1 64px;
+  min-height: 64px;
+  height: 100%;
+  width: 100%;
+  resize: none;
 }
 
 .compact-list {
-  max-height: 92px;
+  min-height: 0;
+  max-height: none;
   overflow: auto;
 }
 
@@ -1646,10 +1673,10 @@ td small {
   gap: 4px;
 }
 
-.damage-list,
-.audit-panel {
+.damage-list {
   display: grid;
   gap: 8px;
+  align-content: start;
 }
 
 .damage-row,
@@ -1664,6 +1691,15 @@ td small {
   font-size: 13px;
 }
 
+.damage-row strong,
+.damage-row span,
+.damage-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .damage-row small,
 .audit-row span,
 .audit-row time,
@@ -1673,19 +1709,37 @@ td small {
 }
 
 .damage-form {
-  margin-top: 12px;
+  margin-top: 0;
+  width: 100%;
+  min-width: 0;
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 150px 130px auto;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(82px, 0.65fr) minmax(74px, 0.55fr) minmax(64px, auto);
+  gap: 8px;
+}
+
+.damage-form input,
+.damage-form select {
+  min-width: 0;
+}
+
+.damage-form .secondary-button {
+  min-width: 0;
+  padding-left: 10px;
+  padding-right: 10px;
 }
 
 .grade-strip,
 .ai-draft {
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 12px;
+  padding: 8px 10px;
+  margin-bottom: 0;
   background: #f8fafc;
+}
+
+.report-dock-body .ai-draft {
+  max-height: 76px;
+  overflow: auto;
 }
 
 .grade-strip strong,
@@ -2140,6 +2194,14 @@ pre {
     min-width: 54px;
     font-size: 10px;
   }
+
+  .damage-form {
+    grid-template-columns: minmax(0, 1fr) minmax(82px, 0.7fr) minmax(64px, auto);
+  }
+
+  .damage-form input {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 1120px) {
@@ -2189,6 +2251,10 @@ pre {
   .evidence-board,
   .bottom-dock {
     grid-template-columns: 1fr;
+  }
+
+  .audit-panel {
+    height: 360px;
   }
 
   .detail-core-grid {
