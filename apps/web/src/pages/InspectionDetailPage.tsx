@@ -51,27 +51,128 @@ function formatSuggestionValue(value: unknown) {
   return String(value).replaceAll("_", " ");
 }
 
-function suggestionRows(suggestion: VisionSuggestion): Array<[string, string]> {
-  const value = suggestion.suggestedValueJson as Record<string, unknown>;
+function formatTitleValue(value: unknown) {
+  return formatSuggestionValue(value).replace(/\b[a-z]/g, (match) => match.toUpperCase());
+}
+
+function suggestionValueRecord(suggestion: VisionSuggestion): Record<string, unknown> {
+  return typeof suggestion.suggestedValueJson === "object" && suggestion.suggestedValueJson !== null
+    ? suggestion.suggestedValueJson as Record<string, unknown>
+    : {};
+}
+
+const repairEstimateRanges: Record<string, Record<string, string>> = {
+  scratch: {
+    minor: "$150 - $300",
+    moderate: "$300 - $700",
+    severe: "$700 - $1,500",
+    unknown: "Estimator review"
+  },
+  dent: {
+    minor: "$200 - $450",
+    moderate: "$500 - $1,200",
+    severe: "$1,200 - $2,500",
+    unknown: "Estimator review"
+  },
+  crack: {
+    minor: "$250 - $600",
+    moderate: "$600 - $1,400",
+    severe: "$1,400 - $3,000",
+    unknown: "Estimator review"
+  },
+  paint_damage: {
+    minor: "$250 - $600",
+    moderate: "$600 - $1,500",
+    severe: "$1,500 - $3,500",
+    unknown: "Estimator review"
+  },
+  glass_damage: {
+    minor: "$200 - $500",
+    moderate: "$500 - $900",
+    severe: "$900 - $1,600",
+    unknown: "Estimator review"
+  },
+  wheel_damage: {
+    minor: "$125 - $350",
+    moderate: "$350 - $850",
+    severe: "$850 - $1,800",
+    unknown: "Estimator review"
+  },
+  interior_wear: {
+    minor: "$75 - $250",
+    moderate: "$250 - $750",
+    severe: "$750 - $1,800",
+    unknown: "Estimator review"
+  },
+  unknown: {
+    minor: "$150 - $400",
+    moderate: "$400 - $1,000",
+    severe: "$1,000 - $2,500",
+    unknown: "Estimator review"
+  }
+};
+
+function normalizedEstimateKey(value: unknown) {
+  return String(value ?? "unknown").toLowerCase().replaceAll(" ", "_");
+}
+
+function repairEstimateForDamage(value: Record<string, unknown>) {
+  const damageType = normalizedEstimateKey(value.damageType);
+  const severity = normalizedEstimateKey(value.severityEstimate);
+  return repairEstimateRanges[damageType]?.[severity] ?? repairEstimateRanges.unknown[severity] ?? repairEstimateRanges.unknown.unknown;
+}
+
+type SuggestionFact = {
+  label: string;
+  value: string;
+};
+
+function suggestionFacts(suggestion: VisionSuggestion): SuggestionFact[] {
+  const value = suggestionValueRecord(suggestion);
   if (suggestion.suggestionType === "damage_candidate") {
     return [
-      ["Damage Type", formatSuggestionValue(value.damageType)],
-      ["Severity", formatSuggestionValue(value.severityEstimate)],
-      ["Location", formatSuggestionValue(value.location)],
-      ["Confidence", `${Math.round(suggestion.confidence * 100)}%`]
-    ];
+      ["Damage Type", formatTitleValue(value.damageType)],
+      ["Severity", formatTitleValue(value.severityEstimate)],
+      ["Estimated Cost", repairEstimateForDamage(value)]
+    ].map(([label, rowValue]) => ({ label, value: rowValue }));
   }
   if (suggestion.suggestionType === "photo_angle") {
     return [
-      ["Detected Angle", formatAngleLabel(formatSuggestionValue(value.photoAngle))],
-      ["Confidence", `${Math.round(suggestion.confidence * 100)}%`]
+      { label: "Detected Angle", value: formatAngleLabel(formatSuggestionValue(value.photoAngle)) }
     ];
   }
   if (suggestion.suggestionType === "extracted_text") {
-    const extracted = Object.entries(value).map(([key, rowValue]) => [formatAngleLabel(key), formatSuggestionValue(rowValue)] as [string, string]);
-    return [...extracted, ["Confidence", `${Math.round(suggestion.confidence * 100)}%`]];
+    const extracted = Object.entries(value)
+      .filter(([, rowValue]) => rowValue !== null && rowValue !== undefined && rowValue !== "")
+      .map(([key, rowValue]) => ({ label: formatAngleLabel(key), value: formatSuggestionValue(rowValue) }));
+    return extracted.length > 0 ? extracted : [{ label: "Extracted Text", value: "N/A" }];
   }
-  return Object.entries(value).slice(0, 4).map(([key, rowValue]) => [formatAngleLabel(key), formatSuggestionValue(rowValue)] as [string, string]);
+  return Object.entries(value).slice(0, 4).map(([key, rowValue]) => ({ label: formatAngleLabel(key), value: formatSuggestionValue(rowValue) }));
+}
+
+function suggestionFocus(suggestion: VisionSuggestion) {
+  const value = suggestionValueRecord(suggestion);
+  if (suggestion.suggestionType === "damage_candidate") return formatTitleValue(value.location);
+  if (suggestion.suggestionType === "photo_angle") return formatAngleLabel(formatSuggestionValue(value.photoAngle));
+  if (suggestion.suggestionType === "extracted_text") {
+    if (value.odometer) return "Odometer";
+    if (value.vin) return "VIN";
+    return "Extracted text";
+  }
+  if (suggestion.suggestionType === "quality_warning") return "Photo quality";
+  return formatSuggestionType(suggestion.suggestionType);
+}
+
+function suggestionNote(suggestion: VisionSuggestion) {
+  const value = suggestionValueRecord(suggestion);
+  return typeof value.explanation === "string" && value.explanation.length > 0 ? value.explanation : suggestion.explanation;
+}
+
+function suggestionPriority(suggestion: VisionSuggestion) {
+  if (suggestion.suggestionType === "damage_candidate") return 0;
+  if (suggestion.suggestionType === "extracted_text") return 1;
+  if (suggestion.suggestionType === "quality_warning") return 2;
+  return 3;
 }
 
 export function InspectionDetailPage() {
@@ -146,7 +247,10 @@ export function InspectionDetailPage() {
 
   if (!bundle || !id) return <section className="page"><div className="loading">Loading inspection...</div></section>;
 
-  const pendingSuggestions = bundle.suggestions.filter((suggestion) => suggestion.status === "pending" || suggestion.status === "edited");
+  const pendingSuggestions = bundle.suggestions
+    .filter((suggestion) => suggestion.status === "pending" || suggestion.status === "edited")
+    .slice()
+    .sort((left, right) => suggestionPriority(left) - suggestionPriority(right));
   const workflowStep = bundle.inspection.status === "FINALIZED" ? 4 : bundle.inspection.status === "HUMAN_REVIEW_REQUIRED" || bundle.inspection.status === "AI_DRAFTED" ? 3 : bundle.conditionGrade ? 2 : 1;
   const capturedEvidencePercent = Math.round((requiredAngles.filter((angle) => capturedAngles.has(angle)).length / requiredAngles.length) * 100);
 
@@ -399,7 +503,6 @@ export function InspectionDetailPage() {
 
         <aside className="review-column">
           <div className="review-heading">
-            <Bot size={18} />
             <strong>AI suggestion — requires human confirmation.</strong>
           </div>
           {pendingSuggestions.length === 0 ? <p className="empty-copy">Analyze photos to create reviewable suggestions.</p> : null}
@@ -429,28 +532,35 @@ function SuggestionCard({ suggestion, photo, disabled, onAccept, onReject, onEdi
   onEdit: (value: { suggestedValue: unknown; explanation?: string }) => Promise<unknown>;
 }) {
   const readableValue = JSON.stringify(suggestion.suggestedValueJson, null, 2);
-  const rows = suggestionRows(suggestion);
+  const rows = suggestionFacts(suggestion);
+  const confidencePercent = Math.round(suggestion.confidence * 100);
   return (
     <article className="suggestion-card">
+      <div className="suggestion-context">
+        <span>Focus: <strong>{suggestionFocus(suggestion)}</strong></span>
+        <span className="model-chip">AI v1.3.2 <ChevronRight size={13} /></span>
+      </div>
       {photo ? (
         <div className="suggestion-photo">
           <img src={assetUrl(photo.storageKey)} alt={photo.originalFilename} />
-          <span>{photoDisplayName(photo)}</span>
         </div>
       ) : null}
-      <div className="suggestion-summary">
-        <strong>{formatSuggestionType(suggestion.suggestionType)}</strong>
-        <span>{Math.round(suggestion.confidence * 100)}% confidence</span>
-      </div>
       <dl className="suggestion-facts">
-        {rows.map(([label, value]) => (
+        {rows.map(({ label, value }) => (
           <div key={label}>
             <dt>{label}</dt>
             <dd>{value}</dd>
           </div>
         ))}
+        <div className="confidence-fact">
+          <dt>Confidence</dt>
+          <dd><ConfidenceMeter percent={confidencePercent} /></dd>
+        </div>
+        <div className="notes-fact">
+          <dt>Notes</dt>
+          <dd>{suggestionNote(suggestion)}</dd>
+        </div>
       </dl>
-      <p>{suggestion.explanation}</p>
       <div className="suggestion-actions">
         <button disabled={disabled} className="accept-button" onClick={() => void onAccept()}><Check size={15} /> Accept</button>
         <button disabled={disabled} className="reject-button" onClick={() => void onReject()}><X size={15} /> Reject</button>
@@ -464,10 +574,15 @@ function SuggestionCard({ suggestion, photo, disabled, onAccept, onReject, onEdi
           }
         }}><Pencil size={15} /> Edit</button>
       </div>
-      <details className="schema-details">
-        <summary>Validated schema payload</summary>
-        <pre>{readableValue}</pre>
-      </details>
     </article>
+  );
+}
+
+function ConfidenceMeter({ percent }: { percent: number }) {
+  const clampedPercent = Math.max(0, Math.min(100, percent));
+  return (
+    <span className="confidence-meter" style={{ background: `conic-gradient(#0f766e ${clampedPercent * 3.6}deg, #e2e8f0 0deg)` }}>
+      <span>{clampedPercent}%</span>
+    </span>
   );
 }

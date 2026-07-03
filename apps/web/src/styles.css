@@ -1360,10 +1360,10 @@ td small {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding-bottom: 11px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 12px;
-  color: #0f172a;
+  padding-bottom: 6px;
+  border-bottom: 0;
+  margin-bottom: 4px;
+  color: #0b66d8;
   font-size: 14px;
 }
 
@@ -1373,25 +1373,57 @@ td small {
 }
 
 .suggestion-card {
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  border: 0;
+  border-radius: 0;
   padding: 0;
   display: grid;
   gap: 0;
   margin-bottom: 12px;
-  overflow: hidden;
+  overflow: visible;
   background: #ffffff;
+}
+
+.suggestion-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #0f172a;
+  font-size: 11px;
+}
+
+.suggestion-context strong {
+  font-weight: 700;
+}
+
+.model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--muted);
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 650;
 }
 
 .suggestion-photo {
   position: relative;
-  min-height: 132px;
+  min-height: 0;
   background: #e5eaf2;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  overflow: hidden;
 }
 
 .suggestion-photo img {
   width: 100%;
-  height: 160px;
+  height: 128px;
   display: block;
   object-fit: cover;
 }
@@ -1431,14 +1463,14 @@ td small {
   display: grid;
   gap: 8px;
   margin: 0;
-  padding: 0 12px 10px;
+  padding: 0 6px 9px;
 }
 
 .suggestion-facts div {
   display: grid;
-  grid-template-columns: 100px minmax(0, 1fr);
+  grid-template-columns: 106px minmax(0, 1fr);
   gap: 10px;
-  align-items: baseline;
+  align-items: center;
 }
 
 .suggestion-facts dt {
@@ -1451,7 +1483,52 @@ td small {
   color: #0f172a;
   font-size: 12px;
   font-weight: 650;
-  text-transform: capitalize;
+  text-transform: none;
+}
+
+.confidence-fact dd {
+  display: flex;
+  align-items: center;
+}
+
+.confidence-meter {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  border-radius: 50%;
+  color: #0f172a;
+}
+
+.confidence-meter::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.confidence-meter span {
+  position: relative;
+  z-index: 1;
+  color: #0f172a;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.notes-fact {
+  align-items: start;
+}
+
+.notes-fact dd {
+  color: #475569;
+  font-weight: 500;
+  line-height: 1.35;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 pre {
@@ -1477,8 +1554,20 @@ pre {
 .suggestion-card .suggestion-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding: 0 12px 12px;
+  gap: 7px;
+  padding: 0 6px 0;
+}
+
+.suggestion-card .accept-button,
+.suggestion-card .reject-button,
+.suggestion-card .edit-suggestion-button {
+  min-height: 34px;
+}
+
+.suggestion-card .reject-button {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #ffffff;
 }
 
 .suggestion-card .suggestion-actions .edit-suggestion-button {
