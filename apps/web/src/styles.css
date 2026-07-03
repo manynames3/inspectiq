@@ -644,7 +644,7 @@ td small {
 .concept-workbench {
   height: calc(100vh - 60px);
   display: grid;
-  grid-template-columns: 268px minmax(0, 1fr) 286px;
+  grid-template-columns: 370px minmax(0, 1fr) 286px;
   grid-template-rows: minmax(0, 1fr) 170px;
   align-items: stretch;
   border-bottom: 1px solid var(--border);
@@ -660,11 +660,13 @@ td small {
 .inspection-list-panel {
   grid-column: 1;
   grid-row: 1;
+  display: grid;
+  grid-template-rows: 48px 58px 34px 36px minmax(0, 1fr) 34px;
   border-top: 0;
   border-bottom: 0;
   border-left: 0;
   border-radius: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .inspection-list-header {
@@ -680,12 +682,52 @@ td small {
   font-size: 14px;
 }
 
-.inspection-search {
-  width: calc(100% - 24px);
-  margin: 12px;
+.inspection-list-header .icon-button {
+  border: 0;
+  background: transparent;
+}
+
+.inspection-list-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 12px;
+}
+
+.inspection-search-field {
   height: 32px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--border);
   border-radius: 4px;
+  background: #ffffff;
+  color: #94a3b8;
+  padding: 0 9px;
+}
+
+.inspection-search-field input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  padding: 0 0 0 7px;
   font-size: 12px;
+  color: #334155;
+}
+
+.queue-options-button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
 }
 
 .inspection-tabs {
@@ -699,8 +741,10 @@ td small {
   place-items: center;
   min-height: 34px;
   color: #475569;
-  font-size: 12px;
+  font-size: 11px;
   border-bottom: 2px solid transparent;
+  text-align: center;
+  line-height: 1.15;
 }
 
 .inspection-tabs span.active {
@@ -709,21 +753,43 @@ td small {
   font-weight: 700;
 }
 
-.inspection-rows {
+.inspection-table-head,
+.inspection-row-link {
   display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 70px 46px;
+  column-gap: 4px;
+  align-items: center;
+}
+
+.inspection-table-head {
+  min-height: 36px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  color: #334155;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.inspection-table-head span:last-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.inspection-rows {
+  display: block;
+  min-height: 0;
+  overflow: auto;
 }
 
 .inspection-row-link {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 70px 42px;
-  gap: 6px;
-  align-items: center;
   min-height: 58px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   color: var(--text);
   text-decoration: none;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .inspection-row-link.selected {
@@ -737,8 +803,35 @@ td small {
   display: block;
 }
 
-.inspection-row-link strong {
-  font-size: 12px;
+.inspection-id-cell,
+.inspection-vehicle-cell {
+  min-width: 0;
+}
+
+.inspection-id-cell strong {
+  color: #0b66d8;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.inspection-vehicle-cell strong {
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inspection-vehicle-cell small {
+  margin-top: 3px;
+  font-size: 10px;
+}
+
+.inspection-id-cell small {
+  margin-top: 3px;
+  font-size: 8px;
+  letter-spacing: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -752,7 +845,45 @@ td small {
 .inspection-row-link .status-pill {
   justify-self: start;
   padding: 4px 6px;
-  font-size: 10px;
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.inspection-row-link time {
+  justify-self: end;
+  font-size: 11px;
+  line-height: 1.15;
+  text-align: right;
+}
+
+.inspection-pagination {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(5, 26px);
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  border-top: 1px solid var(--border);
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
+}
+
+.inspection-pagination button {
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #334155;
+  padding: 0;
+}
+
+.inspection-pagination button.active {
+  background: #e5e7eb;
+  color: #0f172a;
+  font-weight: 700;
 }
 
 .detail-stage {

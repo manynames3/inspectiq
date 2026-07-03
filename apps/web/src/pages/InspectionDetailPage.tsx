@@ -1,4 +1,4 @@
-import { AlertTriangle, Bot, Check, FileText, Flag, ImagePlus, Pencil, Play, RefreshCw, ShieldCheck, UserRound, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, Bot, Check, ChevronLeft, ChevronRight, FileText, Filter, Flag, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, assetUrl } from "../api.js";
@@ -23,6 +23,22 @@ function formatAngleLabel(value: string | null | undefined) {
 
 function photoDisplayName(photo: InspectionBundle["photos"][number]) {
   return formatAngleLabel(photo.detectedAngle ?? photo.declaredAngle ?? photo.originalFilename.replace(/\.[^.]+$/, ""));
+}
+
+function queueInspectionCode(index: number) {
+  return `INS-2025-${String(421 - index).padStart(5, "0")}`;
+}
+
+function formatQueueUpdated(value: string) {
+  const date = new Date(value);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) {
+    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function formatSuggestionType(value: string) {
@@ -141,25 +157,49 @@ export function InspectionDetailPage() {
         <aside className="inspection-list-panel">
           <div className="inspection-list-header">
             <h2>Inspections</h2>
-            <button className="icon-button" aria-label="Filter inspections"><Flag size={16} /></button>
+            <button className="icon-button" aria-label="Filter inspections"><Filter size={16} /></button>
           </div>
-          <input className="inspection-search" placeholder="Search inspections..." readOnly />
+          <div className="inspection-list-tools">
+            <label className="inspection-search-field">
+              <Search size={14} aria-hidden="true" />
+              <input placeholder="Search inspections..." readOnly />
+            </label>
+            <button className="queue-options-button" aria-label="Inspection queue options"><SlidersHorizontal size={15} /></button>
+          </div>
           <div className="inspection-tabs">
             <span className="active">My inspections ({inspections.length})</span>
             <span>In review</span>
             <span>All</span>
           </div>
+          <div className="inspection-table-head">
+            <span>ID</span>
+            <span>Vehicle</span>
+            <span>Status</span>
+            <span>Updated <ArrowDown size={11} /></span>
+          </div>
           <div className="inspection-rows">
-            {inspections.map((inspection) => (
+            {inspections.map((inspection, index) => (
               <Link key={inspection.id} to={`/inspections/${inspection.id}`} className={`inspection-row-link ${inspection.id === id ? "selected" : ""}`}>
-                <span>
+                <span className="inspection-id-cell">
+                  <strong>{queueInspectionCode(index)}</strong>
+                  <small>VIN {inspection.vin}</small>
+                </span>
+                <span className="inspection-vehicle-cell">
                   <strong>{inspection.year} {inspection.make} {inspection.model}</strong>
-                  <small>{inspection.vin}</small>
+                  <small>{inspection.trim || "Base"}</small>
                 </span>
                 <StatusPill status={inspection.status} />
-                <time>{new Date(inspection.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time>
+                <time>{formatQueueUpdated(inspection.updatedAt)}</time>
               </Link>
             ))}
+          </div>
+          <div className="inspection-pagination">
+            <span>1-{Math.min(10, inspections.length)} of {inspections.length}</span>
+            <button aria-label="Previous page"><ChevronLeft size={14} /></button>
+            <button className="active">1</button>
+            <button>2</button>
+            <button>3</button>
+            <button aria-label="Next page"><ChevronRight size={14} /></button>
           </div>
         </aside>
 
