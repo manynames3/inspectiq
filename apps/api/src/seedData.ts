@@ -2,7 +2,7 @@ import { sampleBundles, sampleImages } from "./sampleImages.js";
 import type { Actor } from "./domain.js";
 import { MemoryStore } from "./store.js";
 
-const systemActor: Actor = { id: "seed-system", name: "Seed System", role: "admin" };
+const systemActor: Actor = { id: "queue-import", name: "Queue Import", role: "admin" };
 
 export function seedStore(store: MemoryStore): void {
   store.reset();
@@ -19,7 +19,7 @@ export function seedStore(store: MemoryStore): void {
       trim: "SE",
       mileage: 64231,
       exteriorColor: "Silver",
-      sellerSource: "Fleet remarketing",
+      sellerSource: "Fleet remarketing offsite",
       inspectorName: "John Smith",
       sampleKeys: sampleBundles["complete-clean-set"]
     },
@@ -31,7 +31,7 @@ export function seedStore(store: MemoryStore): void {
       trim: "EX",
       mileage: 79812,
       exteriorColor: "White",
-      sellerSource: "Dealer trade",
+      sellerSource: "Dealer trade-in lane",
       inspectorName: "John Smith",
       sampleKeys: sampleBundles["complete-clean-set"].filter((key) => key !== "odometer-64231")
     },
@@ -43,7 +43,7 @@ export function seedStore(store: MemoryStore): void {
       trim: "SEL",
       mileage: 38125,
       exteriorColor: "Blue",
-      sellerSource: "Lease return",
+      sellerSource: "Lease return offsite",
       inspectorName: "John Smith",
       sampleKeys: ["front-clean", "driver-side-scratch", "odometer-64231"]
     },
@@ -55,7 +55,7 @@ export function seedStore(store: MemoryStore): void {
       trim: "SV",
       mileage: 102440,
       exteriorColor: "Black",
-      sellerSource: "Auction lane",
+      sellerSource: "Wholesale auction lane",
       inspectorName: "Review Lead",
       sampleKeys: ["rear-severe-damage", "front-clean", "vin-plate"]
     },
@@ -67,7 +67,7 @@ export function seedStore(store: MemoryStore): void {
       trim: "Premium",
       mileage: 21088,
       exteriorColor: "Green",
-      sellerSource: "Retail acquisition",
+      sellerSource: "Retail acquisition intake",
       inspectorName: "John Smith",
       sampleKeys: ["blurry-front"]
     }

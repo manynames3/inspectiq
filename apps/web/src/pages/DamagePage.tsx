@@ -1,4 +1,5 @@
 import { AlertTriangle, RefreshCw } from "lucide-react";
+import { estimateDamageRepairCost, estimateTotalRepairRange } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { DamageItem } from "../types.js";
@@ -41,6 +42,7 @@ export function DamagePage() {
   const minorCount = rows.filter(({ item }) => item.severity === "minor").length;
   const moderateCount = rows.filter(({ item }) => item.severity === "moderate").length;
   const severeCount = rows.filter(({ item }) => item.severity === "severe").length;
+  const totalReconEstimate = estimateTotalRepairRange(rows.map(({ item }) => item));
 
   return (
     <section className="page">
@@ -70,9 +72,14 @@ export function DamagePage() {
           <strong>{moderateCount}</strong>
         </article>
         <article className="summary-card">
-          <span>Severe</span>
-          <strong>{severeCount}</strong>
+          <span>Recon estimate</span>
+          <strong>{totalReconEstimate?.label ?? "$0"}</strong>
         </article>
+      </div>
+      <div className="queue-context-line">
+        <span>{minorCount} minor</span>
+        <span>{moderateCount} moderate</span>
+        <span>{severeCount} severe</span>
       </div>
 
       <div className="table-panel">
@@ -90,6 +97,7 @@ export function DamagePage() {
                 <th>Location</th>
                 <th>Type</th>
                 <th>Severity</th>
+                <th>Recon estimate</th>
                 <th>Source</th>
                 <th>Notes</th>
                 <th></th>
@@ -105,6 +113,7 @@ export function DamagePage() {
                   <td>{titleCase(item.location)}</td>
                   <td>{titleCase(item.damageType)}</td>
                   <td><span className={`queue-status severity-${item.severity}`}>{item.severity}</span></td>
+                  <td>{estimateDamageRepairCost(item.damageType, item.severity).label}</td>
                   <td>{item.source === "vision_suggestion" ? "AI-suggested" : "Manual"}</td>
                   <td>{item.notes || "No notes"}</td>
                   <td><Link className="row-link" to={`/inspections/${record.inspection.id}`}>Open</Link></td>

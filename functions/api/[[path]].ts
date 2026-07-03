@@ -13,7 +13,9 @@ import { ZodError } from "zod";
 import { ApiError, conflict, validation } from "../../apps/api/src/errors.js";
 import { gradeCondition } from "../../apps/api/src/gradingClient.js";
 import { mockVisionProvider } from "../../apps/api/src/mockVisionProvider.js";
+import { platformHealthPayload } from "../../apps/api/src/platformHealth.js";
 import { mockReportProvider } from "../../apps/api/src/reportProvider.js";
+import { requireAction } from "../../apps/api/src/rbac.js";
 import { findSampleImage, sampleBundles, sampleImages } from "../../apps/api/src/sampleImages.js";
 import { seedStore } from "../../apps/api/src/seedData.js";
 import { MemoryStore } from "../../apps/api/src/store.js";
@@ -146,7 +148,7 @@ function actorFromRequest(request: Request): Actor {
   return {
     id: request.headers.get("x-actor-id") ?? fallback.id,
     name: request.headers.get("x-actor-name") ?? fallback.name,
-    role: role === "reviewer" || role === "admin" ? role : fallback.role
+    role: role === "inspector" || role === "reviewer" || role === "admin" ? role : fallback.role
   };
 }
 
@@ -200,25 +202,10 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }
 
   if (method === "GET" && path === "platform-health") {
-    return json({
-      scorecard: [
-        { pillar: "Operational excellence", status: "implemented", evidence: "Request IDs, structured logs, runbook, retryable report jobs, audit events." },
-        { pillar: "Security", status: "documented", evidence: "Role selector for local review; production plan covers Cognito/OIDC, RBAC, presigned S3, encryption, Secrets Manager." },
-        { pillar: "Reliability", status: "implemented", evidence: "Provider failures captured, invalid schemas rejected, state machine guards finalization." },
-        { pillar: "Performance efficiency", status: "designed", evidence: "CRUD stays in request path; report generation modeled as async-ready job." },
-        { pillar: "Cost optimization", status: "documented", evidence: "Cost model separates image storage, model calls, relational storage, and logs." },
-        { pillar: "AI governance", status: "implemented", evidence: "AI suggestions require human confirmation and never directly finalize reports." }
-      ],
-      sampleImages,
-      metricsTracked: [
-        "image_analysis_success_rate",
-        "failed_image_analysis_count",
-        "report_generation_latency",
-        "human_review_rate",
-        "ai_suggestion_acceptance_rate",
-        "p95_api_latency"
-      ]
-    }, requestId);
+    return json(platformHealthPayload(store, {
+      visionProviderName: mockVisionProvider.name,
+      visionPromptVersion: mockVisionProvider.promptVersion
+    }), requestId);
   }
 
   if (segments[0] === "inspections" && segments.length === 1 && method === "GET") {
@@ -230,6 +217,7 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }
 
   if (segments[0] === "inspections" && segments.length === 1 && method === "POST") {
+    requireAction(actor, "inspection:create");
     return json(store.createInspection(CreateInspectionSchema.parse(body), actor), requestId, 201);
   }
 
@@ -238,10 +226,12 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }
 
   if (segments[0] === "inspections" && segments[1] && segments.length === 2 && method === "PATCH") {
+    requireAction(actor, "inspection:update");
     return json(store.patchInspection(segments[1], PatchInspectionSchema.parse(body), actor), requestId);
   }
 
   if (segments[0] === "inspections" && segments[1] && segments[2] === "photos" && segments[3] === "sample" && method === "POST") {
+    requireAction(actor, "photo:capture");
     const input = SamplePhotoSchema.parse(body);
     const keys = sampleBundles[input.sampleKey] ?? [input.sampleKey];
     const photos = keys.map((key) => {
@@ -260,6 +250,7 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }
 
   if (segments[0] === "inspections" && segments[1] && segments[2] === "photos" && segments[3] === "upload" && method === "POST") {
+    requireAction(actor, "photo:capture");
     const input = UploadPhotoSchema.parse(body);
     return json(store.addPhoto({
       inspectionId: segments[1],
@@ -276,6 +267,7 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }
 
   if (segments[0] === "photos" && segments[1] && segments[2] === "analyze" && method === "POST") {
+    requireAction(actor, "photo:analyze");
     const photo = store.getPhoto(segments[1]);
     if (photo.analysisStatus === "completed" && !(body as { force?: boolean })?.force) {
       return json({
@@ -305,14 +297,17 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }
 
   if (segments[0] === "vision-suggestions" && segments[1] && segments[2] === "accept" && method === "POST") {
+    requireAction(actor, "suggestion:review");
     return json(store.acceptSuggestion(segments[1], actor), requestId);
   }
 
   if (segments[0] === "vision-suggestions" && segments[1] && segments[2] === "reject" && method === "POST") {
+    requireAction(actor, "suggestion:review");
     return json(store.rejectSuggestion(segments[1], actor), requestId);
   }
 
   if (segments[0] === "vision-suggestions" && segments[1] && segments.length === 2 && method === "PATCH") {
+    requireAction(actor, "suggestion:review");
     const input = UpdateSuggestionSchema.parse(body);
     if (!Object.prototype.hasOwnProperty.call(input, "suggestedValue")) {
       throw validation("suggestedValue is required.");
@@ -324,6 +319,7 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }
 
   if (segments[0] === "inspections" && segments[1] && segments[2] === "damage" && method === "POST") {
+    requireAction(actor, "damage:create");
     const input = CreateDamageItemSchema.parse(body);
     return json(store.addDamage({
       inspectionId: segments[1],
@@ -337,15 +333,18 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }
 
   if (segments[0] === "damage" && segments[1] && method === "PATCH") {
+    requireAction(actor, "damage:update");
     return json(store.patchDamage(segments[1], PatchDamageItemSchema.parse(body), actor), requestId);
   }
 
   if (segments[0] === "damage" && segments[1] && method === "DELETE") {
+    requireAction(actor, "damage:delete");
     store.deleteDamage(segments[1], actor);
     return json({ deleted: true }, requestId);
   }
 
   if (segments[0] === "inspections" && segments[1] && segments[2] === "grade" && method === "POST") {
+    requireAction(actor, "grade:calculate");
     GradeRequestSchema.parse(body ?? {});
     const inspection = store.getInspection(segments[1]);
     const missing = store.missingRequiredEvidence(inspection.id);
@@ -373,6 +372,7 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }
 
   if (segments[0] === "inspections" && segments[1] && segments[2] === "ai-report" && method === "POST") {
+    requireAction(actor, "report:draft");
     const inspection = store.getInspection(segments[1]);
     const grade = store.latestGrade(inspection.id);
     if (!grade) throw conflict("Calculate the condition grade before requesting a report draft.");
@@ -419,6 +419,7 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }
 
   if (segments[0] === "ai-report-jobs" && segments[1] && segments[2] === "retry" && method === "POST") {
+    requireAction(actor, "report:retry");
     const job = store.reportJobs.get(segments[1]);
     if (!job) throw validation("Unknown AI report job.");
     store.getInspection(job.inspectionId);
@@ -426,11 +427,13 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   }
 
   if (segments[0] === "reports" && segments[1] && method === "PATCH") {
+    requireAction(actor, "report:edit");
     const input = PatchReportSchema.parse(body);
     return json(store.patchReport(segments[1], input.reportBody, actor), requestId);
   }
 
   if (segments[0] === "reports" && segments[1] && segments[2] === "finalize" && method === "POST") {
+    requireAction(actor, "report:finalize");
     return json(store.finalizeReport(segments[1], actor), requestId);
   }
 

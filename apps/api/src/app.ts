@@ -18,12 +18,17 @@ import { errorHandler, validation, conflict } from "./errors.js";
 import { gradeCondition } from "./gradingClient.js";
 import { getReportProvider } from "./reportProvider.js";
 import { getVisionProvider } from "./mockVisionProvider.js";
-import { findSampleImage, sampleBundles, sampleImages } from "./sampleImages.js";
+import { platformHealthPayload } from "./platformHealth.js";
+import { requireAction } from "./rbac.js";
+import { findSampleImage, sampleBundles } from "./sampleImages.js";
 import { seedStore } from "./seedData.js";
 import { MemoryStore, store as defaultStore } from "./store.js";
 import type { Actor } from "./domain.js";
 
 type AsyncRoute = (req: Request, res: Response, next: NextFunction) => Promise<void> | void;
+type AppOptions = {
+  afterMutation?: () => void | Promise<void>;
+};
 
 function asyncRoute(handler: AsyncRoute): AsyncRoute {
   return (req, res, next) => {
@@ -41,10 +46,11 @@ function sendData<T>(res: Response, data: T, status = 200): void {
 
 function actorFromRequest(req: Request, store: MemoryStore): Actor {
   const fallback = store.defaultActor();
+  const role = req.header("x-actor-role");
   return {
     id: String(req.header("x-actor-id") ?? fallback.id),
     name: String(req.header("x-actor-name") ?? fallback.name),
-    role: req.header("x-actor-role") === "reviewer" || req.header("x-actor-role") === "admin" ? req.header("x-actor-role") as Actor["role"] : fallback.role
+    role: role === "inspector" || role === "reviewer" || role === "admin" ? role : fallback.role
   };
 }
 
@@ -71,7 +77,7 @@ function reportBodyFromDraft(output: unknown): string {
   ].join("\n");
 }
 
-export function createApp(appStore = defaultStore): express.Express {
+export function createApp(appStore = defaultStore, options: AppOptions = {}): express.Express {
   if (appStore.inspections.size === 0) seedStore(appStore);
 
   const app = express();
@@ -85,6 +91,22 @@ export function createApp(appStore = defaultStore): express.Express {
   }));
   app.use(cors({ origin: process.env.WEB_ORIGIN ?? true }));
   app.use(express.json({ limit: "4mb" }));
+  app.use((req, res, next) => {
+    res.on("finish", () => {
+      if (!options.afterMutation || (req.method !== "POST" && req.method !== "PATCH" && req.method !== "DELETE") || res.statusCode >= 500) {
+        return;
+      }
+      Promise.resolve(options.afterMutation()).catch((error) => {
+        console.error(JSON.stringify({
+          level: "error",
+          event: "inspectiq.persistence.save_failed",
+          requestId: res.locals.requestId,
+          message: error instanceof Error ? error.message : "Unknown persistence error."
+        }));
+      });
+    });
+    next();
+  });
 
   const sampleImagePath = path.resolve(process.cwd(), "../../sample-data/images");
   app.use("/sample-images", express.static(sampleImagePath));
@@ -112,6 +134,7 @@ export function createApp(appStore = defaultStore): express.Express {
   app.post("/api/inspections", asyncRoute((req, res) => {
     const input = CreateInspectionSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "inspection:create");
     sendData(res, appStore.createInspection(input, actor), 201);
   }));
 
@@ -122,12 +145,14 @@ export function createApp(appStore = defaultStore): express.Express {
   app.patch("/api/inspections/:id", asyncRoute((req, res) => {
     const input = PatchInspectionSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "inspection:update");
     sendData(res, appStore.patchInspection(req.params.id, input, actor));
   }));
 
   app.post("/api/inspections/:id/photos/upload", asyncRoute((req, res) => {
     const input = UploadPhotoSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "photo:capture");
     const photo = appStore.addPhoto({
       inspectionId: req.params.id,
       storageKey: input.storageKey ?? `/uploads/${crypto.randomUUID()}-${input.originalFilename}`,
@@ -142,6 +167,7 @@ export function createApp(appStore = defaultStore): express.Express {
   app.post("/api/inspections/:id/photos/sample", asyncRoute((req, res) => {
     const input = SamplePhotoSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "photo:capture");
     const keys = sampleBundles[input.sampleKey] ?? [input.sampleKey];
     const photos = keys.map((key) => {
       const sample = findSampleImage(key);
@@ -164,6 +190,7 @@ export function createApp(appStore = defaultStore): express.Express {
 
   app.post("/api/photos/:photoId/analyze", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "photo:analyze");
     const photo = appStore.getPhoto(req.params.photoId);
     if (photo.analysisStatus === "completed" && !req.body?.force) {
       sendData(res, {
@@ -200,11 +227,15 @@ export function createApp(appStore = defaultStore): express.Express {
   }));
 
   app.post("/api/vision-suggestions/:id/accept", asyncRoute((req, res) => {
-    sendData(res, appStore.acceptSuggestion(req.params.id, actorFromRequest(req, appStore)));
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "suggestion:review");
+    sendData(res, appStore.acceptSuggestion(req.params.id, actor));
   }));
 
   app.post("/api/vision-suggestions/:id/reject", asyncRoute((req, res) => {
-    sendData(res, appStore.rejectSuggestion(req.params.id, actorFromRequest(req, appStore)));
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "suggestion:review");
+    sendData(res, appStore.rejectSuggestion(req.params.id, actor));
   }));
 
   app.patch("/api/vision-suggestions/:id", asyncRoute((req, res) => {
@@ -212,14 +243,18 @@ export function createApp(appStore = defaultStore): express.Express {
     if (!Object.prototype.hasOwnProperty.call(input, "suggestedValue")) {
       throw validation("suggestedValue is required.");
     }
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "suggestion:review");
     sendData(res, appStore.editSuggestion(req.params.id, {
       suggestedValue: input.suggestedValue,
       explanation: input.explanation
-    }, actorFromRequest(req, appStore)));
+    }, actor));
   }));
 
   app.post("/api/inspections/:id/damage", asyncRoute((req, res) => {
     const input = CreateDamageItemSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "damage:create");
     sendData(res, appStore.addDamage({
       inspectionId: req.params.id,
       photoId: input.photoId ?? null,
@@ -228,22 +263,27 @@ export function createApp(appStore = defaultStore): express.Express {
       severity: input.severity,
       notes: input.notes,
       source: input.source
-    }, actorFromRequest(req, appStore)), 201);
+    }, actor), 201);
   }));
 
   app.patch("/api/damage/:id", asyncRoute((req, res) => {
     const input = PatchDamageItemSchema.parse(req.body);
-    sendData(res, appStore.patchDamage(req.params.id, input, actorFromRequest(req, appStore)));
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "damage:update");
+    sendData(res, appStore.patchDamage(req.params.id, input, actor));
   }));
 
   app.delete("/api/damage/:id", asyncRoute((req, res) => {
-    appStore.deleteDamage(req.params.id, actorFromRequest(req, appStore));
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "damage:delete");
+    appStore.deleteDamage(req.params.id, actor);
     sendData(res, { deleted: true });
   }));
 
   app.post("/api/inspections/:id/grade", asyncRoute(async (req, res) => {
     GradeRequestSchema.parse(req.body ?? {});
     const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "grade:calculate");
     const inspection = appStore.getInspection(req.params.id);
     const missing = appStore.missingRequiredEvidence(inspection.id);
     if (missing.length > 0) {
@@ -272,6 +312,7 @@ export function createApp(appStore = defaultStore): express.Express {
 
   app.post("/api/inspections/:id/ai-report", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "report:draft");
     const inspection = appStore.getInspection(req.params.id);
     const grade = appStore.latestGrade(inspection.id);
     if (!grade) throw conflict("Calculate the condition grade before requesting a report draft.");
@@ -324,6 +365,8 @@ export function createApp(appStore = defaultStore): express.Express {
   }));
 
   app.post("/api/ai-report-jobs/:jobId/retry", asyncRoute(async (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "report:retry");
     const job = appStore.reportJobs.get(req.params.jobId);
     if (!job) throw validation("Unknown AI report job.");
     appStore.getInspection(job.inspectionId);
@@ -332,11 +375,15 @@ export function createApp(appStore = defaultStore): express.Express {
 
   app.patch("/api/reports/:id", asyncRoute((req, res) => {
     const input = PatchReportSchema.parse(req.body);
-    sendData(res, appStore.patchReport(req.params.id, input.reportBody, actorFromRequest(req, appStore)));
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "report:edit");
+    sendData(res, appStore.patchReport(req.params.id, input.reportBody, actor));
   }));
 
   app.post("/api/reports/:id/finalize", asyncRoute((req, res) => {
-    sendData(res, appStore.finalizeReport(req.params.id, actorFromRequest(req, appStore)));
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "report:finalize");
+    sendData(res, appStore.finalizeReport(req.params.id, actor));
   }));
 
   app.get("/api/inspections/:id/audit-events", asyncRoute((req, res) => {
@@ -344,25 +391,11 @@ export function createApp(appStore = defaultStore): express.Express {
   }));
 
   app.get("/api/platform-health", (_req, res) => {
-    sendData(res, {
-      scorecard: [
-        { pillar: "Operational excellence", status: "implemented", evidence: "Request IDs, structured logs, runbook, retryable report jobs, audit events." },
-        { pillar: "Security", status: "documented", evidence: "Role selector for local review; production plan covers Cognito/OIDC, RBAC, presigned S3, encryption, Secrets Manager." },
-        { pillar: "Reliability", status: "implemented", evidence: "Provider failures captured, invalid schemas rejected, state machine guards finalization." },
-        { pillar: "Performance efficiency", status: "designed", evidence: "CRUD stays in request path; report generation modeled as async-ready job." },
-        { pillar: "Cost optimization", status: "documented", evidence: "Cost model separates image storage, model calls, relational storage, and logs." },
-        { pillar: "AI governance", status: "implemented", evidence: "AI suggestions require human confirmation and never directly finalize reports." }
-      ],
-      sampleImages,
-      metricsTracked: [
-        "image_analysis_success_rate",
-        "failed_image_analysis_count",
-        "report_generation_latency",
-        "human_review_rate",
-        "ai_suggestion_acceptance_rate",
-        "p95_api_latency"
-      ]
-    });
+    const provider = getVisionProvider();
+    sendData(res, platformHealthPayload(appStore, {
+      visionProviderName: provider.name,
+      visionPromptVersion: provider.promptVersion
+    }));
   });
 
   app.use(errorHandler);

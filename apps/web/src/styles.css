@@ -249,6 +249,112 @@ td small {
   min-width: 220px;
 }
 
+.role-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--teal);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px 12px;
+}
+
+.role-callout strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.role-callout span {
+  color: #475569;
+  font-size: 12px;
+}
+
+.role-callout.role-reviewer {
+  border-left-color: #2563eb;
+}
+
+.role-callout.role-admin {
+  border-left-color: #7c3aed;
+}
+
+.role-callout.role-restricted {
+  border-left-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.marketplace-readiness-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 14px 10px;
+}
+
+.marketplace-readiness-strip span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-left: 3px solid #64748b;
+  border-radius: 4px;
+  background: #ffffff;
+  padding: 8px 10px;
+}
+
+.marketplace-readiness-strip strong {
+  color: #0f172a;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.marketplace-readiness-strip small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.marketplace-readiness-strip .ready,
+.inline-ready {
+  border-left-color: var(--teal);
+  color: #047857;
+}
+
+.marketplace-readiness-strip .blocked,
+.risk-high {
+  border-left-color: var(--red);
+  color: var(--red);
+}
+
+.marketplace-readiness-strip .watch,
+.risk-moderate {
+  border-left-color: var(--amber);
+  color: var(--amber);
+}
+
+.risk-low {
+  color: #047857;
+}
+
+.readiness-blockers {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 10px;
+  border: 1px solid #fed7aa;
+  border-radius: 4px;
+  background: #fff7ed;
+  color: #9a3412;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.readiness-blockers strong {
+  color: #7c2d12;
+}
+
 .request-chip {
   border: 1px solid var(--border);
   background: var(--surface-2);
@@ -342,6 +448,15 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.disabled-control {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.disabled-control input {
+  cursor: not-allowed;
+}
+
 select,
 input,
 textarea {
@@ -363,6 +478,14 @@ textarea {
   resize: vertical;
   padding: 12px;
   line-height: 1.5;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: #f8fafc;
+  color: #64748b;
+  cursor: not-allowed;
 }
 
 .table-panel,
@@ -415,6 +538,54 @@ textarea {
   color: var(--text);
   font-size: 24px;
   line-height: 1;
+}
+
+.queue-context-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 14px;
+}
+
+.queue-context-line span,
+.inline-ready,
+.inline-watch,
+.risk-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 0 8px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.inline-ready {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.inline-watch {
+  background: #fff7ed;
+  color: #b45309;
+}
+
+.risk-label.risk-low {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.risk-label.risk-moderate {
+  background: #fff7ed;
+  color: #b45309;
+}
+
+.risk-label.risk-high {
+  background: #fff1f2;
+  color: #b91c1c;
 }
 
 .review-table table {
@@ -895,9 +1066,19 @@ td small {
   grid-row: 1;
   min-width: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   border-right: 1px solid var(--border);
   overflow: hidden;
+}
+
+.detail-readiness-header {
+  padding-top: 10px;
+  border-bottom: 1px solid var(--border);
+  background: #ffffff;
+}
+
+.detail-readiness-header .role-callout {
+  margin: 0 14px 8px;
 }
 
 .detail-titlebar {
@@ -1364,11 +1545,18 @@ td small {
   display: flex;
   align-items: center;
   gap: 9px;
+  justify-content: space-between;
   padding-bottom: 6px;
   border-bottom: 0;
   margin-bottom: 4px;
   color: #0b66d8;
   font-size: 14px;
+}
+
+.review-heading span {
+  color: #64748b;
+  font-size: 12px;
+  text-align: right;
 }
 
 .empty-copy {
@@ -1653,6 +1841,105 @@ pre {
   font-size: 12px;
 }
 
+.operational-metrics {
+  margin-top: 18px;
+}
+
+.metric-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.metric-card {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--teal);
+  border-radius: 4px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.metric-card span {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #475569;
+  font-size: 12px;
+}
+
+.metric-card strong {
+  color: #0f172a;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.metric-card small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.metric-watch {
+  border-left-color: var(--amber);
+}
+
+.metric-blocked {
+  border-left-color: var(--red);
+}
+
+.ai-contract-panel {
+  margin-top: 18px;
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+  padding: 16px;
+}
+
+.ai-contract-panel p {
+  color: #475569;
+  line-height: 1.5;
+  margin-bottom: 0;
+}
+
+.ai-contract-panel dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ai-contract-panel dt {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.ai-contract-panel dd {
+  margin: 0;
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.contract-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.contract-fields span {
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #047857;
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .loading {
   color: var(--muted);
 }
@@ -1728,7 +2015,13 @@ pre {
   .photo-grid,
   .checklist,
   .scorecard-grid,
-  .summary-grid {
+  .summary-grid,
+  .metric-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .marketplace-readiness-strip,
+  .ai-contract-panel dl {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1770,8 +2063,16 @@ pre {
   .evidence-photos,
   .scorecard-grid,
   .summary-grid,
+  .metric-card-grid,
+  .marketplace-readiness-strip,
+  .ai-contract-panel dl,
   .damage-form {
     grid-template-columns: 1fr;
+  }
+
+  .readiness-blockers {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .damage-row,

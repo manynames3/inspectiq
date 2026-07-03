@@ -39,6 +39,21 @@ export const damageTypes = [
 export const damageSeverities = ["minor", "moderate", "severe", "unknown"] as const;
 export const suggestionStatuses = ["pending", "accepted", "rejected", "edited"] as const;
 export const userRoles = ["inspector", "reviewer", "admin"] as const;
+export const roleActions = [
+  "inspection:create",
+  "inspection:update",
+  "photo:capture",
+  "photo:analyze",
+  "suggestion:review",
+  "damage:create",
+  "damage:update",
+  "damage:delete",
+  "grade:calculate",
+  "report:draft",
+  "report:edit",
+  "report:finalize",
+  "report:retry"
+] as const;
 
 export const InspectionStatusSchema = z.enum(inspectionStatuses);
 export const PhotoAngleSchema = z.enum(photoAngles);
@@ -55,6 +70,150 @@ export type DamageType = z.infer<typeof DamageTypeSchema>;
 export type DamageSeverity = z.infer<typeof DamageSeveritySchema>;
 export type SuggestionStatus = z.infer<typeof SuggestionStatusSchema>;
 export type UserRole = z.infer<typeof UserRoleSchema>;
+export type RoleAction = typeof roleActions[number];
+
+export type RepairEstimateRange = {
+  min: number;
+  max: number;
+  label: string;
+};
+
+export const repairEstimateRangesUsd: Record<DamageType, Record<DamageSeverity, RepairEstimateRange>> = {
+  scratch: {
+    minor: { min: 150, max: 300, label: "$150 - $300" },
+    moderate: { min: 300, max: 700, label: "$300 - $700" },
+    severe: { min: 700, max: 1500, label: "$700 - $1,500" },
+    unknown: { min: 0, max: 0, label: "Estimator review" }
+  },
+  dent: {
+    minor: { min: 200, max: 450, label: "$200 - $450" },
+    moderate: { min: 500, max: 1200, label: "$500 - $1,200" },
+    severe: { min: 1200, max: 2500, label: "$1,200 - $2,500" },
+    unknown: { min: 0, max: 0, label: "Estimator review" }
+  },
+  crack: {
+    minor: { min: 250, max: 600, label: "$250 - $600" },
+    moderate: { min: 600, max: 1400, label: "$600 - $1,400" },
+    severe: { min: 1400, max: 3000, label: "$1,400 - $3,000" },
+    unknown: { min: 0, max: 0, label: "Estimator review" }
+  },
+  paint_damage: {
+    minor: { min: 250, max: 600, label: "$250 - $600" },
+    moderate: { min: 600, max: 1500, label: "$600 - $1,500" },
+    severe: { min: 1500, max: 3500, label: "$1,500 - $3,500" },
+    unknown: { min: 0, max: 0, label: "Estimator review" }
+  },
+  glass_damage: {
+    minor: { min: 200, max: 500, label: "$200 - $500" },
+    moderate: { min: 500, max: 900, label: "$500 - $900" },
+    severe: { min: 900, max: 1600, label: "$900 - $1,600" },
+    unknown: { min: 0, max: 0, label: "Estimator review" }
+  },
+  wheel_damage: {
+    minor: { min: 125, max: 350, label: "$125 - $350" },
+    moderate: { min: 350, max: 850, label: "$350 - $850" },
+    severe: { min: 850, max: 1800, label: "$850 - $1,800" },
+    unknown: { min: 0, max: 0, label: "Estimator review" }
+  },
+  interior_wear: {
+    minor: { min: 75, max: 250, label: "$75 - $250" },
+    moderate: { min: 250, max: 750, label: "$250 - $750" },
+    severe: { min: 750, max: 1800, label: "$750 - $1,800" },
+    unknown: { min: 0, max: 0, label: "Estimator review" }
+  },
+  unknown: {
+    minor: { min: 150, max: 400, label: "$150 - $400" },
+    moderate: { min: 400, max: 1000, label: "$400 - $1,000" },
+    severe: { min: 1000, max: 2500, label: "$1,000 - $2,500" },
+    unknown: { min: 0, max: 0, label: "Estimator review" }
+  }
+};
+
+function normalizeDamageType(value: string): DamageType {
+  const normalized = value.toLowerCase().replaceAll(" ", "_");
+  return damageTypes.includes(normalized as DamageType) ? normalized as DamageType : "unknown";
+}
+
+function normalizeDamageSeverity(value: string): DamageSeverity {
+  const normalized = value.toLowerCase().replaceAll(" ", "_");
+  return damageSeverities.includes(normalized as DamageSeverity) ? normalized as DamageSeverity : "unknown";
+}
+
+export function estimateDamageRepairCost(
+  damageType: DamageType | string,
+  severity: DamageSeverity | string
+): RepairEstimateRange {
+  const typeKey = normalizeDamageType(damageType);
+  const severityKey = normalizeDamageSeverity(severity);
+  return repairEstimateRangesUsd[typeKey][severityKey] ?? repairEstimateRangesUsd.unknown.unknown;
+}
+
+export function estimateTotalRepairRange(
+  items: Array<{ damageType: DamageType | string; severity: DamageSeverity | string }>
+): RepairEstimateRange | null {
+  if (items.length === 0) return null;
+  let min = 0;
+  let max = 0;
+  for (const item of items) {
+    const estimate = estimateDamageRepairCost(item.damageType, item.severity);
+    min += estimate.min;
+    max += estimate.max;
+  }
+  if (min === 0 && max === 0) return { min, max, label: "Estimator review" };
+  return {
+    min,
+    max,
+    label: `$${min.toLocaleString()} - $${max.toLocaleString()}`
+  };
+}
+
+export const rolePermissions: Record<UserRole, RoleAction[]> = {
+  inspector: [
+    "inspection:create",
+    "photo:capture",
+    "photo:analyze"
+  ],
+  reviewer: [
+    "suggestion:review",
+    "damage:create",
+    "grade:calculate",
+    "report:draft",
+    "report:edit",
+    "report:finalize",
+    "report:retry"
+  ],
+  admin: [...roleActions]
+};
+
+export const roleActionLabels: Record<RoleAction, string> = {
+  "inspection:create": "create inspections",
+  "inspection:update": "edit inspection records",
+  "photo:capture": "attach or upload photo evidence",
+  "photo:analyze": "run image analysis",
+  "suggestion:review": "accept, reject, or edit AI suggestions",
+  "damage:create": "confirm damage items",
+  "damage:update": "edit confirmed damage",
+  "damage:delete": "delete confirmed damage",
+  "grade:calculate": "calculate condition grades",
+  "report:draft": "draft condition reports",
+  "report:edit": "edit report drafts",
+  "report:finalize": "finalize condition reports",
+  "report:retry": "retry report jobs"
+};
+
+export const roleDescriptions: Record<UserRole, string> = {
+  inspector: "Capture vehicle evidence and run image analysis.",
+  reviewer: "Confirm AI findings, grade inspections, and finalize reports.",
+  admin: "Full workflow access, including record correction and exceptions."
+};
+
+export function canRole(role: UserRole, action: RoleAction): boolean {
+  return rolePermissions[role].includes(action);
+}
+
+export function rolesForAction(action: RoleAction): UserRole[] {
+  return userRoles.filter((role) => canRole(role, action));
+}
 
 export const CreateInspectionSchema = z.object({
   vin: z.string().trim().min(4).max(32),
@@ -89,6 +248,11 @@ export const DamageCandidateSchema = z.object({
   severityEstimate: DamageSeveritySchema,
   confidence: z.number().min(0).max(1),
   explanation: z.string().trim().min(1).max(500),
+  repairEstimateUsd: z.object({
+    min: z.number().int().min(0),
+    max: z.number().int().min(0),
+    rationale: z.string().trim().min(1).max(300)
+  }),
   requiresHumanConfirmation: z.boolean()
 });
 

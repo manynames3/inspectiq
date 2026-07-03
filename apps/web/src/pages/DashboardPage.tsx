@@ -27,7 +27,7 @@ export function DashboardPage() {
       <div className="page-heading">
         <div>
           <h1>Dashboard</h1>
-          <p>Active inspection queue with evidence completeness, grading, and review status.</p>
+          <p>Wholesale inspection queue with evidence completeness, CR grade, and buyer-visible release status.</p>
         </div>
         <button className="secondary-button" onClick={() => void load()}>
           <RefreshCw size={16} /> Refresh
@@ -41,9 +41,9 @@ export function DashboardPage() {
               <th>Vehicle</th>
               <th>VIN</th>
               <th>Status</th>
-              <th>Complete</th>
-              <th>Grade</th>
-              <th>Review</th>
+              <th>Evidence</th>
+              <th>CR grade</th>
+              <th>Release</th>
               <th>Updated</th>
               <th></th>
             </tr>
@@ -64,7 +64,7 @@ export function DashboardPage() {
                   </div>
                 </td>
                 <td>{inspection.conditionGrade?.grade ?? "Not graded"}</td>
-                <td>{inspection.humanReviewFlag ? <span className="review-flag"><AlertTriangle size={14} /> Required</span> : "Clear"}</td>
+                <td>{inspection.status === "FINALIZED" ? "Buyer-visible" : inspection.humanReviewFlag ? <span className="review-flag"><AlertTriangle size={14} /> Review hold</span> : "Ops queue"}</td>
                 <td>{new Date(inspection.updatedAt).toLocaleString()}</td>
                 <td>
                   <Link className="row-link" to={`/inspections/${inspection.id}`}>

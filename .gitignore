@@ -4,5 +4,6 @@ coverage/
 .env
 .DS_Store
 .wrangler/
+.inspectiq/
 apps/api/uploads/
 apps/web/.vite/

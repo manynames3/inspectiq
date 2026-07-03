@@ -1,12 +1,14 @@
 import { AlertTriangle, ArrowDown, Bot, Check, ChevronLeft, ChevronRight, FileText, Filter, Flag, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X } from "lucide-react";
+import { estimateDamageRepairCost, requiredPhotoAngles } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, assetUrl } from "../api.js";
 import { useActor } from "../App.js";
 import { StatusPill } from "../components/StatusPill.js";
+import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
 import type { Inspection, InspectionBundle, SampleImage, VehiclePhoto, VisionSuggestion } from "../types.js";
 
-const requiredAngles = ["front", "rear", "driver_side", "passenger_side", "interior", "engine_bay", "odometer", "vin_plate"];
+const requiredAngles = [...requiredPhotoAngles];
 const editablePhotoAngles = [...requiredAngles, "unknown"];
 const maxUploadBytes = 2_000_000;
 
@@ -63,65 +65,13 @@ function suggestionValueRecord(suggestion: VisionSuggestion): Record<string, unk
     : {};
 }
 
-const repairEstimateRanges: Record<string, Record<string, string>> = {
-  scratch: {
-    minor: "$150 - $300",
-    moderate: "$300 - $700",
-    severe: "$700 - $1,500",
-    unknown: "Estimator review"
-  },
-  dent: {
-    minor: "$200 - $450",
-    moderate: "$500 - $1,200",
-    severe: "$1,200 - $2,500",
-    unknown: "Estimator review"
-  },
-  crack: {
-    minor: "$250 - $600",
-    moderate: "$600 - $1,400",
-    severe: "$1,400 - $3,000",
-    unknown: "Estimator review"
-  },
-  paint_damage: {
-    minor: "$250 - $600",
-    moderate: "$600 - $1,500",
-    severe: "$1,500 - $3,500",
-    unknown: "Estimator review"
-  },
-  glass_damage: {
-    minor: "$200 - $500",
-    moderate: "$500 - $900",
-    severe: "$900 - $1,600",
-    unknown: "Estimator review"
-  },
-  wheel_damage: {
-    minor: "$125 - $350",
-    moderate: "$350 - $850",
-    severe: "$850 - $1,800",
-    unknown: "Estimator review"
-  },
-  interior_wear: {
-    minor: "$75 - $250",
-    moderate: "$250 - $750",
-    severe: "$750 - $1,800",
-    unknown: "Estimator review"
-  },
-  unknown: {
-    minor: "$150 - $400",
-    moderate: "$400 - $1,000",
-    severe: "$1,000 - $2,500",
-    unknown: "Estimator review"
-  }
-};
-
-function normalizedEstimateKey(value: unknown) {
-  return String(value ?? "unknown").toLowerCase().replaceAll(" ", "_");
-}
-
 function repairEstimateForDamage(value: Record<string, unknown>) {
-  const damageType = normalizedEstimateKey(value.damageType);
-  const severity = normalizedEstimateKey(value.severityEstimate);
-  return repairEstimateRanges[damageType]?.[severity] ?? repairEstimateRanges.unknown[severity] ?? repairEstimateRanges.unknown.unknown;
+  const contractedEstimate = value.repairEstimateUsd as { min?: number; max?: number } | undefined;
+  if (typeof contractedEstimate?.min === "number" && typeof contractedEstimate.max === "number") {
+    if (contractedEstimate.min === 0 && contractedEstimate.max === 0) return "Estimator review";
+    return `$${contractedEstimate.min.toLocaleString()} - $${contractedEstimate.max.toLocaleString()}`;
+  }
+  return estimateDamageRepairCost(String(value.damageType ?? "unknown"), String(value.severityEstimate ?? "unknown")).label;
 }
 
 type SuggestionFact = {
@@ -260,7 +210,7 @@ function suggestionPriority(suggestion: VisionSuggestion) {
 
 export function InspectionDetailPage() {
   const { id } = useParams();
-  const { actor } = useActor();
+  const { actor, can, roleDescription } = useActor();
   const [bundle, setBundle] = useState<InspectionBundle | null>(null);
   const [inspections, setInspections] = useState<Inspection[]>([]);
   const [sampleImages, setSampleImages] = useState<SampleImage[]>([]);
@@ -336,6 +286,19 @@ export function InspectionDetailPage() {
     .sort((left, right) => suggestionPriority(left) - suggestionPriority(right));
   const workflowStep = bundle.inspection.status === "FINALIZED" ? 4 : bundle.inspection.status === "HUMAN_REVIEW_REQUIRED" || bundle.inspection.status === "AI_DRAFTED" ? 3 : bundle.conditionGrade ? 2 : 1;
   const capturedEvidencePercent = Math.round((requiredAngles.filter((angle) => capturedAngles.has(angle)).length / requiredAngles.length) * 100);
+  const marketplaceReadiness = deriveMarketplaceReadiness(bundle);
+  const canCaptureEvidence = can("photo:capture");
+  const canAnalyzePhotos = can("photo:analyze");
+  const canReviewSuggestions = can("suggestion:review");
+  const canConfirmDamage = can("damage:create");
+  const canGrade = can("grade:calculate");
+  const canDraftReport = can("report:draft");
+  const canEditReport = can("report:edit");
+  const canFinalizeReport = can("report:finalize");
+  const canAssignInspection = can("inspection:update");
+  const captureDisabled = busy !== null || !canCaptureEvidence;
+  const analysisDisabled = busy !== null || !canAnalyzePhotos;
+  const reviewDisabled = busy !== null || !canReviewSuggestions;
 
   return (
     <section className="inspection-workspace">
@@ -397,11 +360,45 @@ export function InspectionDetailPage() {
               <p>Created {new Date(bundle.inspection.updatedAt).toLocaleString()} · Updated {new Date(bundle.inspection.updatedAt).toLocaleString()}</p>
             </div>
             <div className="heading-actions">
-              <button className="secondary-button"><Flag size={16} /> Flag</button>
-              <button className="secondary-button"><UserRound size={16} /> Assign</button>
+              <button className="secondary-button" disabled={!canReviewSuggestions}><Flag size={16} /> Flag</button>
+              <button className="secondary-button" disabled={!canAssignInspection}><UserRound size={16} /> Assign</button>
               <StatusPill status={bundle.inspection.status} />
               <button className="secondary-button" onClick={() => void load()}><RefreshCw size={16} /> Refresh</button>
             </div>
+          </div>
+          <div className="detail-readiness-header">
+            <div className={`role-callout role-${actor.role}`}>
+              <strong>{actor.role.charAt(0).toUpperCase() + actor.role.slice(1)} workspace</strong>
+              <span>{roleDescription}</span>
+            </div>
+            <div className="marketplace-readiness-strip" aria-label="Marketplace readiness">
+              <span className={marketplaceReadiness.crStatus === "CR ready" ? "ready" : "blocked"}>
+                <strong>{marketplaceReadiness.crStatus}</strong>
+                <small>Condition report</small>
+              </span>
+              <span className={marketplaceReadiness.vdpStatus === "VDP ready" ? "ready" : "watch"}>
+                <strong>{marketplaceReadiness.vdpStatus}</strong>
+                <small>Buyer VDP</small>
+              </span>
+              <span className={marketplaceReadiness.buyerVisibility === "Buyer-visible" ? "ready" : "watch"}>
+                <strong>{marketplaceReadiness.buyerVisibility}</strong>
+                <small>Disclosure</small>
+              </span>
+              <span>
+                <strong>{marketplaceReadiness.reconditioningEstimate}</strong>
+                <small>Recon estimate</small>
+              </span>
+              <span className={`risk-${marketplaceReadiness.arbitrationRisk.toLowerCase()}`}>
+                <strong>{marketplaceReadiness.arbitrationRisk}</strong>
+                <small>Arbitration risk</small>
+              </span>
+            </div>
+            {marketplaceReadiness.blockers.length > 0 ? (
+              <div className="readiness-blockers">
+                <strong>Before buyer-visible release:</strong>
+                <span>{marketplaceReadiness.blockers.slice(0, 3).join(" · ")}</span>
+              </div>
+            ) : null}
           </div>
 
           <div className="detail-core-grid">
@@ -482,12 +479,12 @@ export function InspectionDetailPage() {
                   <option value="complete-clean-set">Required photo set</option>
                   {sampleImages.map((sample) => <option key={sample.key} value={sample.key}>{sample.label}</option>)}
                 </select>
-                <button className="primary-button" disabled={busy !== null} onClick={() => void runAction("sample", () => api(`/api/inspections/${id}/photos/sample`, { method: "POST", body: JSON.stringify({ sampleKey }) }, actor))}>
+                <button className="primary-button" disabled={captureDisabled} title={canCaptureEvidence ? undefined : "Inspector or Admin access required"} onClick={() => void runAction("sample", () => api(`/api/inspections/${id}/photos/sample`, { method: "POST", body: JSON.stringify({ sampleKey }) }, actor))}>
                   <ImagePlus size={16} /> Attach photo set
                 </button>
-                <label className="file-button">
+                <label className={`file-button ${!canCaptureEvidence ? "disabled-control" : ""}`} title={canCaptureEvidence ? undefined : "Inspector or Admin access required"} aria-disabled={!canCaptureEvidence}>
                   <ImagePlus size={16} /> Upload photo
-                  <input type="file" accept="image/*" onChange={(event) => {
+                  <input type="file" accept="image/*" disabled={!canCaptureEvidence || busy !== null} onChange={(event) => {
                     const file = event.target.files?.[0];
                     if (!file) return;
                     void runAction("upload", async () => {
@@ -499,7 +496,7 @@ export function InspectionDetailPage() {
                     });
                   }} />
                 </label>
-                <button className="secondary-button" disabled={busy !== null} onClick={() => void runAction("analyze", async () => {
+                <button className="secondary-button" disabled={analysisDisabled} title={canAnalyzePhotos ? undefined : "Inspector or Admin access required"} onClick={() => void runAction("analyze", async () => {
                   for (const photo of bundle.photos) {
                     if (photo.analysisStatus !== "completed") {
                       await api(`/api/photos/${photo.id}/analyze`, { method: "POST", body: JSON.stringify({}) }, actor);
@@ -530,14 +527,14 @@ export function InspectionDetailPage() {
                 ))}
               </div>
               <div className="damage-form">
-                <input value={damageForm.location} onChange={(event) => setDamageForm((current) => ({ ...current, location: event.target.value }))} />
-                <select value={damageForm.damageType} onChange={(event) => setDamageForm((current) => ({ ...current, damageType: event.target.value }))}>
+                <input disabled={!canConfirmDamage} value={damageForm.location} onChange={(event) => setDamageForm((current) => ({ ...current, location: event.target.value }))} />
+                <select disabled={!canConfirmDamage} value={damageForm.damageType} onChange={(event) => setDamageForm((current) => ({ ...current, damageType: event.target.value }))}>
                   {["scratch", "dent", "crack", "paint_damage", "glass_damage", "wheel_damage", "interior_wear", "unknown"].map((value) => <option key={value}>{value}</option>)}
                 </select>
-                <select value={damageForm.severity} onChange={(event) => setDamageForm((current) => ({ ...current, severity: event.target.value }))}>
+                <select disabled={!canConfirmDamage} value={damageForm.severity} onChange={(event) => setDamageForm((current) => ({ ...current, severity: event.target.value }))}>
                   {["minor", "moderate", "severe", "unknown"].map((value) => <option key={value}>{value}</option>)}
                 </select>
-                <button className="secondary-button" onClick={() => void runAction("damage", () => api(`/api/inspections/${id}/damage`, { method: "POST", body: JSON.stringify(damageForm) }, actor))}>
+                <button className="secondary-button" disabled={busy !== null || !canConfirmDamage} title={canConfirmDamage ? undefined : "Reviewer or Admin access required"} onClick={() => void runAction("damage", () => api(`/api/inspections/${id}/damage`, { method: "POST", body: JSON.stringify(damageForm) }, actor))}>
                   <Pencil size={16} /> Add
                 </button>
               </div>
@@ -546,10 +543,10 @@ export function InspectionDetailPage() {
             <article className="dock-panel report-panel">
               <div className="dock-tabs"><strong>Report draft</strong><span>Condition summary</span></div>
               <div className="report-actions dock-actions">
-                <button className="secondary-button" disabled={busy !== null} onClick={() => void runAction("grade", () => api(`/api/inspections/${id}/grade`, { method: "POST", body: JSON.stringify({ idempotencyKey: `grade-${id}` }) }, actor))}>
+                <button className="secondary-button" disabled={busy !== null || !canGrade} title={canGrade ? undefined : "Reviewer or Admin access required"} onClick={() => void runAction("grade", () => api(`/api/inspections/${id}/grade`, { method: "POST", body: JSON.stringify({ idempotencyKey: `grade-${id}` }) }, actor))}>
                   <ShieldCheck size={16} /> Calculate grade
                 </button>
-                <button className="secondary-button" disabled={busy !== null} onClick={() => void runAction("report", () => api(`/api/inspections/${id}/ai-report`, { method: "POST", body: JSON.stringify({ idempotencyKey: `report-${id}` }) }, actor))}>
+                <button className="secondary-button" disabled={busy !== null || !canDraftReport} title={canDraftReport ? undefined : "Reviewer or Admin access required"} onClick={() => void runAction("report", () => api(`/api/inspections/${id}/ai-report`, { method: "POST", body: JSON.stringify({ idempotencyKey: `report-${id}` }) }, actor))}>
                   <Bot size={16} /> Draft report
                 </button>
               </div>
@@ -564,12 +561,12 @@ export function InspectionDetailPage() {
                   <small>Confidence {Math.round(bundle.aiReportDraft.confidence * 100)}% · human review {bundle.aiReportDraft.humanReviewRequired ? "required" : "optional"}</small>
                 </div>
               ) : null}
-              <textarea value={reportBody} onChange={(event) => setReportBody(event.target.value)} placeholder="Report draft appears here after generation." />
+              <textarea value={reportBody} disabled={!canEditReport} onChange={(event) => setReportBody(event.target.value)} placeholder="Report draft appears here after generation." />
               <div className="report-actions">
-                <button className="secondary-button" disabled={!bundle.finalReport} onClick={() => bundle.finalReport && void runAction("save-report", () => api(`/api/reports/${bundle.finalReport!.id}`, { method: "PATCH", body: JSON.stringify({ reportBody }) }, actor))}>
+                <button className="secondary-button" disabled={!bundle.finalReport || !canEditReport} title={canEditReport ? undefined : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("save-report", () => api(`/api/reports/${bundle.finalReport!.id}`, { method: "PATCH", body: JSON.stringify({ reportBody }) }, actor))}>
                   <FileText size={16} /> Save report edits
                 </button>
-                <button className="primary-button" disabled={!bundle.finalReport || Boolean(bundle.finalReport.finalizedAt)} onClick={() => bundle.finalReport && void runAction("finalize", () => api(`/api/reports/${bundle.finalReport!.id}/finalize`, { method: "POST", body: JSON.stringify({}) }, actor))}>
+                <button className="primary-button" disabled={!bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || !canFinalizeReport} title={canFinalizeReport ? undefined : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("finalize", () => api(`/api/reports/${bundle.finalReport!.id}/finalize`, { method: "POST", body: JSON.stringify({}) }, actor))}>
                   <Check size={16} /> Finalize
                 </button>
               </div>
@@ -590,6 +587,7 @@ export function InspectionDetailPage() {
         <aside className="review-column">
           <div className="review-heading">
             <strong>AI suggestion — requires human confirmation.</strong>
+            {!canReviewSuggestions ? <span>Reviewer or Admin action required.</span> : null}
           </div>
           {pendingSuggestions.length === 0 ? <p className="empty-copy">Analyze photos to create reviewable suggestions.</p> : null}
           {pendingSuggestions.map((suggestion) => (
@@ -597,7 +595,7 @@ export function InspectionDetailPage() {
               key={suggestion.id}
               suggestion={suggestion}
               photo={photosById.get(suggestion.photoId)}
-              disabled={busy !== null}
+              disabled={reviewDisabled}
               onAccept={() => runAction("accept", () => api(`/api/vision-suggestions/${suggestion.id}/accept`, { method: "POST", body: JSON.stringify({}) }, actor))}
               onReject={() => runAction("reject", () => api(`/api/vision-suggestions/${suggestion.id}/reject`, { method: "POST", body: JSON.stringify({}) }, actor))}
               onEdit={(value) => runAction("edit", () => api(`/api/vision-suggestions/${suggestion.id}`, { method: "PATCH", body: JSON.stringify(value) }, actor))}

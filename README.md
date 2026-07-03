@@ -2,7 +2,7 @@
 
 AI-assisted vehicle inspection and condition report platform.
 
-InspectIQ is a portfolio project that models an enterprise inspection and imaging workflow: upload or select vehicle photos, run advisory image analysis, require human confirmation, calculate a deterministic grade, draft a condition report, and preserve an audit trail.
+InspectIQ models a wholesale/offsite vehicle inspection workflow: capture required vehicle photos, run advisory image analysis, require human confirmation, calculate a deterministic condition grade, draft a condition report, prepare buyer-visible disclosure, and preserve an audit trail.
 
 ## Why I Built It
 
@@ -12,22 +12,23 @@ It does not use Cox Automotive branding, proprietary data, or unlicensed assets.
 
 ## Business Problem
 
-Vehicle condition reports need consistent photo evidence, clear damage facts, explainable grading, and accountable review. AI can speed up inspection workflows, but it should not silently become the source of truth. InspectIQ keeps AI advisory and makes reviewers confirm facts before they affect grade or report output.
+Wholesale condition reports need consistent photo evidence, clear damage facts, explainable grading, buyer trust, seller disclosure, and accountable review. AI can speed up inspection workflows, but it should not silently become the source of truth. InspectIQ keeps AI advisory and makes reviewers confirm facts before they affect grade, CR readiness, VDP visibility, reconditioning estimates, or report output.
 
 ## Product Walkthrough
 
-1. Open the dashboard and choose a seeded inspection.
+1. Open the dashboard and choose an inspection.
 2. Create a new inspection when needed.
-3. Attach required photo evidence or upload vehicle photos.
-4. Analyze photos and validate the structured AI output.
-5. Review suggestions labelled `AI suggestion - requires human confirmation`.
+3. Use the Inspector role to attach required photo evidence or upload vehicle photos.
+4. Run image analysis and validate the structured AI output.
+5. Switch to the Reviewer role for suggestions labelled `AI suggestion - requires human confirmation`.
 6. Accept, reject, or edit suggestions.
 7. Confirmed photo-angle suggestions update required evidence completeness.
 8. Accepted damage candidates become human-confirmed damage items.
-9. Calculate the condition grade from confirmed evidence.
-10. Generate a schema-validated AI report draft.
-11. Edit and finalize the report as a reviewer.
-12. Review the audit trail and Platform Health scorecard.
+9. Check CR readiness, VDP readiness, buyer-visible status, reconditioning estimate, and arbitration risk.
+10. Calculate the condition grade from confirmed evidence.
+11. Generate a schema-validated AI report draft.
+12. Edit and finalize the report as a reviewer.
+13. Review the audit trail and Platform Health scorecard.
 
 ## Architecture
 
@@ -35,7 +36,7 @@ Vehicle condition reports need consistent photo evidence, clear damage facts, ex
 flowchart TD
   Web[React + TypeScript workbench] --> API[Node.js Express API]
   API --> Shared[Shared Zod schemas]
-  API --> Store[In-memory store + Postgres schema]
+  API --> Store[Local file snapshot + Postgres schema]
   API --> Vision[Vision provider interface]
   Vision --> MockVision[Mock deterministic analysis]
   Vision --> BedrockVision[Production Bedrock adapter seam]
@@ -49,7 +50,7 @@ flowchart TD
 
 ## Scope
 
-This is a working portfolio application, not a claimed production inspection platform. Local and Cloudflare Pages workflows use deterministic mock AI providers and lightweight persistence so the end-to-end flow is reliable without paid model credentials or a database. The repo includes Postgres schema, Terraform skeleton, provider interfaces, and AWS design notes to show the production direction, but real Bedrock calls, binary image storage, production auth, and durable relational persistence are intentionally left as next steps.
+This is a working portfolio application, not a claimed production inspection platform. Local and Cloudflare Pages workflows use deterministic AI providers and lightweight persistence so the end-to-end flow is reliable without paid model credentials. The repo includes Postgres schema, Drizzle table definitions, Terraform skeleton, provider interfaces, and AWS design notes to show the production direction.
 
 ## Tech Stack
 
@@ -58,7 +59,8 @@ This is a working portfolio application, not a claimed production inspection pla
 - Shared TypeScript schemas.
 - Java Spring Boot grading service.
 - Postgres schema and Drizzle table definitions.
-- S3-style sample image storage.
+- Local file snapshot persistence plus Cloudflare KV snapshot support for hosted Pages.
+- S3-style image storage interface.
 - Step Functions-style async report job model.
 - Provider interfaces with deterministic mock AI implementations.
 - Vitest, Supertest, React Testing Library, JUnit.
@@ -95,6 +97,8 @@ Copy `.env.example` to `.env` if you want to customize:
 - `VISION_PROVIDER=mock|bedrock`
 - `REPORT_PROVIDER=mock|bedrock`
 - `GRADING_SERVICE_URL`
+- `PERSISTENCE_MODE=file|memory`
+- `INSPECTIQ_STORE_FILE`
 
 ## API Examples
 
@@ -103,7 +107,7 @@ curl http://localhost:4000/api/inspections
 
 curl -X POST http://localhost:4000/api/inspections \
   -H 'content-type: application/json' \
-  -d '{"vin":"5NMJBCAE4RH123456","year":2024,"make":"Hyundai","model":"Tucson","trim":"SEL","mileage":14250,"exteriorColor":"Gray","sellerSource":"Dealer trade","inspectorName":"John Smith"}'
+  -d '{"vin":"5NMJBCAE4RH123456","year":2024,"make":"Hyundai","model":"Tucson","trim":"SEL","mileage":14250,"exteriorColor":"Gray","sellerSource":"Wholesale offsite lane","inspectorName":"John Smith"}'
 ```
 
 All responses use:
@@ -202,12 +206,13 @@ AI never finalizes reports.
 
 ```bash
 npm test
+npm run test:e2e
 npm run typecheck
 npm run lint
 npm run build
 ```
 
-The API tests cover the full create-to-finalize flow, schema validation failures, evidence completeness gates, AI suggestion review, audit trail events, and post-finalization immutability guards. The web tests cover reusable UI components; broader browser flow tests are a known next step.
+The API tests cover the full create-to-finalize flow, schema validation failures, evidence completeness gates, AI suggestion review, audit trail events, and post-finalization immutability guards. The browser E2E script covers create -> attach photos -> analyze -> reviewer acceptance -> grade -> draft report -> finalize -> audit verification through the rendered React app.
 
 Java tests:
 
@@ -226,27 +231,26 @@ Implemented locally:
 - Audit events for key decisions.
 - Platform Health scorecard.
 
-Production metrics include image analysis success rate, failed analysis count, report latency, report failures, human review rate, AI suggestion acceptance/rejection rate, and p95 API latency.
+Production metrics include image analysis success rate, missing required angle rate, human review rate, grade generation latency, report finalization rate, suggestion acceptance rate, and p95 API latency.
 
 ## Security
 
-Local review uses a role selector. Production design should use Cognito or enterprise OIDC, JWT validation, RBAC, S3 presigned uploads, object-level authorization, encrypted S3/RDS, Secrets Manager, least-privilege IAM, and CloudTrail.
+Local review uses role-aware UI controls and API RBAC for Inspector, Reviewer, and Admin workflows. Production design should use Cognito or enterprise OIDC, JWT validation, object-level authorization, S3 presigned uploads, encrypted S3/RDS, Secrets Manager, least-privilege IAM, and CloudTrail.
 
 ## AWS Deployment Architecture
 
 The simple production AWS shape is:
 
 ```txt
-CloudFront/S3 or Amplify frontend
--> API Gateway or ALB
--> ECS/Fargate API
--> Aurora PostgreSQL for inspection state and audit events
--> S3 presigned uploads for vehicle images
--> EventBridge/SQS image-analysis queue
--> ECS/Fargate or Lambda worker
--> Bedrock multimodal analysis and Claude report drafting
--> Step Functions for report-generation retries and status
--> CloudWatch/X-Ray, Secrets Manager, KMS, IAM least privilege
+React
+-> API Gateway + Lambda or ECS
+-> Neon Free Postgres or Aurora Postgres
+-> S3 image objects
+-> SQS/EventBridge image jobs
+-> image worker
+-> Bedrock/Rekognition/custom model
+-> validated suggestions
+-> audit trail
 ```
 
 The `infra/terraform` skeleton covers the main resource categories, but it is not a one-command production deployment. A real deployment still needs account-specific networking, service packaging, IAM policies, alarms, Bedrock model access, and environment promotion.
@@ -282,7 +286,7 @@ Handled or documented:
 
 I would discuss:
 
-- Replace the in-memory inspection store with Postgres before multiple reviewers, real uploads, or audit retention matter.
+- Replace the local file/KV snapshot repository with Postgres before multiple reviewers, real uploads, or audit retention matter.
 - Keep Java grading separate only if condition rules are independently owned, versioned, or reused outside the Node API.
 - Use ECS/Fargate for long-running image/report workers when model calls, retries, or native image tooling outgrow Lambda limits.
 - Treat Bedrock output as untrusted input: validate schemas, store raw and validated output, and require human confirmation before facts affect reports.
@@ -298,7 +302,7 @@ I would discuss:
 - Reviewer queue with assignment and SLA filters.
 - Thumbnail generation and image metadata extraction.
 - CloudWatch dashboard templates.
-- More frontend flow tests.
+- Cross-browser frontend flow tests.
 
 ## Resume Bullets
 

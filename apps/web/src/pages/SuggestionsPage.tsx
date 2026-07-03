@@ -1,4 +1,5 @@
 import { Check, RefreshCw, Sparkles, X } from "lucide-react";
+import { estimateDamageRepairCost } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
@@ -61,9 +62,13 @@ function evidenceSummary(suggestion: VisionSuggestion): EvidenceSummary {
   }
 
   if (suggestion.suggestionType === "damage_candidate") {
+    const estimate = asRecord(value.repairEstimateUsd);
+    const estimateLabel = typeof estimate.min === "number" && typeof estimate.max === "number"
+      ? `$${estimate.min.toLocaleString()} - $${estimate.max.toLocaleString()}`
+      : estimateDamageRepairCost(String(value.damageType ?? "unknown"), String(value.severityEstimate ?? "unknown")).label;
     return {
       primary: `Damage: ${titleCase(value.location)} ${titleCase(value.damageType)}`,
-      secondary: `Severity: ${titleCase(value.severityEstimate)}`
+      secondary: `Severity: ${titleCase(value.severityEstimate)} | Recon estimate: ${estimateLabel}`
     };
   }
 
@@ -100,7 +105,7 @@ function formatOdometer(value: unknown): string {
 }
 
 export function SuggestionsPage() {
-  const { actor } = useActor();
+  const { actor, can } = useActor();
   const [records, setRecords] = useState<InspectionReviewRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -137,6 +142,7 @@ export function SuggestionsPage() {
   const pendingCount = rows.filter(({ suggestion }) => suggestion.status === "pending" || suggestion.status === "edited").length;
   const acceptedCount = rows.filter(({ suggestion }) => suggestion.status === "accepted").length;
   const rejectedCount = rows.filter(({ suggestion }) => suggestion.status === "rejected").length;
+  const canReviewSuggestions = can("suggestion:review");
 
   return (
     <section className="page">
@@ -149,6 +155,12 @@ export function SuggestionsPage() {
           <RefreshCw size={16} /> Refresh
         </button>
       </div>
+      {!canReviewSuggestions ? (
+        <div className="role-callout role-restricted">
+          <strong>Reviewer or Admin access required</strong>
+          <span>Inspectors can create inspections, attach photos, and run analysis; reviewers approve or reject the resulting suggestions.</span>
+        </div>
+      ) : null}
       {error ? <div className="error-banner">{error}</div> : null}
 
       <div className="summary-grid">
@@ -217,14 +229,16 @@ export function SuggestionsPage() {
                           <>
                             <button
                               className="accept-button"
-                              disabled={busyId === suggestion.id}
+                              disabled={busyId === suggestion.id || !canReviewSuggestions}
+                              title={canReviewSuggestions ? undefined : "Reviewer or Admin access required"}
                               onClick={() => void reviewSuggestion(suggestion.id, "accept")}
                             >
                               <Check size={15} /> Accept
                             </button>
                             <button
                               className="reject-button"
-                              disabled={busyId === suggestion.id}
+                              disabled={busyId === suggestion.id || !canReviewSuggestions}
+                              title={canReviewSuggestions ? undefined : "Reviewer or Admin access required"}
                               onClick={() => void reviewSuggestion(suggestion.id, "reject")}
                             >
                               <X size={15} /> Reject

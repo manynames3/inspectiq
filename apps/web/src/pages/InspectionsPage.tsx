@@ -2,6 +2,7 @@ import { ArrowRight, ClipboardList, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { StatusPill } from "../components/StatusPill.js";
+import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
 
 export function InspectionsPage() {
@@ -27,6 +28,13 @@ export function InspectionsPage() {
   const completeCount = useMemo(() => records.filter(({ inspection }) =>
     inspection.completenessPercentage === 100
   ).length, [records]);
+  const readinessRows = useMemo(() => records.map((record) => ({
+    inspectionId: record.inspection.id,
+    readiness: deriveMarketplaceReadiness(record.bundle)
+  })), [records]);
+  const crReadyCount = useMemo(() => readinessRows.filter(({ readiness }) => readiness.crStatus === "CR ready").length, [readinessRows]);
+  const vdpReadyCount = useMemo(() => readinessRows.filter(({ readiness }) => readiness.vdpStatus === "VDP ready").length, [readinessRows]);
+  const arbitrationWatchCount = useMemo(() => readinessRows.filter(({ readiness }) => readiness.arbitrationRisk !== "Low").length, [readinessRows]);
 
   return (
     <section className="page">
@@ -53,17 +61,22 @@ export function InspectionsPage() {
           <strong>{records.length}</strong>
         </article>
         <article className="summary-card">
-          <span>Evidence complete</span>
-          <strong>{completeCount}</strong>
+          <span>CR ready</span>
+          <strong>{crReadyCount}</strong>
         </article>
         <article className="summary-card">
-          <span>In human review</span>
-          <strong>{reviewCount}</strong>
+          <span>VDP ready</span>
+          <strong>{vdpReadyCount}</strong>
         </article>
         <article className="summary-card">
-          <span>Finalized</span>
-          <strong>{records.filter(({ inspection }) => inspection.status === "FINALIZED").length}</strong>
+          <span>Arbitration watch</span>
+          <strong>{arbitrationWatchCount}</strong>
         </article>
+      </div>
+      <div className="queue-context-line">
+        <span>{completeCount} evidence-complete</span>
+        <span>{reviewCount} in human review</span>
+        <span>{records.filter(({ inspection }) => inspection.status === "FINALIZED").length} finalized CRs</span>
       </div>
 
       <div className="table-panel">
@@ -74,14 +87,18 @@ export function InspectionsPage() {
               <th>VIN</th>
               <th>Status</th>
               <th>Evidence</th>
-              <th>Suggestions</th>
-              <th>Damage</th>
+              <th>CR</th>
+              <th>VDP</th>
+              <th>Recon</th>
+              <th>Arb. risk</th>
               <th>Report</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {records.map(({ inspection, bundle }) => (
+            {records.map(({ inspection, bundle }) => {
+              const readiness = deriveMarketplaceReadiness(bundle);
+              return (
               <tr key={inspection.id}>
                 <td>
                   <strong>{inspection.year} {inspection.make} {inspection.model}</strong>
@@ -95,8 +112,10 @@ export function InspectionsPage() {
                     <div><i style={{ width: `${inspection.completenessPercentage}%` }} /></div>
                   </div>
                 </td>
-                <td>{bundle.suggestions.length}</td>
-                <td>{bundle.damageItems.length}</td>
+                <td><span className={readiness.crStatus === "CR ready" ? "inline-ready" : "inline-watch"}>{readiness.crStatus}</span></td>
+                <td>{readiness.vdpStatus}</td>
+                <td>{readiness.reconditioningEstimate}</td>
+                <td><span className={`risk-label risk-${readiness.arbitrationRisk.toLowerCase()}`}>{readiness.arbitrationRisk}</span></td>
                 <td>{bundle.finalReport?.finalizedAt ? "Finalized" : bundle.finalReport ? "Draft" : "Not started"}</td>
                 <td>
                   <Link className="row-link" to={`/inspections/${inspection.id}`}>
@@ -104,7 +123,8 @@ export function InspectionsPage() {
                   </Link>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

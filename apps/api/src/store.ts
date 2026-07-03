@@ -19,6 +19,7 @@ import type {
   FinalReport,
   Inspection,
   InspectionBundle,
+  OperationalMetric,
   PhotoAnalysisResult,
   User,
   VehiclePhoto,
@@ -48,6 +49,23 @@ const ExtractedTextSuggestionSchema = z.object({
   odometer: z.string().nullable().optional(),
   vin: z.string().nullable().optional()
 }).strict();
+
+function percentLabel(numerator: number, denominator: number, fallback = 0): string {
+  if (denominator === 0) return `${fallback}%`;
+  return `${Math.round((numerator / denominator) * 100)}%`;
+}
+
+function rateValue(numerator: number, denominator: number, fallback = 0): number {
+  if (denominator === 0) return fallback;
+  return numerator / denominator;
+}
+
+function formatLatency(minutes: number | null): string {
+  if (minutes === null) return "No grade jobs yet";
+  if (minutes < 1) return "<1 min";
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  return `${(minutes / 60).toFixed(1)} hr`;
+}
 
 function validateSuggestionValue(suggestion: VisionSuggestion): unknown {
   if (suggestion.suggestionType === "photo_angle") {
@@ -251,6 +269,12 @@ export class MemoryStore {
         severityEstimate: DamageSeverity;
         confidence: number;
         explanation: string;
+        repairEstimateUsd: {
+          min: number;
+          max: number;
+          rationale: string;
+        };
+        requiresHumanConfirmation: boolean;
       }>;
       extractedText: {
         odometer?: string | null;
@@ -327,6 +351,8 @@ export class MemoryStore {
     this.addAudit(photo.inspectionId, actor, "photo.analyzed", {
       photoId: photo.id,
       provider: input.provider,
+      promptVersion: input.promptVersion,
+      schema: "VisionOutputSchema",
       confidence: input.validated.confidence,
       humanReviewRequired: input.validated.humanReviewRequired
     });
@@ -626,6 +652,9 @@ export class MemoryStore {
     this.addAudit(job.inspectionId, actor, "ai_report.generated", {
       jobId: job.id,
       draftId: savedDraft.id,
+      provider: savedDraft.provider,
+      promptVersion: savedDraft.promptVersion,
+      schema: "AiReportOutputSchema",
       confidence: savedDraft.confidence,
       humanReviewRequired: savedDraft.humanReviewRequired
     });
@@ -713,6 +742,88 @@ export class MemoryStore {
     };
     this.auditEvents.set(event.id, event);
     return event;
+  }
+
+  operationalMetrics(): OperationalMetric[] {
+    const inspections = [...this.inspections.values()];
+    const analyses = [...this.analyses.values()];
+    const suggestions = [...this.suggestions.values()];
+    const grades = [...this.conditionGrades.values()];
+    const reports = [...this.finalReports.values()];
+
+    const completedAnalyses = analyses.filter((analysis) => analysis.status === "completed").length;
+    const failedAnalyses = analyses.filter((analysis) => analysis.status === "failed").length;
+    const analysisRate = rateValue(completedAnalyses, analyses.length, 1);
+
+    const totalRequiredAngles = inspections.length * requiredPhotoAngles.length;
+    const missingRequiredAngles = inspections.reduce((total, inspection) => total + this.missingRequiredEvidence(inspection.id).length, 0);
+    const missingRate = rateValue(missingRequiredAngles, totalRequiredAngles, 0);
+
+    const reviewRequired = suggestions.filter((suggestion) => suggestion.status === "pending" || suggestion.status === "edited").length;
+    const reviewRate = rateValue(reviewRequired, suggestions.length, 0);
+
+    const gradeLatencies = grades
+      .map((grade) => {
+        const inspection = this.inspections.get(grade.inspectionId);
+        if (!inspection) return null;
+        const latencyMs = new Date(grade.createdAt).getTime() - new Date(inspection.createdAt).getTime();
+        return latencyMs >= 0 ? latencyMs / 60_000 : null;
+      })
+      .filter((value): value is number => value !== null);
+    const averageGradeLatency = gradeLatencies.length > 0
+      ? gradeLatencies.reduce((sum, value) => sum + value, 0) / gradeLatencies.length
+      : null;
+
+    const finalizedReports = reports.filter((report) => report.finalizedAt).length;
+    const finalizationRate = rateValue(finalizedReports, reports.length, 0);
+    const reviewedSuggestions = suggestions.filter((suggestion) => suggestion.status === "accepted" || suggestion.status === "rejected");
+    const acceptedSuggestions = reviewedSuggestions.filter((suggestion) => suggestion.status === "accepted").length;
+    const acceptanceRate = rateValue(acceptedSuggestions, reviewedSuggestions.length, 0);
+
+    return [
+      {
+        metric: "image_analysis_success_rate",
+        label: "Image analysis success",
+        value: percentLabel(completedAnalyses, analyses.length, 100),
+        status: analysisRate >= 0.98 ? "healthy" : analysisRate >= 0.9 ? "watch" : "blocked",
+        evidence: `${completedAnalyses} completed, ${failedAnalyses} failed analyses.`
+      },
+      {
+        metric: "missing_required_angle_rate",
+        label: "Missing required angle rate",
+        value: percentLabel(missingRequiredAngles, totalRequiredAngles, 0),
+        status: missingRate <= 0.1 ? "healthy" : missingRate <= 0.35 ? "watch" : "blocked",
+        evidence: `${missingRequiredAngles} missing angles across ${inspections.length} active inspections.`
+      },
+      {
+        metric: "human_review_rate",
+        label: "Human review rate",
+        value: percentLabel(reviewRequired, suggestions.length, 0),
+        status: reviewRate <= 0.45 ? "healthy" : reviewRate <= 0.75 ? "watch" : "blocked",
+        evidence: `${reviewRequired} suggestions still need accept, edit, or reject decisions.`
+      },
+      {
+        metric: "grade_generation_latency",
+        label: "Grade generation latency",
+        value: formatLatency(averageGradeLatency),
+        status: averageGradeLatency === null || averageGradeLatency <= 15 ? "healthy" : averageGradeLatency <= 60 ? "watch" : "blocked",
+        evidence: `${grades.length} deterministic grade calculations recorded.`
+      },
+      {
+        metric: "report_finalization_rate",
+        label: "Report finalization rate",
+        value: percentLabel(finalizedReports, reports.length, 0),
+        status: reports.length === 0 || finalizationRate >= 0.8 ? "healthy" : finalizationRate >= 0.5 ? "watch" : "blocked",
+        evidence: `${finalizedReports} finalized reports out of ${reports.length} generated report records.`
+      },
+      {
+        metric: "suggestion_acceptance_rate",
+        label: "Suggestion acceptance rate",
+        value: percentLabel(acceptedSuggestions, reviewedSuggestions.length, 0),
+        status: reviewedSuggestions.length === 0 || acceptanceRate >= 0.65 ? "healthy" : acceptanceRate >= 0.45 ? "watch" : "blocked",
+        evidence: `${acceptedSuggestions} accepted decisions out of ${reviewedSuggestions.length} reviewed suggestions.`
+      }
+    ];
   }
 
   bundle(inspectionId: string): InspectionBundle {

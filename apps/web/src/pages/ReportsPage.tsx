@@ -1,6 +1,7 @@
 import { FileText, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
 
 function reportSummary(record: InspectionReviewRecord): string {
@@ -79,6 +80,8 @@ export function ReportsPage() {
                 <th>Report status</th>
                 <th>Grade</th>
                 <th>Confidence</th>
+                <th>Buyer visibility</th>
+                <th>Recon estimate</th>
                 <th>Version</th>
                 <th>Summary</th>
                 <th></th>
@@ -88,6 +91,7 @@ export function ReportsPage() {
               {records.map((record) => {
                 const { inspection, bundle } = record;
                 const status = bundle.finalReport?.finalizedAt ? "Finalized" : bundle.finalReport ? "Draft" : "Not started";
+                const readiness = deriveMarketplaceReadiness(bundle);
                 return (
                   <tr key={inspection.id}>
                     <td>
@@ -97,6 +101,8 @@ export function ReportsPage() {
                     <td><span className={`queue-status report-${status.toLowerCase().replaceAll(" ", "-")}`}>{status}</span></td>
                     <td>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} ${bundle.conditionGrade.score}` : "Not graded"}</td>
                     <td>{bundle.aiReportDraft ? `${Math.round(bundle.aiReportDraft.confidence * 100)}%` : "Pending"}</td>
+                    <td>{readiness.buyerVisibility}</td>
+                    <td>{readiness.reconditioningEstimate}</td>
                     <td>{bundle.finalReport?.version ?? "Pending"}</td>
                     <td>{reportSummary(record)}</td>
                     <td><Link className="row-link" to={`/inspections/${inspection.id}`}>Open</Link></td>

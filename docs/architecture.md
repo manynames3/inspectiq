@@ -5,7 +5,7 @@ InspectIQ is a monorepo with a React/Vite frontend, TypeScript Express API, shar
 ```mermaid
 flowchart LR
   UI[React inspection workbench] --> API[Node Express API]
-  API --> Store[In-memory store and Postgres schema]
+  API --> Store[Local file/KV snapshot and Postgres schema]
   API --> Vision[Vision provider interface]
   Vision --> MockVision[Mock deterministic provider]
   Vision --> BedrockVision[Production Bedrock adapter seam]
@@ -16,4 +16,4 @@ flowchart LR
   API --> Audit[Audit trail]
 ```
 
-The local workflow uses deterministic mock providers so it works without paid credentials. The data model, endpoints, and Terraform skeleton map to Postgres, S3, SQS/EventBridge, Step Functions, workers, and Bedrock in AWS, but the production Bedrock adapters and durable repository are intentionally left as next steps.
+The local workflow uses deterministic providers so it works without paid credentials. The data model, endpoints, and Terraform skeleton map to Postgres, S3, SQS/EventBridge, Step Functions, workers, and Bedrock/Rekognition/custom models in AWS. The local repository persists server state to `.inspectiq/local-store.json`; Cloudflare Pages can persist to KV; production should use Postgres transactions.

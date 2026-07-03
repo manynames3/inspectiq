@@ -20,6 +20,10 @@ export function conflict(message: string, details?: unknown): ApiError {
   return new ApiError(409, "CONFLICT", message, details);
 }
 
+export function forbidden(message: string, details?: unknown): ApiError {
+  return new ApiError(403, "FORBIDDEN", message, details);
+}
+
 export function validation(message: string, details?: unknown): ApiError {
   return new ApiError(400, "VALIDATION_FAILED", message, details);
 }
@@ -59,4 +63,3 @@ export function errorHandler(error: unknown, _req: Request, res: Response, _next
     requestId
   });
 }
-

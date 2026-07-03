@@ -160,3 +160,10 @@ export type InspectionBundle = {
   auditEvents: AuditEvent[];
 };
 
+export type OperationalMetric = {
+  metric: string;
+  label: string;
+  value: string;
+  status: "healthy" | "watch" | "blocked";
+  evidence: string;
+};

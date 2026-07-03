@@ -1,11 +1,14 @@
 import { Activity, AlertTriangle, CheckCircle2, CircleHelp, ClipboardList, FileText, LayoutDashboard, Menu, Plus, Search, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
+import { canRole, roleDescriptions, type RoleAction } from "@inspectiq/shared";
 import type { Actor } from "./types.js";
 
 type ActorContextValue = {
   actor: Actor;
   setRole: (role: Actor["role"]) => void;
+  can: (action: RoleAction) => boolean;
+  roleDescription: string;
 };
 
 const ActorContext = createContext<ActorContextValue | null>(null);
@@ -28,13 +31,16 @@ const navItems = [
 ];
 
 export function App() {
-  const [role, setRole] = useState<Actor["role"]>("reviewer");
+  const [role, setRole] = useState<Actor["role"]>("inspector");
   const location = useLocation();
   const actor = useMemo<Actor>(() => ({
     id: `operator-${role}`,
     name: role === "reviewer" ? "Review Lead" : role === "admin" ? "Admin Operator" : "John Smith",
     role
   }), [role]);
+  const can = useCallback((action: RoleAction) => canRole(role, action), [role]);
+  const roleDescription = roleDescriptions[role];
+  const userInitials = actor.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 
   const isActive = (label: string, to: string): boolean => {
     if (label === "Dashboard") return location.pathname === "/";
@@ -49,7 +55,7 @@ export function App() {
   };
 
   return (
-    <ActorContext.Provider value={{ actor, setRole }}>
+    <ActorContext.Provider value={{ actor, setRole, can, roleDescription }}>
       <div className="app-shell">
         <aside className="sidebar">
           <Link to="/" className="brand">
@@ -90,7 +96,7 @@ export function App() {
             </div>
             <div className="topbar-user">
               <CircleHelp size={17} />
-              <span className="user-avatar">JS</span>
+              <span className="user-avatar">{userInitials}</span>
               <strong>{actor.name}</strong>
             </div>
           </header>

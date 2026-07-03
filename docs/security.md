@@ -2,7 +2,10 @@
 
 Local review:
 
-- Role selector for inspector, reviewer, and admin.
+- Role-aware UI controls and API RBAC for inspector, reviewer, and admin actions.
+- Inspector: inspection intake, photo evidence capture, and image analysis.
+- Reviewer: AI suggestion review, damage confirmation, grading, report drafting, and finalization.
+- Admin: full workflow access, including record correction and destructive exceptions.
 - No hardcoded secrets.
 - Synthetic vehicle records and license-safe photographic fixtures only.
 

@@ -5,5 +5,5 @@ seedStore(store);
 console.log(JSON.stringify({
   seededInspections: store.inspections.size,
   seededPhotos: store.photos.size,
-  note: "The in-memory inspection store is seeded at API startup. For Postgres, run apps/api/src/db/schema.sql and adapt this script to DATABASE_URL."
+  note: "The local inspection store is loaded at API startup. For Postgres, run apps/api/src/db/schema.sql and adapt this script to DATABASE_URL."
 }, null, 2));
