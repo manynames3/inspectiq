@@ -777,27 +777,38 @@ td small {
   padding: 5px 9px;
   font-size: 12px;
   font-weight: 700;
-  background: #eef2ff;
-  color: #3730a3;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.status-draft {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .status-finalized,
 .status-ready-for-grading,
-.status-ai-drafted {
-  background: #ecfdf5;
-  color: #047857;
+.status-graded {
+  background: #d8f3f0;
+  color: #08736f;
 }
 
 .status-human-review-required,
-.review-flag,
-.status-report-failed {
-  background: #fff7ed;
-  color: #b45309;
+.status-ai-draft-pending,
+.review-flag {
+  background: #fff0d6;
+  color: #b25f00;
 }
 
-.status-needs-photos {
-  background: #eff6ff;
-  color: #1d4ed8;
+.status-needs-photos,
+.status-ai-drafted {
+  background: #e4edff;
+  color: #0f5ed7;
+}
+
+.status-report-failed {
+  background: #ffe1e1;
+  color: #c9252d;
 }
 
 .progress-cell {
