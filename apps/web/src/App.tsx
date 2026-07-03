@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, CheckCircle2, CircleHelp, ClipboardList, FileText, LayoutDashboard, Menu, Plus, Search, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
+import { Activity, Check, CircleHelp, ClipboardCheck, Clock3, FileText, LayoutDashboard, Menu, Plus, Search, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { canRole, roleDescriptions, type RoleAction } from "@inspectiq/shared";
@@ -29,6 +29,13 @@ const navItems = [
   { to: "/audit", label: "Audit", icon: ShieldCheck },
   { to: "/platform-health", label: "Platform Health", icon: Activity }
 ];
+
+const topbarMetrics = [
+  { label: "Requests", value: "12", tone: "requests", icon: ClipboardCheck },
+  { label: "In Review", value: "7", tone: "review", icon: Clock3 },
+  { label: "Overdue", value: "2", tone: "overdue", icon: TriangleAlert },
+  { label: "System", value: "All good", tone: "system", icon: Check }
+] as const;
 
 export function App() {
   const [role, setRole] = useState<Actor["role"]>("inspector");
@@ -89,10 +96,15 @@ export function App() {
               </label>
             </div>
             <div className="topbar-metrics" aria-label="Workflow health">
-              <div><ClipboardList size={17} /><span>Requests</span><strong>12</strong></div>
-              <div><Activity size={17} /><span>In Review</span><strong>7</strong></div>
-              <div><AlertTriangle size={17} /><span>Overdue</span><strong>2</strong></div>
-              <div><CheckCircle2 size={17} /><span>System</span><strong>All good</strong></div>
+              {topbarMetrics.map(({ label, value, tone, icon: Icon }) => (
+                <div key={label} className={`topbar-metric metric-${tone}`}>
+                  <span className="metric-icon" aria-hidden="true">
+                    <Icon size={14} strokeWidth={2.6} />
+                  </span>
+                  <span className="metric-label">{label}</span>
+                  <strong>{value}</strong>
+                </div>
+              ))}
             </div>
             <div className="topbar-user">
               <CircleHelp size={17} />
