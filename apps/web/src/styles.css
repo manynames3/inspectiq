@@ -962,21 +962,32 @@ td small {
   border-bottom: 1px solid var(--border);
 }
 
-.inspection-tabs span {
+.inspection-tabs button {
   display: grid;
   place-items: center;
   min-height: 34px;
-  color: #475569;
-  font-size: 11px;
+  border: 0;
   border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 0 4px;
   text-align: center;
   line-height: 1.15;
 }
 
-.inspection-tabs span.active {
+.inspection-tabs button.active {
   color: #005fcc;
   border-bottom-color: #0b66d8;
   font-weight: 700;
+}
+
+.inspection-tabs button:focus-visible,
+.inspection-pagination button:focus-visible {
+  outline: 2px solid #0b66d8;
+  outline-offset: -2px;
 }
 
 .inspection-table-head,
@@ -1007,6 +1018,16 @@ td small {
   display: block;
   min-height: 0;
   overflow: auto;
+}
+
+.inspection-empty-row {
+  min-height: 58px;
+  display: grid;
+  place-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .inspection-row-link {
@@ -1098,10 +1119,9 @@ td small {
 }
 
 .inspection-pagination {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(5, 26px);
+  display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   padding: 0 8px;
   border-top: 1px solid var(--border);
   background: #ffffff;
@@ -1109,7 +1129,14 @@ td small {
   font-size: 12px;
 }
 
+.inspection-pagination span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .inspection-pagination button {
+  flex: 0 0 24px;
+  width: 24px;
   height: 24px;
   display: grid;
   place-items: center;
@@ -1118,12 +1145,18 @@ td small {
   background: transparent;
   color: #334155;
   padding: 0;
+  cursor: pointer;
 }
 
 .inspection-pagination button.active {
   background: #e5e7eb;
   color: #0f172a;
   font-weight: 700;
+}
+
+.inspection-pagination button:disabled {
+  cursor: default;
+  opacity: 0.35;
 }
 
 .detail-stage {

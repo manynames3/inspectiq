@@ -11,6 +11,13 @@ import type { Inspection, InspectionBundle, SampleImage, VehiclePhoto, VisionSug
 const requiredAngles = [...requiredPhotoAngles];
 const editablePhotoAngles = [...requiredAngles, "unknown"];
 const maxUploadBytes = 2_000_000;
+const queuePageSize = 10;
+
+type QueueTab = "my" | "review" | "all";
+
+function isInReviewInspection(inspection: Inspection) {
+  return inspection.status === "HUMAN_REVIEW_REQUIRED" || inspection.status === "AI_DRAFTED" || inspection.status === "AI_DRAFT_PENDING";
+}
 
 function formatAngleLabel(value: string | null | undefined) {
   if (!value) return "Angle pending";
@@ -217,6 +224,8 @@ export function InspectionDetailPage() {
   const [sampleKey, setSampleKey] = useState("complete-clean-set");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [queueTab, setQueueTab] = useState<QueueTab>("my");
+  const [queuePage, setQueuePage] = useState(1);
   const [damageForm, setDamageForm] = useState({
     location: "front bumper",
     damageType: "scratch",
@@ -277,6 +286,40 @@ export function InspectionDetailPage() {
     return values;
   }, [bundle, confirmedAngles]);
   const photosById = useMemo(() => new Map((bundle?.photos ?? []).map((photo) => [photo.id, photo])), [bundle]);
+  const inReviewInspections = useMemo(() => inspections.filter(isInReviewInspection), [inspections]);
+  const queueCodeByInspectionId = useMemo(
+    () => new Map(inspections.map((inspection, index) => [inspection.id, queueInspectionCode(index)])),
+    [inspections]
+  );
+  const queueTabs = useMemo<Array<{ id: QueueTab; label: string; count: number }>>(() => [
+    { id: "my", label: "My inspections", count: inspections.length },
+    { id: "review", label: "In review", count: inReviewInspections.length },
+    { id: "all", label: "All", count: inspections.length }
+  ], [inspections.length, inReviewInspections.length]);
+  const queuedInspections = useMemo(() => {
+    if (queueTab === "review") return inReviewInspections;
+    return inspections;
+  }, [inReviewInspections, inspections, queueTab]);
+  const queueTotalPages = Math.max(1, Math.ceil(queuedInspections.length / queuePageSize));
+  const visibleQueuedInspections = useMemo(() => {
+    const start = (queuePage - 1) * queuePageSize;
+    return queuedInspections.slice(start, start + queuePageSize);
+  }, [queuePage, queuedInspections]);
+  const queuePageNumbers = useMemo(
+    () => Array.from({ length: queueTotalPages }, (_, index) => index + 1),
+    [queueTotalPages]
+  );
+  const queueRangeLabel = queuedInspections.length === 0
+    ? "0 of 0"
+    : `${((queuePage - 1) * queuePageSize) + 1}-${Math.min(queuePage * queuePageSize, queuedInspections.length)} of ${queuedInspections.length}`;
+
+  useEffect(() => {
+    setQueuePage(1);
+  }, [queueTab]);
+
+  useEffect(() => {
+    setQueuePage((current) => Math.min(Math.max(current, 1), queueTotalPages));
+  }, [queueTotalPages]);
 
   if (!bundle || !id) return <section className="page"><div className="loading">Loading inspection...</div></section>;
 
@@ -317,9 +360,11 @@ export function InspectionDetailPage() {
             <button className="queue-options-button" aria-label="Inspection queue options"><SlidersHorizontal size={15} /></button>
           </div>
           <div className="inspection-tabs">
-            <span className="active">My inspections ({inspections.length})</span>
-            <span>In review</span>
-            <span>All</span>
+            {queueTabs.map((tab) => (
+              <button key={tab.id} type="button" className={queueTab === tab.id ? "active" : ""} onClick={() => setQueueTab(tab.id)}>
+                {tab.label} ({tab.count})
+              </button>
+            ))}
           </div>
           <div className="inspection-table-head">
             <span>ID</span>
@@ -328,10 +373,12 @@ export function InspectionDetailPage() {
             <span>Updated <ArrowDown size={11} /></span>
           </div>
           <div className="inspection-rows">
-            {inspections.map((inspection, index) => (
+            {visibleQueuedInspections.length === 0 ? (
+              <div className="inspection-empty-row">No inspections in this queue.</div>
+            ) : visibleQueuedInspections.map((inspection) => (
               <Link key={inspection.id} to={`/inspections/${inspection.id}`} className={`inspection-row-link ${inspection.id === id ? "selected" : ""}`}>
                 <span className="inspection-id-cell">
-                  <strong>{queueInspectionCode(index)}</strong>
+                  <strong>{queueCodeByInspectionId.get(inspection.id) ?? "INS-2025-00000"}</strong>
                   <small>VIN {inspection.vin}</small>
                 </span>
                 <span className="inspection-vehicle-cell">
@@ -344,12 +391,18 @@ export function InspectionDetailPage() {
             ))}
           </div>
           <div className="inspection-pagination">
-            <span>1-{Math.min(10, inspections.length)} of {inspections.length}</span>
-            <button aria-label="Previous page"><ChevronLeft size={14} /></button>
-            <button className="active">1</button>
-            <button>2</button>
-            <button>3</button>
-            <button aria-label="Next page"><ChevronRight size={14} /></button>
+            <span>{queueRangeLabel}</span>
+            {queueTotalPages > 1 ? (
+              <>
+                <button type="button" aria-label="Previous page" disabled={queuePage === 1} onClick={() => setQueuePage((current) => Math.max(1, current - 1))}><ChevronLeft size={14} /></button>
+                {queuePageNumbers.map((pageNumber) => (
+                  <button key={pageNumber} type="button" className={queuePage === pageNumber ? "active" : ""} onClick={() => setQueuePage(pageNumber)}>
+                    {pageNumber}
+                  </button>
+                ))}
+                <button type="button" aria-label="Next page" disabled={queuePage === queueTotalPages} onClick={() => setQueuePage((current) => Math.min(queueTotalPages, current + 1))}><ChevronRight size={14} /></button>
+              </>
+            ) : null}
           </div>
         </aside>
 
