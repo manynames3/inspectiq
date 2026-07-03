@@ -210,7 +210,7 @@ function suggestionPriority(suggestion: VisionSuggestion) {
 
 export function InspectionDetailPage() {
   const { id } = useParams();
-  const { actor, can, roleDescription } = useActor();
+  const { actor, can } = useActor();
   const [bundle, setBundle] = useState<InspectionBundle | null>(null);
   const [inspections, setInspections] = useState<Inspection[]>([]);
   const [sampleImages, setSampleImages] = useState<SampleImage[]>([]);
@@ -367,10 +367,6 @@ export function InspectionDetailPage() {
             </div>
           </div>
           <div className="detail-readiness-header">
-            <div className={`role-callout role-${actor.role}`}>
-              <strong>{actor.role.charAt(0).toUpperCase() + actor.role.slice(1)} workspace</strong>
-              <span>{roleDescription}</span>
-            </div>
             <div className="marketplace-readiness-strip" aria-label="Marketplace readiness">
               <span className={marketplaceReadiness.crStatus === "CR ready" ? "ready" : "blocked"}>
                 <strong>{marketplaceReadiness.crStatus}</strong>
@@ -417,14 +413,18 @@ export function InspectionDetailPage() {
             <section className="workflow-board">
               <div className="workflow-status">
                 <h2>Workflow status</h2>
-                <div className="workflow-steps">
-                  {["Inspection", "AI Analysis", "Human Review", "Report"].map((label, index) => (
-                    <span key={label} className={workflowStep >= index + 1 ? "active" : ""}>
-                      <i>{index + 1}</i>
-                      <strong>{label}</strong>
-                      <small>{workflowStep > index + 1 ? "Completed" : workflowStep === index + 1 ? "In Progress" : "Pending"}</small>
-                    </span>
-                  ))}
+                <div className={`workflow-steps step-${workflowStep}`}>
+                  {["Inspection", "AI Analysis", "Human Review", "Report"].map((label, index) => {
+                    const stepNumber = index + 1;
+                    const stepState = workflowStep > stepNumber ? "complete" : workflowStep === stepNumber ? "current" : "upcoming";
+                    return (
+                      <span key={label} className={`workflow-step ${stepState}`}>
+                        <i>{stepNumber}</i>
+                        <strong>{label}</strong>
+                        <small>{stepState === "complete" ? "Completed" : stepState === "current" ? "In Progress" : "Pending"}</small>
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -439,7 +439,9 @@ export function InspectionDetailPage() {
                       const captured = capturedAngles.has(angle);
                       return (
                       <span key={angle} className={captured ? "complete" : "missing"}>
-                        {captured ? <Check size={14} /> : <X size={14} />}
+                        <span className="checklist-icon" aria-hidden="true">
+                          {captured ? <Check size={10} /> : <X size={10} />}
+                        </span>
                         <strong>{formatAngleLabel(angle)}</strong>
                         <em>{captured ? "Captured" : "Missing"}</em>
                       </span>
@@ -459,17 +461,22 @@ export function InspectionDetailPage() {
                         <ImagePlus size={20} />
                         <span>No images yet</span>
                       </div>
-                    ) : bundle.photos.map((photo) => (
-                      <article className="photo-tile" key={photo.id}>
-                        <img src={assetUrl(photo.storageKey)} alt={photo.originalFilename} />
-                        <div>
-                          <strong>{photoDisplayName(photo)}</strong>
-                          <span>{photo.originalFilename.replace(/\.[^.]+$/, "")}</span>
-                          <span>{photo.detectedAngleConfidence ? `${Math.round(photo.detectedAngleConfidence * 100)}%` : "Pending"}</span>
-                          {photo.qualityStatus === "warning" ? <em><AlertTriangle size={13} /> warning</em> : null}
-                        </div>
-                      </article>
-                    ))}
+                    ) : bundle.photos.map((photo) => {
+                      const confidenceLabel = typeof photo.detectedAngleConfidence === "number" ? `${Math.round(photo.detectedAngleConfidence * 100)}%` : "Pending";
+                      return (
+                        <article className="photo-tile" key={photo.id}>
+                          <img src={assetUrl(photo.storageKey)} alt={photo.originalFilename} />
+                          <div>
+                            <strong>{photoDisplayName(photo)}</strong>
+                            <span className={`photo-confidence-badge ${confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={`Detected angle confidence ${confidenceLabel}`}>
+                              {confidenceLabel}
+                            </span>
+                            <span className="photo-file-name">{photo.originalFilename.replace(/\.[^.]+$/, "")}</span>
+                            {photo.qualityStatus === "warning" ? <em><AlertTriangle size={13} /> warning</em> : null}
+                          </div>
+                        </article>
+                      );
+                    })}
                   </section>
                 </div>
               </div>

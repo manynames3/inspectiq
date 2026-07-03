@@ -75,7 +75,6 @@ try {
   await waitForBodyText(page, "AI suggestion");
 
   await page.locator(".role-select select").selectOption("reviewer");
-  await waitForBodyText(page, "Reviewer workspace");
   await page.locator(".suggestion-card .accept-button:not([disabled])").first().waitFor({ timeout: 10_000 });
   await acceptVisibleSuggestions(page);
   await waitForBodyText(page, "Ready for grading");

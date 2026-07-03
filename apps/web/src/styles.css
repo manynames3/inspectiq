@@ -859,7 +859,7 @@ td small {
 .concept-workbench {
   height: calc(100vh - 60px);
   display: grid;
-  grid-template-columns: 370px minmax(0, 1fr) 286px;
+  grid-template-columns: 300px minmax(0, 1fr) 286px;
   grid-template-rows: minmax(0, 1fr) 170px;
   align-items: stretch;
   border-bottom: 1px solid var(--border);
@@ -1117,10 +1117,6 @@ td small {
   background: #ffffff;
 }
 
-.detail-readiness-header .role-callout {
-  margin: 0 14px 8px;
-}
-
 .detail-titlebar {
   min-height: 58px;
   display: flex;
@@ -1214,20 +1210,54 @@ td small {
 .workflow-steps {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  gap: 0;
   position: relative;
 }
 
-.workflow-steps span {
+.workflow-steps::before,
+.workflow-steps::after {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: 12.5%;
+  height: 1px;
+  pointer-events: none;
+}
+
+.workflow-steps::before {
+  right: 12.5%;
+  background: #94a3b8;
+}
+
+.workflow-steps::after {
+  width: 0;
+  background: #0f766e;
+}
+
+.workflow-steps.step-2::after {
+  width: 25%;
+}
+
+.workflow-steps.step-3::after {
+  width: 50%;
+}
+
+.workflow-steps.step-4::after {
+  width: 75%;
+}
+
+.workflow-step {
   display: grid;
   justify-items: center;
   gap: 4px;
   color: #475569;
   text-align: center;
   font-size: 12px;
+  position: relative;
+  z-index: 1;
 }
 
-.workflow-steps i {
+.workflow-step i {
   width: 26px;
   height: 26px;
   display: grid;
@@ -1240,25 +1270,39 @@ td small {
   font-weight: 800;
 }
 
-.workflow-steps span.active i {
+.workflow-step.complete i,
+.workflow-step.current i {
   background: #0f766e;
   color: #ffffff;
   border-color: #0f766e;
 }
 
-.workflow-steps strong {
+.workflow-step.current i {
+  box-shadow: 0 0 0 3px #e0f2fe;
+}
+
+.workflow-step.upcoming i {
+  background: #ffffff;
+}
+
+.workflow-step strong {
   color: #0f172a;
   font-size: 11px;
 }
 
-.workflow-steps small {
+.workflow-step small {
   color: var(--muted);
   font-size: 10px;
 }
 
+.workflow-step.complete small,
+.workflow-step.current small {
+  color: #0f766e;
+}
+
 .evidence-board {
   display: grid;
-  grid-template-columns: 142px minmax(0, 1fr);
+  grid-template-columns: 164px minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -1275,9 +1319,9 @@ td small {
   grid-template-columns: 1fr;
 }
 
-.checklist.compact-checklist span {
+.checklist.compact-checklist > span {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
   min-height: 25px;
   background: transparent;
   padding: 0;
@@ -1285,15 +1329,35 @@ td small {
   color: #334155;
 }
 
-.checklist.compact-checklist span svg {
+.checklist.compact-checklist .checklist-icon {
+  width: 14px;
+  height: 14px;
+  min-height: 14px;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  border: 1px solid #0f766e;
+  border-radius: 999px;
   color: #0f766e;
+  background: #ffffff;
+  padding: 0;
 }
 
-.checklist.compact-checklist span.missing svg {
+.checklist.compact-checklist .checklist-icon svg {
+  color: #0f766e;
+  stroke-width: 2.4;
+}
+
+.checklist.compact-checklist > span.missing .checklist-icon {
+  border-color: #ef4444;
   color: #ef4444;
 }
 
-.checklist.compact-checklist span strong {
+.checklist.compact-checklist > span.missing .checklist-icon svg {
+  color: #ef4444;
+}
+
+.checklist.compact-checklist > span strong {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
@@ -1301,13 +1365,13 @@ td small {
   text-overflow: ellipsis;
 }
 
-.checklist.compact-checklist span em {
+.checklist.compact-checklist > span em {
   color: #0f766e;
   font-size: 10px;
   font-style: normal;
 }
 
-.checklist.compact-checklist span.missing em {
+.checklist.compact-checklist > span.missing em {
   color: #ef4444;
 }
 
@@ -1318,6 +1382,7 @@ td small {
 
 .photo-grid.evidence-photos .photo-tile {
   border-radius: 4px;
+  min-width: 0;
 }
 
 .photo-grid.evidence-photos .photo-tile img {
@@ -1326,7 +1391,10 @@ td small {
 
 .photo-grid.evidence-photos .photo-tile div {
   padding: 6px;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 6px;
+  align-items: start;
 }
 
 .photo-grid.evidence-photos .photo-tile strong {
@@ -1334,6 +1402,38 @@ td small {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.photo-grid.evidence-photos .photo-file-name {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.photo-grid.evidence-photos .photo-confidence-badge {
+  justify-self: end;
+  min-width: 34px;
+  height: 17px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 2px;
+  background: #0f766e;
+  color: #ffffff;
+  padding: 0 5px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.photo-grid.evidence-photos .photo-confidence-badge.pending {
+  background: #e5e7eb;
+  color: #475569;
+}
+
+.photo-grid.evidence-photos .photo-tile em {
+  grid-column: 1 / -1;
 }
 
 .evidence-actions {
@@ -2028,10 +2128,30 @@ pre {
     min-height: auto;
   }
 
-  .detail-core-grid,
   .evidence-board,
   .bottom-dock {
     grid-template-columns: 1fr;
+  }
+
+  .detail-core-grid {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  .vehicle-meta-panel {
+    max-height: 520px;
+  }
+
+  .workflow-board {
+    overflow-x: auto;
+  }
+
+  .evidence-board {
+    grid-template-columns: 164px minmax(360px, 1fr);
+    min-width: 560px;
+  }
+
+  .photo-grid.evidence-photos {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .vehicle-meta-panel,
@@ -2040,6 +2160,11 @@ pre {
   .dock-panel + .dock-panel {
     border-right: 0;
     border-left: 0;
+  }
+
+  .evidence-board > div:first-child {
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
   }
 
   .workbench-grid {
@@ -2076,6 +2201,40 @@ pre {
   .topbar {
     height: auto;
     padding: 14px 18px;
+  }
+
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+    max-width: 100vw;
+    overflow: hidden;
+    padding: 14px 10px 12px;
+  }
+
+  .brand {
+    width: 100%;
+    min-width: 0;
+    margin-bottom: 12px;
+  }
+
+  .nav-list {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .nav-list a {
+    flex: 0 0 auto;
+    height: 34px;
+    min-width: max-content;
+    padding: 0 10px;
+  }
+
+  .nav-list a.active {
+    order: -1;
   }
 
   .topbar-left,
@@ -2115,8 +2274,77 @@ pre {
     flex-direction: column;
   }
 
+  .detail-core-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-board {
+    order: 1;
+  }
+
+  .vehicle-meta-panel {
+    order: 2;
+    max-height: none;
+  }
+
+  .marketplace-readiness-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .evidence-board {
+    grid-template-columns: 1fr;
+    min-width: 0;
+  }
+
+  .evidence-board > div:first-child {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .photo-grid.evidence-photos {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workflow-steps {
+    min-width: 0;
+  }
+
+  .workflow-step strong {
+    font-size: 10px;
+  }
+
   .damage-row,
   .audit-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .workflow-status {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .workflow-step {
+    gap: 3px;
+  }
+
+  .workflow-step i {
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+  }
+
+  .workflow-steps::before,
+  .workflow-steps::after {
+    top: 12px;
+  }
+
+  .workflow-step small {
+    font-size: 9px;
+  }
+
+  .photo-grid.evidence-photos {
     grid-template-columns: 1fr;
   }
 }

@@ -1,14 +1,13 @@
 import { Activity, Check, CircleHelp, ClipboardCheck, Clock3, FileText, LayoutDashboard, Menu, Plus, Search, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { canRole, roleDescriptions, type RoleAction } from "@inspectiq/shared";
+import { canRole, type RoleAction } from "@inspectiq/shared";
 import type { Actor } from "./types.js";
 
 type ActorContextValue = {
   actor: Actor;
   setRole: (role: Actor["role"]) => void;
   can: (action: RoleAction) => boolean;
-  roleDescription: string;
 };
 
 const ActorContext = createContext<ActorContextValue | null>(null);
@@ -46,7 +45,6 @@ export function App() {
     role
   }), [role]);
   const can = useCallback((action: RoleAction) => canRole(role, action), [role]);
-  const roleDescription = roleDescriptions[role];
   const userInitials = actor.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 
   const isActive = (label: string, to: string): boolean => {
@@ -62,7 +60,7 @@ export function App() {
   };
 
   return (
-    <ActorContext.Provider value={{ actor, setRole, can, roleDescription }}>
+    <ActorContext.Provider value={{ actor, setRole, can }}>
       <div className="app-shell">
         <aside className="sidebar">
           <Link to="/" className="brand">
