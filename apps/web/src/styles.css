@@ -42,13 +42,13 @@ button {
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 136px minmax(0, 1fr);
+  grid-template-columns: 172px minmax(0, 1fr);
 }
 
 .sidebar {
   border-right: 1px solid #15314d;
   background: linear-gradient(180deg, #081a2b 0%, #071524 100%);
-  padding: 18px 7px;
+  padding: 18px 10px;
   position: sticky;
   top: 0;
   height: 100vh;
@@ -60,7 +60,8 @@ button {
   align-items: center;
   color: #f8fafc;
   text-decoration: none;
-  margin: 0 8px 26px;
+  margin: 0 0 26px;
+  padding: 0 8px;
 }
 
 .brand strong {
