@@ -88,6 +88,7 @@ jobs:
           cache: npm
       - uses: hashicorp/setup-terraform@v3
       - run: npm ci
+      - run: npm run build -w @inspectiq/shared
       - run: npm run build:lambda
       - run: terraform -chdir=infra/terraform init -backend=false
       - run: terraform -chdir=infra/terraform validate
