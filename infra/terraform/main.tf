@@ -114,6 +114,109 @@ resource "aws_cognito_user_pool_domain" "inspectiq" {
   user_pool_id = aws_cognito_user_pool.inspectiq.id
 }
 
+resource "aws_cognito_user_pool_ui_customization" "web" {
+  user_pool_id = aws_cognito_user_pool.inspectiq.id
+  client_id    = aws_cognito_user_pool_client.web.id
+
+  css = <<-CSS
+  .background-customizable {
+    border: 1px solid #d7e1eb;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #ffffff;
+    box-shadow: 0 24px 70px rgba(15, 31, 48, 0.2);
+  }
+
+  .banner-customizable {
+    min-height: 96px;
+    padding: 24px 28px 20px;
+    background-color: #091d32;
+    background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='420'%20height='96'%20viewBox='0%200%20420%2096'%3E%3Ctext%20x='28'%20y='40'%20fill='%23ffffff'%20font-family='Arial,sans-serif'%20font-size='27'%20font-weight='800'%3EInspectIQ%3C/text%3E%3Ctext%20x='28'%20y='63'%20fill='%23a9c7e7'%20font-family='Arial,sans-serif'%20font-size='13'%20font-weight='600'%3ESecure%20inspection%20workbench%3C/text%3E%3C/svg%3E");
+    background-position: left center;
+    background-repeat: no-repeat;
+    background-size: 420px 96px;
+    border-bottom: 1px solid #102c47;
+    text-align: left;
+  }
+
+  .textDescription-customizable {
+    display: block;
+    margin: 0 0 22px;
+    color: #172033;
+    font-size: 19px;
+    font-weight: 760;
+    line-height: 1.35;
+    text-align: left;
+  }
+
+  .label-customizable {
+    display: block;
+    margin: 14px 0 7px;
+    color: #34445a;
+    font-size: 13px;
+    font-weight: 720;
+    line-height: 1.2;
+  }
+
+  .inputField-customizable {
+    width: 100%;
+    height: 44px;
+    border: 1px solid #c7d3e0;
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: none;
+    color: #172033;
+    font-size: 15px;
+    line-height: 20px;
+    padding: 10px 12px;
+  }
+
+  .redirect-customizable {
+    color: #0b65c2;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .submitButton-customizable {
+    width: 100%;
+    height: 46px;
+    margin-top: 22px;
+    border: 0;
+    border-radius: 8px;
+    background: #0b65c2;
+    box-shadow: 0 10px 22px rgba(11, 101, 194, 0.24);
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 20px;
+    text-transform: none;
+  }
+
+  .errorMessage-customizable {
+    margin: 0 0 14px;
+    border-radius: 8px;
+    color: #a31b1b;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .legalText-customizable {
+    color: #5a6b80;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .passwordCheck-valid-customizable {
+    color: #007c6d;
+  }
+
+  .passwordCheck-notValid-customizable {
+    color: #c24a00;
+  }
+  CSS
+}
+
 resource "aws_cognito_user_group" "inspector" {
   name         = "inspector"
   user_pool_id = aws_cognito_user_pool.inspectiq.id
