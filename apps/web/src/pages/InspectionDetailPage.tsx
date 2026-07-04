@@ -14,6 +14,23 @@ const maxUploadBytes = 2_000_000;
 const queuePageSize = 10;
 
 type QueueTab = "my" | "review" | "all";
+type ConditionDockTab = "grading" | "damage";
+type ReportDockTab = "draft" | "summary";
+
+type GradeExplanationView = {
+  deductions?: Array<{ reason?: string; points?: number }>;
+  completionPenalty?: number;
+  mileageAdjustment?: number;
+  ageAdjustment?: number;
+};
+
+type ReportOutputView = {
+  summary?: string;
+  notableDefects?: string[];
+  missingEvidence?: string[];
+  recommendedDisclosure?: string;
+  reasoningSummary?: string;
+};
 
 function isInReviewInspection(inspection: Inspection) {
   return inspection.status === "HUMAN_REVIEW_REQUIRED" || inspection.status === "AI_DRAFTED" || inspection.status === "AI_DRAFT_PENDING";
@@ -107,6 +124,25 @@ function suggestionFacts(suggestion: VisionSuggestion): SuggestionFact[] {
     return extracted.length > 0 ? extracted : [{ label: "Extracted Text", value: "No text found" }];
   }
   return Object.entries(value).slice(0, 4).map(([key, rowValue]) => ({ label: formatAngleLabel(key), value: formatSuggestionValue(rowValue) }));
+}
+
+function conditionGradeExplanation(grade: InspectionBundle["conditionGrade"]): GradeExplanationView {
+  if (!grade || typeof grade.explanationJson !== "object" || grade.explanationJson === null) return {};
+  return grade.explanationJson as GradeExplanationView;
+}
+
+function conditionGradeDeductions(grade: InspectionBundle["conditionGrade"]) {
+  const explanation = conditionGradeExplanation(grade);
+  if (!Array.isArray(explanation.deductions)) return [];
+  return explanation.deductions.filter((item): item is { reason: string; points: number } => (
+    typeof item.reason === "string" && typeof item.points === "number"
+  ));
+}
+
+function reportOutputView(draft: InspectionBundle["aiReportDraft"]): ReportOutputView {
+  const output = draft?.outputJson;
+  if (!output || typeof output !== "object") return {};
+  return output as ReportOutputView;
 }
 
 function normalizePhotoAngleInput(value: string) {
@@ -226,6 +262,8 @@ export function InspectionDetailPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [queueTab, setQueueTab] = useState<QueueTab>("my");
   const [queuePage, setQueuePage] = useState(1);
+  const [conditionDockTab, setConditionDockTab] = useState<ConditionDockTab>("grading");
+  const [reportDockTab, setReportDockTab] = useState<ReportDockTab>("draft");
   const [damageForm, setDamageForm] = useState({
     location: "front bumper",
     damageType: "scratch",
@@ -330,6 +368,20 @@ export function InspectionDetailPage() {
   const workflowStep = bundle.inspection.status === "FINALIZED" ? 4 : bundle.inspection.status === "HUMAN_REVIEW_REQUIRED" || bundle.inspection.status === "AI_DRAFTED" ? 3 : bundle.conditionGrade ? 2 : 1;
   const capturedEvidencePercent = Math.round((requiredAngles.filter((angle) => capturedAngles.has(angle)).length / requiredAngles.length) * 100);
   const marketplaceReadiness = deriveMarketplaceReadiness(bundle);
+  const gradeExplanation = conditionGradeExplanation(bundle.conditionGrade);
+  const gradeDeductions = conditionGradeDeductions(bundle.conditionGrade);
+  const reportOutput = reportOutputView(bundle.aiReportDraft);
+  const reportSummary = reportOutput.summary
+    ?? bundle.finalReport?.reportBody.split("\n").find((line) => line.trim().length > 0)?.replace(/^Summary:\s*/i, "")
+    ?? "Draft the report to generate a reviewer-ready condition summary.";
+  const notableDefects = reportOutput.notableDefects?.length
+    ? reportOutput.notableDefects
+    : bundle.damageItems.length > 0
+      ? bundle.damageItems.map((item) => `${formatTitleValue(item.severity)} ${item.damageType.replaceAll("_", " ")} at ${item.location}`)
+      : ["No confirmed damage items recorded."];
+  const missingEvidence = reportOutput.missingEvidence?.length
+    ? reportOutput.missingEvidence
+    : marketplaceReadiness.blockers.filter((blocker) => blocker.toLowerCase().includes("missing"));
   const canCaptureEvidence = can("photo:capture");
   const canAnalyzePhotos = can("photo:analyze");
   const canReviewSuggestions = can("suggestion:review");
@@ -572,68 +624,133 @@ export function InspectionDetailPage() {
 
           <section className="bottom-dock">
             <article className="dock-panel">
-              <div className="dock-tabs"><strong>Condition grading</strong><span>Damage items</span></div>
-              <div className="dock-body damage-dock-body">
-                <div className="panel-header">
-                  <h2>Damage items</h2>
-                  <span>{bundle.damageItems.length} confirmed</span>
-                </div>
-                <div className="damage-list compact-list">
-                  {bundle.damageItems.map((item) => (
-                    <div key={item.id} className="damage-row">
-                      <strong>{item.location}</strong>
-                      <span>{item.severity} {item.damageType.replaceAll("_", " ")}</span>
-                      <small>{item.source === "vision_suggestion" ? "AI-suggested, human-confirmed" : "Manual"}</small>
-                    </div>
-                  ))}
-                </div>
-                <div className="damage-form">
-                  <input disabled={!canConfirmDamage} value={damageForm.location} onChange={(event) => setDamageForm((current) => ({ ...current, location: event.target.value }))} />
-                  <select disabled={!canConfirmDamage} value={damageForm.damageType} onChange={(event) => setDamageForm((current) => ({ ...current, damageType: event.target.value }))}>
-                    {["scratch", "dent", "crack", "paint_damage", "glass_damage", "wheel_damage", "interior_wear", "unknown"].map((value) => <option key={value}>{value}</option>)}
-                  </select>
-                  <select disabled={!canConfirmDamage} value={damageForm.severity} onChange={(event) => setDamageForm((current) => ({ ...current, severity: event.target.value }))}>
-                    {["minor", "moderate", "severe", "unknown"].map((value) => <option key={value}>{value}</option>)}
-                  </select>
-                  <button className="secondary-button" disabled={busy !== null || !canConfirmDamage} title={canConfirmDamage ? undefined : "Reviewer or Admin access required"} onClick={() => void runAction("damage", () => api(`/api/inspections/${id}/damage`, { method: "POST", body: JSON.stringify(damageForm) }, actor))}>
-                    <Pencil size={16} /> Add
-                  </button>
-                </div>
+              <div className="dock-tabs" role="tablist" aria-label="Condition review">
+                <button type="button" role="tab" aria-selected={conditionDockTab === "grading"} className={conditionDockTab === "grading" ? "active" : ""} onClick={() => setConditionDockTab("grading")}>Condition grading</button>
+                <button type="button" role="tab" aria-selected={conditionDockTab === "damage"} className={conditionDockTab === "damage" ? "active" : ""} onClick={() => setConditionDockTab("damage")}>Damage items</button>
               </div>
+              {conditionDockTab === "grading" ? (
+                <div className="dock-body grading-dock-body">
+                  <div className="panel-header">
+                    <h2>Condition grading</h2>
+                    <span>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} grade` : "Not calculated"}</span>
+                  </div>
+                  <div className="grade-result-card">
+                    <strong>{bundle.conditionGrade ? `${bundle.conditionGrade.score}/100` : "Grade pending"}</strong>
+                    <span>{bundle.conditionGrade ? "Deterministic score based on required evidence, mileage, age, and confirmed damage." : "Calculate the grade after required photo evidence is confirmed."}</span>
+                  </div>
+                  <div className="grading-stat-grid">
+                    <span><strong>{capturedEvidencePercent}%</strong><small>Evidence complete</small></span>
+                    <span><strong>{bundle.damageItems.length}</strong><small>Confirmed damage</small></span>
+                    <span><strong>{marketplaceReadiness.reconditioningEstimate}</strong><small>Recon estimate</small></span>
+                    <span><strong>{marketplaceReadiness.crStatus}</strong><small>CR status</small></span>
+                  </div>
+                  <div className="grade-detail-list compact-list">
+                    {gradeDeductions.length > 0 ? gradeDeductions.map((deduction) => (
+                      <span key={`${deduction.reason}-${deduction.points}`}>
+                        <strong>{deduction.reason}</strong>
+                        <small>-{deduction.points} pts</small>
+                      </span>
+                    )) : <p className="empty-dock-state">No damage deductions recorded.</p>}
+                    {bundle.conditionGrade ? (
+                      <>
+                        <span><strong>Evidence completion penalty</strong><small>-{gradeExplanation.completionPenalty ?? 0} pts</small></span>
+                        <span><strong>Mileage adjustment</strong><small>-{gradeExplanation.mileageAdjustment ?? 0} pts</small></span>
+                        <span><strong>Age adjustment</strong><small>-{gradeExplanation.ageAdjustment ?? 0} pts</small></span>
+                      </>
+                    ) : null}
+                  </div>
+                  <div className="dock-actions">
+                    <button className="secondary-button" disabled={busy !== null || !canGrade} title={canGrade ? undefined : "Reviewer or Admin access required"} onClick={() => void runAction("grade", () => api(`/api/inspections/${id}/grade`, { method: "POST", body: JSON.stringify({ idempotencyKey: `grade-${id}` }) }, actor))}>
+                      <ShieldCheck size={16} /> Calculate grade
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="dock-body damage-dock-body">
+                  <div className="panel-header">
+                    <h2>Damage items</h2>
+                    <span>{bundle.damageItems.length} confirmed</span>
+                  </div>
+                  <div className="damage-list compact-list">
+                    {bundle.damageItems.length > 0 ? bundle.damageItems.map((item) => (
+                      <div key={item.id} className="damage-row">
+                        <strong>{item.location}</strong>
+                        <span>{item.severity} {item.damageType.replaceAll("_", " ")}</span>
+                        <small>{item.source === "vision_suggestion" ? "AI-suggested, human-confirmed" : "Manual"}</small>
+                      </div>
+                    )) : <p className="empty-dock-state">No confirmed damage items.</p>}
+                  </div>
+                  <div className="damage-form">
+                    <input disabled={!canConfirmDamage} value={damageForm.location} onChange={(event) => setDamageForm((current) => ({ ...current, location: event.target.value }))} />
+                    <select disabled={!canConfirmDamage} value={damageForm.damageType} onChange={(event) => setDamageForm((current) => ({ ...current, damageType: event.target.value }))}>
+                      {["scratch", "dent", "crack", "paint_damage", "glass_damage", "wheel_damage", "interior_wear", "unknown"].map((value) => <option key={value}>{value}</option>)}
+                    </select>
+                    <select disabled={!canConfirmDamage} value={damageForm.severity} onChange={(event) => setDamageForm((current) => ({ ...current, severity: event.target.value }))}>
+                      {["minor", "moderate", "severe", "unknown"].map((value) => <option key={value}>{value}</option>)}
+                    </select>
+                    <button className="secondary-button" disabled={busy !== null || !canConfirmDamage} title={canConfirmDamage ? undefined : "Reviewer or Admin access required"} onClick={() => void runAction("damage", () => api(`/api/inspections/${id}/damage`, { method: "POST", body: JSON.stringify(damageForm) }, actor))}>
+                      <Pencil size={16} /> Add
+                    </button>
+                  </div>
+                </div>
+              )}
             </article>
 
             <article className="dock-panel report-panel">
-              <div className="dock-tabs"><strong>Report draft</strong><span>Condition summary</span></div>
-              <div className="dock-body report-dock-body">
-                <div className="report-actions dock-actions">
-                  <button className="secondary-button" disabled={busy !== null || !canGrade} title={canGrade ? undefined : "Reviewer or Admin access required"} onClick={() => void runAction("grade", () => api(`/api/inspections/${id}/grade`, { method: "POST", body: JSON.stringify({ idempotencyKey: `grade-${id}` }) }, actor))}>
-                    <ShieldCheck size={16} /> Calculate grade
-                  </button>
-                  <button className="secondary-button" disabled={busy !== null || !canDraftReport} title={canDraftReport ? undefined : "Reviewer or Admin access required"} onClick={() => void runAction("report", () => api(`/api/inspections/${id}/ai-report`, { method: "POST", body: JSON.stringify({ idempotencyKey: `report-${id}` }) }, actor))}>
-                    <Bot size={16} /> Draft report
-                  </button>
-                </div>
-                <div className="grade-strip">
-                  <strong>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} · ${bundle.conditionGrade.score}` : "Grade not calculated"}</strong>
-                  <span>{bundle.conditionGrade ? "Score based on evidence completeness, mileage, age, and confirmed damage." : "Condition score appears after grading."}</span>
-                </div>
-                {bundle.aiReportDraft ? (
-                  <div className="ai-draft">
-                    <h3>Draft summary</h3>
-                    <p>{bundle.aiReportDraft.outputJson.summary}</p>
-                    <small>Confidence {Math.round(bundle.aiReportDraft.confidence * 100)}% · human review {bundle.aiReportDraft.humanReviewRequired ? "required" : "optional"}</small>
-                  </div>
-                ) : null}
-                <textarea value={reportBody} disabled={!canEditReport} onChange={(event) => setReportBody(event.target.value)} placeholder="Report draft appears here after generation." />
-                <div className="report-actions">
-                  <button className="secondary-button" disabled={!bundle.finalReport || !canEditReport} title={canEditReport ? undefined : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("save-report", () => api(`/api/reports/${bundle.finalReport!.id}`, { method: "PATCH", body: JSON.stringify({ reportBody }) }, actor))}>
-                    <FileText size={16} /> Save report edits
-                  </button>
-                  <button className="primary-button" disabled={!bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || !canFinalizeReport} title={canFinalizeReport ? undefined : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("finalize", () => api(`/api/reports/${bundle.finalReport!.id}/finalize`, { method: "POST", body: JSON.stringify({}) }, actor))}>
-                    <Check size={16} /> Finalize
-                  </button>
-                </div>
+              <div className="dock-tabs" role="tablist" aria-label="Report review">
+                <button type="button" role="tab" aria-selected={reportDockTab === "draft"} className={reportDockTab === "draft" ? "active" : ""} onClick={() => setReportDockTab("draft")}>Report draft</button>
+                <button type="button" role="tab" aria-selected={reportDockTab === "summary"} className={reportDockTab === "summary" ? "active" : ""} onClick={() => setReportDockTab("summary")}>Condition summary</button>
               </div>
+              {reportDockTab === "draft" ? (
+                <div className="dock-body report-dock-body">
+                  <div className="report-actions dock-actions">
+                    <button className="secondary-button" disabled={busy !== null || !canDraftReport} title={canDraftReport ? undefined : "Reviewer or Admin access required"} onClick={() => void runAction("report", () => api(`/api/inspections/${id}/ai-report`, { method: "POST", body: JSON.stringify({ idempotencyKey: `report-${id}` }) }, actor))}>
+                      <Bot size={16} /> Draft report
+                    </button>
+                  </div>
+                  <div className="grade-strip">
+                    <strong>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} · ${bundle.conditionGrade.score}` : "Grade not calculated"}</strong>
+                    <span>{bundle.conditionGrade ? "Score based on evidence completeness, mileage, age, and confirmed damage." : "Condition score appears after grading."}</span>
+                  </div>
+                  {bundle.aiReportDraft ? (
+                    <div className="ai-draft">
+                      <h3>Draft summary</h3>
+                      <p>{bundle.aiReportDraft.outputJson.summary}</p>
+                      <small>Confidence {Math.round(bundle.aiReportDraft.confidence * 100)}% · human review {bundle.aiReportDraft.humanReviewRequired ? "required" : "optional"}</small>
+                    </div>
+                  ) : null}
+                  <textarea value={reportBody} disabled={!canEditReport} onChange={(event) => setReportBody(event.target.value)} placeholder="Report draft appears here after generation." />
+                  <div className="report-actions">
+                    <button className="secondary-button" disabled={!bundle.finalReport || !canEditReport} title={canEditReport ? undefined : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("save-report", () => api(`/api/reports/${bundle.finalReport!.id}`, { method: "PATCH", body: JSON.stringify({ reportBody }) }, actor))}>
+                      <FileText size={16} /> Save report edits
+                    </button>
+                    <button className="primary-button" disabled={!bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || !canFinalizeReport} title={canFinalizeReport ? undefined : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("finalize", () => api(`/api/reports/${bundle.finalReport!.id}/finalize`, { method: "POST", body: JSON.stringify({}) }, actor))}>
+                      <Check size={16} /> Finalize
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="dock-body summary-dock-body">
+                  <div className="panel-header">
+                    <h2>Condition summary</h2>
+                    <span>{bundle.finalReport?.finalizedAt ? "Finalized" : bundle.finalReport ? "Draft ready" : "Needs draft"}</span>
+                  </div>
+                  <div className="summary-section summary-primary">
+                    <strong>Condition Summary</strong>
+                    <p>{reportSummary}</p>
+                  </div>
+                  <div className="summary-section">
+                    <strong>Notable Items</strong>
+                    <ul>
+                      {notableDefects.map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </div>
+                  <div className="summary-section">
+                    <strong>Release Notes</strong>
+                    <p>{reportOutput.recommendedDisclosure ?? (missingEvidence.length > 0 ? missingEvidence.join(" ") : "Evidence is complete. Reviewer can finalize once the draft is approved.")}</p>
+                  </div>
+                </div>
+              )}
             </article>
 
             <article className="dock-panel audit-panel">
