@@ -1,5 +1,7 @@
 # InspectIQ
 
+[![CI](https://github.com/manynames3/inspectiq/actions/workflows/ci.yml/badge.svg)](https://github.com/manynames3/inspectiq/actions/workflows/ci.yml)
+
 AI-assisted wholesale vehicle inspection workbench for condition-report readiness.
 
 InspectIQ is a production-shaped vertical slice of an automotive inspection system: required photo evidence, advisory image analysis, human confirmation, deterministic grading, buyer-visible readiness, condition-report generation, and an auditable decision trail.
@@ -7,6 +9,18 @@ InspectIQ is a production-shaped vertical slice of an automotive inspection syst
 Live walkthrough: https://inspectiq.pages.dev
 
 The hosted walkthrough is Cognito-protected to show the real authenticated path. Temporary Inspector, Reviewer, or Admin credentials can be provided for interview review; local setup remains available for unrestricted code review.
+
+## 90-Second Demo
+
+| Dashboard | Inspection Workbench |
+| --- | --- |
+| ![InspectIQ dashboard](docs/images/dashboard.png) | ![InspectIQ inspection workbench](docs/images/inspection-workbench.png) |
+| AI Suggestion Review | Audit Trail |
+| ![InspectIQ AI suggestion review](docs/images/suggestion-review.png) | ![InspectIQ audit trail](docs/images/audit-trail.png) |
+
+## Live Vs Repeatable Local Path
+
+The live authenticated path uses Cloudflare Pages, Cognito, API Gateway, Lambda, Neon Postgres, private S3 image objects, SQS image-analysis jobs, Bedrock multimodal analysis, and CloudWatch operations visibility. Local development defaults to deterministic providers and file persistence so interviews, tests, and code review stay repeatable. Both paths use the same schema contracts, state machine, reviewer approval workflow, and audit-event model.
 
 ## What This Demonstrates
 
