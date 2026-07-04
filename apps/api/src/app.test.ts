@@ -338,6 +338,35 @@ describe("InspectIQ API", () => {
       .set("authorization", `Bearer ${reviewerToken}`)
       .expect(200);
     expect(reviewerView.body.data.inspection.id).toBe(inspectionId);
+
+    const uploaded = await request(jwtApi)
+      .post(`/api/inspections/${inspectionId}/photos/upload`)
+      .set("authorization", `Bearer ${inspectorToken}`)
+      .send({
+        originalFilename: "front.jpg",
+        mimeType: "image/jpeg",
+        objectBucket: "inspectiq-test-images",
+        objectKey: `inspections/${inspectionId}/photos/front.jpg`,
+        storageKey: `/uploads/inspections/${inspectionId}/photos/front.jpg`,
+        byteSize: 1024,
+        checksumSha256: "n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+      })
+      .expect(201);
+
+    await request(jwtApi)
+      .get(`/api/photos/${uploaded.body.data.id}/image?intent=preview`)
+      .set("authorization", `Bearer ${otherInspectorToken}`)
+      .expect(403);
+
+    const imagePreview = await request(jwtApi)
+      .get(`/api/photos/${uploaded.body.data.id}/image?intent=preview`)
+      .set("authorization", `Bearer ${reviewerToken}`)
+      .expect(200);
+    expect(imagePreview.body.data).toMatchObject({
+      imageUrl: `/uploads/inspections/${inspectionId}/photos/front.jpg`,
+      expiresInSeconds: null,
+      source: "object-storage"
+    });
   });
 
   it("analyzes outstanding photos for an inspection in one batch action", async () => {

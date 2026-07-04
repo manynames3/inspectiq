@@ -53,6 +53,13 @@ function photoDisplayName(photo: InspectionBundle["photos"][number]) {
   return formatAngleLabel(photo.detectedAngle ?? photo.declaredAngle ?? photo.originalFilename.replace(/\.[^.]+$/, ""));
 }
 
+function photoSourceLabel(photo: Pick<VehiclePhoto, "objectBucket" | "storageKey">) {
+  if (photo.objectBucket && photo.objectBucket !== "inspectiq-sample-images") return "Uploaded image";
+  if (photo.objectBucket === "inspectiq-sample-images" || photo.storageKey.startsWith("/sample-images/")) return "Sample evidence";
+  if (photo.storageKey.startsWith("data:")) return "Browser upload";
+  return "Evidence image";
+}
+
 function queueInspectionCode(index: number) {
   return `INS-2025-${String(421 - index).padStart(5, "0")}`;
 }
@@ -136,6 +143,7 @@ function suggestionFacts(suggestion: VisionSuggestion): SuggestionFact[] {
     return [
       { label: "Quality Grade", value: formatTitleValue(quality.grade ?? "review") },
       { label: "Retake Required", value: quality.retakeRequired === true ? "Yes" : "No" },
+      { label: "Action", value: quality.retakeRequired === true ? "Retake photo before release" : "Reviewer can accept if usable" },
       { label: "Blur Score", value: formatQualityScore(quality.blurScore) },
       { label: "Framing Score", value: formatQualityScore(quality.framingScore) }
     ];
@@ -206,6 +214,10 @@ function photoImageUrl(photo: VehiclePhoto): string {
     return `${apiBase}/api/photos/${photo.id}/image`;
   }
   return assetUrl(photo.storageKey);
+}
+
+function needsAuthenticatedImageFetch(photo: VehiclePhoto): boolean {
+  return Boolean(photo.objectBucket && photo.objectKey && photo.objectBucket !== "inspectiq-sample-images");
 }
 
 async function uploadInspectionPhoto(inspectionId: string, file: File, actor: ReturnType<typeof useActor>["actor"]) {
@@ -336,6 +348,54 @@ function suggestionPriority(suggestion: VisionSuggestion) {
 function formatJobStatus(value: string | null | undefined) {
   if (!value) return "Not queued";
   return value.replaceAll("_", " ");
+}
+
+function ProtectedPhotoImage({ photo }: { photo: VehiclePhoto }) {
+  const { actor } = useActor();
+  const directUrl = photoImageUrl(photo);
+  const [src, setSrc] = useState(() => needsAuthenticatedImageFetch(photo) ? "" : directUrl);
+
+  useEffect(() => {
+    if (!needsAuthenticatedImageFetch(photo)) {
+      setSrc(directUrl);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setSrc("");
+
+    const headers = requestHeaders(actor);
+    delete headers["content-type"];
+
+    fetch(`${directUrl}?intent=preview`, { headers })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Image preview unavailable.");
+        const body = await response.json() as { data?: { imageUrl?: string } };
+        if (!body.data?.imageUrl) throw new Error("Image preview URL unavailable.");
+        return body.data.imageUrl;
+      })
+      .then((imageUrl) => {
+        if (cancelled) return;
+        setSrc(imageUrl.startsWith("/") ? assetUrl(imageUrl) : imageUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setSrc("");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [actor.id, actor.name, actor.role, directUrl, photo.id, photo.objectBucket, photo.objectKey]);
+
+  if (!src) {
+    return (
+      <div className="image-preview-placeholder" aria-label={`${photo.originalFilename} preview loading`}>
+        <ImagePlus size={18} />
+      </div>
+    );
+  }
+
+  return <img src={src} alt={photo.originalFilename} />;
 }
 
 async function downloadBuyerReport(reportId: string, actor: ReturnType<typeof useActor>["actor"]): Promise<void> {
@@ -716,17 +776,18 @@ export function InspectionDetailPage() {
                       const job = imageJobByPhotoId.get(photo.id);
                       return (
                         <article className="photo-tile" key={photo.id}>
-                          <img src={photoImageUrl(photo)} alt={photo.originalFilename} />
+                          <ProtectedPhotoImage photo={photo} />
                           <div>
                             <strong>{photoDisplayName(photo)}</strong>
                             <span className={`photo-confidence-badge ${confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={`Detected angle confidence ${confidenceLabel}`}>
                               {confidenceLabel}
                             </span>
                             <span className="photo-file-name">{photo.originalFilename.replace(/\.[^.]+$/, "")}</span>
+                            <span className="photo-source-chip">{photoSourceLabel(photo)}</span>
                             <span className={`analysis-job-chip job-${job?.status ?? photo.analysisStatus}`}>
                               Analysis {formatJobStatus(job?.status ?? photo.analysisStatus)}
                             </span>
-                            {photo.qualityStatus === "warning" ? <em><AlertTriangle size={13} /> warning</em> : null}
+                            {photo.qualityStatus === "warning" ? <em><AlertTriangle size={13} /> quality review</em> : null}
                           </div>
                         </article>
                       );
@@ -954,9 +1015,10 @@ function SuggestionCard({ suggestion, photo, disabled, onAccept, onReject, onEdi
       </div>
       {photo ? (
         <div className="suggestion-photo">
-          <img src={photoImageUrl(photo)} alt={photo.originalFilename} />
+          <ProtectedPhotoImage photo={photo} />
         </div>
       ) : null}
+      {photo ? <span className="suggestion-source-line">{photoSourceLabel(photo)} · {photo.originalFilename}</span> : null}
       <dl className="suggestion-facts">
         {rows.map(({ label, value }) => (
           <div key={label}>

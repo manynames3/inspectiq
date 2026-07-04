@@ -397,16 +397,43 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   }));
 
   app.get("/api/photos/:photoId/image", asyncRoute(async (req, res) => {
-    const photo = appStore.getPhoto(req.params.photoId);
+    const actor = actorFromRequest(req, appStore);
+    const photo = photoForRequest(appStore, req.params.photoId, actor, "view this photo");
     if (!photo.objectBucket || !photo.objectKey || photo.objectBucket === "inspectiq-sample-images") {
+      if (req.query.intent === "preview") {
+        sendData(res, {
+          imageUrl: photo.storageKey,
+          expiresInSeconds: null,
+          source: "sample-or-inline"
+        });
+        return;
+      }
       res.redirect(photo.storageKey);
       return;
     }
     if (process.env.IMAGE_UPLOAD_MODE === "presigned") {
-      res.redirect(await createPresignedDownload({ bucket: photo.objectBucket, key: photo.objectKey }));
+      const imageUrl = await createPresignedDownload({ bucket: photo.objectBucket, key: photo.objectKey, expiresInSeconds: 900 });
+      if (req.query.intent === "preview") {
+        sendData(res, {
+          imageUrl,
+          expiresInSeconds: 900,
+          source: "object-storage"
+        });
+        return;
+      }
+      res.redirect(imageUrl);
       return;
     }
-    res.redirect(photo.storageKey || s3ObjectUrl(photo.objectBucket, photo.objectKey));
+    const imageUrl = photo.storageKey || s3ObjectUrl(photo.objectBucket, photo.objectKey);
+    if (req.query.intent === "preview") {
+      sendData(res, {
+        imageUrl,
+        expiresInSeconds: null,
+        source: "object-storage"
+      });
+      return;
+    }
+    res.redirect(imageUrl);
   }));
 
   app.get("/api/inspections/:id/vision-suggestions", asyncRoute((req, res) => {

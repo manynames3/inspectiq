@@ -1595,6 +1595,19 @@ td small {
   aspect-ratio: 1.35 / 1;
 }
 
+.photo-grid.evidence-photos .image-preview-placeholder,
+.suggestion-photo .image-preview-placeholder {
+  width: 100%;
+  display: grid;
+  place-items: center;
+  background: #e5eaf2;
+  color: #64748b;
+}
+
+.photo-grid.evidence-photos .image-preview-placeholder {
+  aspect-ratio: 1.35 / 1;
+}
+
 .photo-grid.evidence-photos .photo-tile div {
   padding: 6px;
   display: grid;
@@ -1616,6 +1629,21 @@ td small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.photo-source-chip {
+  grid-column: 1 / -1;
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  min-height: 16px;
+  border-radius: 3px;
+  background: #eef6ff;
+  color: #0b66d8;
+  padding: 0 5px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .photo-grid.evidence-photos .photo-confidence-badge {
@@ -2198,6 +2226,22 @@ td small {
   height: 128px;
   display: block;
   object-fit: cover;
+}
+
+.suggestion-photo .image-preview-placeholder {
+  height: 128px;
+}
+
+.suggestion-source-line {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: -2px 6px 8px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .suggestion-photo span {
