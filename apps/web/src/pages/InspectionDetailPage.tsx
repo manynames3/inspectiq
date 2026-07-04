@@ -354,6 +354,32 @@ async function downloadBuyerReport(reportId: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isTerminalAnalysisStatus(status: string | null | undefined) {
+  return status === "completed" || status === "failed" || status === "dead_letter";
+}
+
+async function waitForPhotoAnalysisCompletion(inspectionId: string, photoIds: string[], actor: ReturnType<typeof useActor>["actor"]) {
+  if (photoIds.length === 0) return;
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const nextBundle = await api<InspectionBundle>(`/api/inspections/${inspectionId}`, {}, actor);
+    const relevantPhotos = nextBundle.photos.filter((photo) => photoIds.includes(photo.id));
+    const allTerminal = relevantPhotos.length === photoIds.length
+      && relevantPhotos.every((photo) => isTerminalAnalysisStatus(photo.analysisStatus));
+    if (allTerminal) {
+      const failed = relevantPhotos.find((photo) => photo.analysisStatus !== "completed");
+      if (failed) throw new Error(`Image analysis failed for ${failed.originalFilename}.`);
+      return;
+    }
+    await sleep(2_000);
+  }
+  throw new Error("Image analysis is still processing. Refresh the inspection in a moment.");
+}
+
 export function InspectionDetailPage() {
   const { id } = useParams();
   const { actor, can } = useActor();
@@ -726,11 +752,13 @@ export function InspectionDetailPage() {
                   }} />
                 </label>
                 <button className="secondary-button" disabled={analysisDisabled} title={canAnalyzePhotos ? undefined : "Inspector or Admin access required"} onClick={() => void runAction("analyze", async () => {
+                  const photosToAnalyze = bundle.photos.filter((photo) => photo.analysisStatus !== "completed");
                   for (const photo of bundle.photos) {
                     if (photo.analysisStatus !== "completed") {
                       await api(`/api/photos/${photo.id}/analyze`, { method: "POST", body: JSON.stringify({}) }, actor);
                     }
                   }
+                  await waitForPhotoAnalysisCompletion(id, photosToAnalyze.map((photo) => photo.id), actor);
                 })}>
                   <Play size={16} /> Analyze photos
                 </button>

@@ -41,8 +41,18 @@ jobs:
         if: steps.cf.outputs.available == 'true'
       - run: npm test
         if: steps.cf.outputs.available == 'true'
-      - run: npm run build
+      - name: Build web app for AWS API
         if: steps.cf.outputs.available == 'true'
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || secrets.VITE_API_BASE_URL }}
+        run: |
+          if [ -z "$VITE_API_BASE_URL" ]; then
+            echo "VITE_API_BASE_URL repository variable or secret is required for Pages deployment."
+            exit 1
+          fi
+          npm run build -w @inspectiq/shared
+          npm run build -w @inspectiq/api
+          npm run build -w @inspectiq/web
 
       - name: Deploy to Cloudflare Pages
         if: steps.cf.outputs.available == 'true'

@@ -1,0 +1,30 @@
+name: Live Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Deployed InspectIQ URL to test"
+        required: true
+        default: "https://inspectiq.pages.dev"
+
+permissions:
+  contents: read
+
+jobs:
+  live-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: browser-actions/setup-chrome@v1
+        id: setup-chrome
+      - run: npm ci
+      - name: Run deployed browser smoke flow
+        run: npm run test:e2e
+        env:
+          E2E_BASE_URL: ${{ inputs.base_url }}
+          PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}

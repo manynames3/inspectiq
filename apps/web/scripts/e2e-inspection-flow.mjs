@@ -85,10 +85,10 @@ try {
   await page.getByRole("button", { name: /attach photo set/i }).click();
   await waitForBodyText(page, "Uploaded images (8)");
   await page.getByRole("button", { name: /analyze photos/i }).click();
-  await waitForBodyText(page, "AI suggestion");
+  await page.locator(".suggestion-card").first().waitFor({ timeout: 120_000 });
 
   await page.locator(".role-select select").selectOption("reviewer");
-  await page.locator(".suggestion-card .accept-button:not([disabled])").first().waitFor({ timeout: 10_000 });
+  await page.locator(".suggestion-card .accept-button:not([disabled])").first().waitFor({ timeout: 120_000 });
   await acceptVisibleSuggestions(page);
   await waitForBodyText(page, "Ready for grading");
 
