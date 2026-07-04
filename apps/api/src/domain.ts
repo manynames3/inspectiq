@@ -1,8 +1,11 @@
 import type {
   DamageSeverity,
   DamageType,
+  ImageAnalysisJobStatus,
+  ImageUploadStatus,
   InspectionStatus,
   PhotoAngle,
+  ReadinessIssue,
   SuggestionStatus,
   UserRole
 } from "@inspectiq/shared";
@@ -43,15 +46,34 @@ export type VehiclePhoto = {
   id: string;
   inspectionId: string;
   storageKey: string;
+  objectBucket: string | null;
+  objectKey: string | null;
+  thumbnailStorageKey: string | null;
+  byteSize: number | null;
+  checksumSha256: string | null;
   originalFilename: string;
   mimeType: string;
   uploadedBy: string;
   uploadedAt: string;
+  uploadStatus: ImageUploadStatus;
   declaredAngle: PhotoAngle | null;
   detectedAngle: PhotoAngle | null;
   detectedAngleConfidence: number | null;
   qualityStatus: "unknown" | "ok" | "warning" | "fail";
   analysisStatus: "not_analyzed" | "pending" | "completed" | "failed";
+};
+
+export type ImageAnalysisJob = {
+  id: string;
+  inspectionId: string;
+  photoId: string;
+  status: ImageAnalysisJobStatus;
+  idempotencyKey: string | null;
+  attempts: number;
+  errorMessage: string | null;
+  queuedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
 };
 
 export type PhotoAnalysisResult = {
@@ -151,6 +173,7 @@ export type AuditEvent = {
 export type InspectionBundle = {
   inspection: Inspection;
   photos: VehiclePhoto[];
+  imageAnalysisJobs: ImageAnalysisJob[];
   suggestions: VisionSuggestion[];
   damageItems: DamageItem[];
   conditionGrade: ConditionGrade | null;
@@ -158,6 +181,8 @@ export type InspectionBundle = {
   aiReportDraft: AiReportDraft | null;
   finalReport: FinalReport | null;
   auditEvents: AuditEvent[];
+  readinessIssues: ReadinessIssue[];
+  buyerVisibleReady: boolean;
 };
 
 export type OperationalMetric = {

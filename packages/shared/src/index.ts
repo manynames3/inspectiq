@@ -39,6 +39,18 @@ export const damageTypes = [
 export const damageSeverities = ["minor", "moderate", "severe", "unknown"] as const;
 export const suggestionStatuses = ["pending", "accepted", "rejected", "edited"] as const;
 export const userRoles = ["inspector", "reviewer", "admin"] as const;
+export const imageUploadStatuses = ["pending", "uploaded", "failed"] as const;
+export const imageAnalysisJobStatuses = ["queued", "running", "completed", "failed", "dead_letter"] as const;
+export const readinessIssueTypes = [
+  "missing_required_angle",
+  "image_quality_retake",
+  "image_analysis_failed",
+  "unreviewed_ai_suggestion",
+  "condition_grade_missing",
+  "repair_estimate_missing",
+  "high_arbitration_risk",
+  "final_report_missing"
+] as const;
 export const roleActions = [
   "inspection:create",
   "inspection:update",
@@ -62,6 +74,9 @@ export const DamageTypeSchema = z.enum(damageTypes);
 export const DamageSeveritySchema = z.enum(damageSeverities);
 export const SuggestionStatusSchema = z.enum(suggestionStatuses);
 export const UserRoleSchema = z.enum(userRoles);
+export const ImageUploadStatusSchema = z.enum(imageUploadStatuses);
+export const ImageAnalysisJobStatusSchema = z.enum(imageAnalysisJobStatuses);
+export const ReadinessIssueTypeSchema = z.enum(readinessIssueTypes);
 
 export type InspectionStatus = z.infer<typeof InspectionStatusSchema>;
 export type PhotoAngle = z.infer<typeof PhotoAngleSchema>;
@@ -70,6 +85,9 @@ export type DamageType = z.infer<typeof DamageTypeSchema>;
 export type DamageSeverity = z.infer<typeof DamageSeveritySchema>;
 export type SuggestionStatus = z.infer<typeof SuggestionStatusSchema>;
 export type UserRole = z.infer<typeof UserRoleSchema>;
+export type ImageUploadStatus = z.infer<typeof ImageUploadStatusSchema>;
+export type ImageAnalysisJobStatus = z.infer<typeof ImageAnalysisJobStatusSchema>;
+export type ReadinessIssueType = z.infer<typeof ReadinessIssueTypeSchema>;
 export type RoleAction = typeof roleActions[number];
 
 export type RepairEstimateRange = {
@@ -235,7 +253,20 @@ export const UploadPhotoSchema = z.object({
   originalFilename: z.string().trim().min(1).max(180),
   mimeType: z.string().trim().regex(/^image\/(jpeg|png|webp|svg\+xml)$/),
   declaredAngle: PhotoAngleSchema.optional().nullable(),
-  storageKey: z.string().trim().max(3_000_000).optional()
+  storageKey: z.string().trim().max(3_000_000).optional(),
+  objectBucket: z.string().trim().min(1).max(120).optional(),
+  objectKey: z.string().trim().min(1).max(500).optional(),
+  thumbnailStorageKey: z.string().trim().max(500).optional(),
+  byteSize: z.coerce.number().int().min(1).max(25_000_000).optional(),
+  checksumSha256: z.string().trim().regex(/^[a-f0-9]{64}$/i).optional()
+});
+
+export const UploadIntentSchema = z.object({
+  inspectionId: z.string().uuid(),
+  originalFilename: z.string().trim().min(1).max(180),
+  mimeType: z.string().trim().regex(/^image\/(jpeg|png|webp)$/),
+  byteSize: z.coerce.number().int().min(1).max(25_000_000),
+  checksumSha256: z.string().trim().regex(/^[a-f0-9]{64}$/i).optional()
 });
 
 export const SamplePhotoSchema = z.object({
@@ -301,6 +332,16 @@ export const PatchDamageItemSchema = CreateDamageItemSchema.partial();
 export const GradeRequestSchema = z.object({
   idempotencyKey: z.string().trim().max(120).optional()
 }).default({});
+
+export const ReadinessIssueSchema = z.object({
+  type: ReadinessIssueTypeSchema,
+  severity: z.enum(["blocker", "watch"]),
+  label: z.string().trim().min(1).max(160),
+  detail: z.string().trim().min(1).max(500),
+  action: z.string().trim().min(1).max(200)
+});
+
+export type ReadinessIssue = z.infer<typeof ReadinessIssueSchema>;
 
 export const GradingInputSchema = z.object({
   vehicle: z.object({

@@ -4,11 +4,12 @@ Local flow:
 
 1. Attach required photo evidence or upload a vehicle photo.
 2. Store S3-style object metadata on the inspection.
-3. Run the selected vision provider.
-4. Validate output against `VisionOutputSchema`.
-5. Save raw output and validated output separately.
-6. Create pending suggestions for angle, image-quality retakes, damage candidates, and extracted text.
-7. Require human accept, reject, or edit.
+3. Create an `image_analysis_jobs` row with queued status and idempotency key.
+4. Run the selected vision provider.
+5. Validate output against `VisionOutputSchema`.
+6. Save raw output and validated output separately.
+7. Create pending suggestions for angle, image-quality retakes, damage candidates, and extracted text.
+8. Require human accept, reject, or edit.
 
 Production AWS flow:
 
@@ -19,9 +20,17 @@ flowchart LR
   Queue --> Worker[Image analysis worker]
   Worker --> Bedrock[Bedrock multimodal model]
   Worker --> Validate[Zod or JSON Schema validation]
-  Validate --> DB[(Postgres)]
+  Validate --> DB[(Postgres jobs, outputs, suggestions)]
   DB --> Audit[Audit event]
 ```
+
+Job statuses:
+
+- `queued`
+- `running`
+- `completed`
+- `failed`
+- `dead_letter`
 
 Contract fields:
 

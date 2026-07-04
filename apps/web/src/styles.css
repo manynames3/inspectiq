@@ -325,6 +325,61 @@ td small {
   background: #fffbeb;
 }
 
+.role-focus-strip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--teal);
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 10px 12px;
+}
+
+.role-focus-strip strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.role-focus-strip span {
+  min-width: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.role-focus-strip em {
+  justify-self: end;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0f766e;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.role-focus-strip.role-reviewer {
+  border-left-color: #2563eb;
+}
+
+.role-focus-strip.role-reviewer em {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.role-focus-strip.role-admin {
+  border-left-color: #7c3aed;
+}
+
+.role-focus-strip.role-admin em {
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
 .marketplace-readiness-strip {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -393,6 +448,44 @@ td small {
 
 .readiness-blockers strong {
   color: #7c2d12;
+}
+
+.readiness-issue-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 14px 10px;
+}
+
+.readiness-issue-card {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-left: 3px solid #f59e0b;
+  border-radius: 4px;
+  background: #ffffff;
+  padding: 8px 9px;
+}
+
+.readiness-issue-card.blocker {
+  border-left-color: #ef4444;
+}
+
+.readiness-issue-card strong {
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.readiness-issue-card span,
+.readiness-issue-card small {
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.readiness-issue-card small {
+  color: #0f766e;
+  font-weight: 700;
 }
 
 .request-chip {
@@ -766,6 +859,19 @@ td small {
 
 .row-link {
   color: var(--blue);
+}
+
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.button-link {
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
 }
 
 .status-pill,
@@ -1492,6 +1598,36 @@ td small {
 
 .photo-grid.evidence-photos .photo-tile em {
   grid-column: 1 / -1;
+}
+
+.analysis-job-chip {
+  grid-column: 1 / -1;
+  width: fit-content;
+  border-radius: 3px;
+  background: #eef2ff;
+  color: #3730a3;
+  padding: 2px 5px;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.analysis-job-chip.job-completed {
+  background: #dcfce7;
+  color: #047857;
+}
+
+.analysis-job-chip.job-running,
+.analysis-job-chip.job-queued,
+.analysis-job-chip.job-pending {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.analysis-job-chip.job-failed,
+.analysis-job-chip.job-dead_letter {
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .evidence-actions {
@@ -2223,6 +2359,41 @@ pre {
   margin-bottom: 0;
 }
 
+.production-readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.production-readiness-grid article {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.production-readiness-grid h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.production-readiness-grid strong {
+  color: #0f766e;
+  font-size: 13px;
+}
+
+.production-readiness-grid p,
+.production-readiness-grid small {
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .metrics-band {
   margin-top: 18px;
   padding: 16px;
@@ -2542,7 +2713,9 @@ pre {
   .checklist,
   .scorecard-grid,
   .summary-grid,
-  .metric-card-grid {
+  .metric-card-grid,
+  .production-readiness-grid,
+  .readiness-issue-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2632,8 +2805,19 @@ pre {
   .marketplace-readiness-strip,
   .ai-contract-panel dl,
   .boundary-grid,
+  .production-readiness-grid,
+  .readiness-issue-grid,
   .damage-form {
     grid-template-columns: 1fr;
+  }
+
+  .role-focus-strip {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .role-focus-strip em {
+    justify-self: start;
   }
 
   .readiness-blockers {

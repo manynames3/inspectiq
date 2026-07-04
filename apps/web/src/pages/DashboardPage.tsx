@@ -2,10 +2,12 @@ import { AlertTriangle, ArrowRight, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
+import { useActor } from "../App.js";
 import { StatusPill } from "../components/StatusPill.js";
 import type { Inspection } from "../types.js";
 
 export function DashboardPage() {
+  const { actor } = useActor();
   const [inspections, setInspections] = useState<Inspection[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,6 +24,33 @@ export function DashboardPage() {
     void load();
   }, []);
 
+  const visibleInspections = inspections.filter((inspection) => {
+    if (actor.role === "inspector") {
+      return inspection.status === "DRAFT" || inspection.status === "NEEDS_PHOTOS" || inspection.completenessPercentage < 100;
+    }
+    if (actor.role === "reviewer") {
+      return ["READY_FOR_GRADING", "GRADED", "AI_DRAFTED", "HUMAN_REVIEW_REQUIRED", "REPORT_FAILED"].includes(inspection.status);
+    }
+    return true;
+  });
+  const roleContext = actor.role === "inspector"
+    ? {
+      title: "Capture queue",
+      detail: "Prioritizes vehicles that need required angles, retakes, or image analysis before review.",
+      primaryMetric: `${visibleInspections.length} need capture work`
+    }
+    : actor.role === "reviewer"
+      ? {
+        title: "Review queue",
+        detail: "Prioritizes evidence-complete inspections that need AI decisions, grade, report draft, or final approval.",
+        primaryMetric: `${visibleInspections.length} need review work`
+      }
+      : {
+        title: "Operations control",
+        detail: "Shows every inspection with buyer-visible readiness, blockers, and exception status.",
+        primaryMetric: `${inspections.filter((inspection) => inspection.buyerVisibleReady).length} buyer-ready`
+      };
+
   return (
     <section className="page">
       <div className="page-heading">
@@ -34,6 +63,11 @@ export function DashboardPage() {
         </button>
       </div>
       {error ? <div className="error-banner">{error}</div> : null}
+      <div className={`role-focus-strip role-${actor.role}`}>
+        <strong>{roleContext.title}</strong>
+        <span>{roleContext.detail}</span>
+        <em>{roleContext.primaryMetric}</em>
+      </div>
       <div className="table-panel">
         <table>
           <thead>
@@ -49,7 +83,7 @@ export function DashboardPage() {
             </tr>
           </thead>
           <tbody>
-            {inspections.map((inspection) => (
+            {visibleInspections.map((inspection) => (
               <tr key={inspection.id}>
                 <td>
                   <strong>{inspection.year} {inspection.make} {inspection.model}</strong>
@@ -64,7 +98,7 @@ export function DashboardPage() {
                   </div>
                 </td>
                 <td>{inspection.conditionGrade?.grade ?? "Not graded"}</td>
-                <td>{inspection.status === "FINALIZED" ? "Buyer-visible" : inspection.humanReviewFlag ? <span className="review-flag"><AlertTriangle size={14} /> Review hold</span> : "Ops queue"}</td>
+                <td>{inspection.buyerVisibleReady ? "Buyer-visible" : inspection.humanReviewFlag ? <span className="review-flag"><AlertTriangle size={14} /> Review hold</span> : `${inspection.readinessIssueCount ?? 0} blockers`}</td>
                 <td>{new Date(inspection.updatedAt).toLocaleString()}</td>
                 <td>
                   <Link className="row-link" to={`/inspections/${inspection.id}`}>

@@ -11,13 +11,14 @@ import {
   PatchReportSchema,
   SamplePhotoSchema,
   UpdateSuggestionSchema,
+  UploadIntentSchema,
   UploadPhotoSchema,
   type ApiEnvelope
 } from "@inspectiq/shared";
 import { errorHandler, validation, conflict } from "./errors.js";
 import { gradeCondition } from "./gradingClient.js";
 import { getReportProvider } from "./reportProvider.js";
-import { getVisionProvider } from "./mockVisionProvider.js";
+import { getVisionProvider } from "./visionProvider.js";
 import { platformHealthPayload } from "./platformHealth.js";
 import { requireAction } from "./rbac.js";
 import { findSampleImage, sampleBundles } from "./sampleImages.js";
@@ -77,6 +78,11 @@ function reportBodyFromDraft(output: unknown): string {
   ].join("\n");
 }
 
+function objectKeyForUpload(inspectionId: string, filename: string): string {
+  const cleanName = filename.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 120);
+  return `inspections/${inspectionId}/photos/${crypto.randomUUID()}-${cleanName}`;
+}
+
 export function createApp(appStore = defaultStore, options: AppOptions = {}): express.Express {
   if (appStore.inspections.size === 0) seedStore(appStore);
 
@@ -116,8 +122,8 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       ok: true,
       service: "inspectiq-api",
       providers: {
-        vision: process.env.VISION_PROVIDER ?? "mock",
-        report: process.env.REPORT_PROVIDER ?? "mock"
+        vision: process.env.VISION_PROVIDER ?? "local",
+        report: process.env.REPORT_PROVIDER ?? "local"
       },
       uptimeSeconds: Math.round(process.uptime())
     });
@@ -127,7 +133,9 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     sendData(res, appStore.listInspections().map((inspection) => ({
       ...inspection,
       conditionGrade: appStore.latestGrade(inspection.id),
-      humanReviewFlag: inspection.status === "HUMAN_REVIEW_REQUIRED"
+      humanReviewFlag: inspection.status === "HUMAN_REVIEW_REQUIRED",
+      buyerVisibleReady: appStore.buyerVisibleReady(inspection.id),
+      readinessIssueCount: appStore.readinessIssues(inspection.id).length
     })));
   });
 
@@ -153,15 +161,41 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const input = UploadPhotoSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:capture");
+    const objectKey = input.objectKey ?? objectKeyForUpload(req.params.id, input.originalFilename);
     const photo = appStore.addPhoto({
       inspectionId: req.params.id,
-      storageKey: input.storageKey ?? `/uploads/${crypto.randomUUID()}-${input.originalFilename}`,
+      storageKey: input.storageKey ?? `/uploads/${objectKey}`,
+      objectBucket: input.objectBucket ?? process.env.IMAGE_BUCKET ?? "inspectiq-local-uploads",
+      objectKey,
+      thumbnailStorageKey: input.thumbnailStorageKey ?? null,
+      byteSize: input.byteSize ?? null,
+      checksumSha256: input.checksumSha256 ?? null,
       originalFilename: input.originalFilename,
       mimeType: input.mimeType,
       uploadedBy: actor.id,
       declaredAngle: input.declaredAngle ?? null
     }, actor);
     sendData(res, photo, 201);
+  }));
+
+  app.post("/api/uploads/intent", asyncRoute((req, res) => {
+    const input = UploadIntentSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "photo:capture");
+    appStore.assertMutableInspection(input.inspectionId, "create upload intent");
+    const objectKey = objectKeyForUpload(input.inspectionId, input.originalFilename);
+    sendData(res, {
+      objectBucket: process.env.IMAGE_BUCKET ?? "inspectiq-local-uploads",
+      objectKey,
+      uploadUrl: process.env.IMAGE_UPLOAD_MODE === "presigned"
+        ? `s3://placeholder-presigned-upload/${objectKey}`
+        : null,
+      requiredHeaders: {
+        "content-type": input.mimeType,
+        ...(input.checksumSha256 ? { "x-amz-checksum-sha256": input.checksumSha256 } : {})
+      },
+      expiresInSeconds: 900
+    }, 201);
   }));
 
   app.post("/api/inspections/:id/photos/sample", asyncRoute((req, res) => {
@@ -175,6 +209,11 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       return appStore.addPhoto({
         inspectionId: req.params.id,
         storageKey: `/sample-images/${sample.filename}`,
+        objectBucket: "inspectiq-sample-images",
+        objectKey: `sample-images/${sample.filename}`,
+        thumbnailStorageKey: `/sample-images/${sample.filename}`,
+        byteSize: null,
+        checksumSha256: null,
         originalFilename: sample.filename,
         mimeType: sample.mimeType,
         uploadedBy: actor.id,
@@ -195,10 +234,13 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     if (photo.analysisStatus === "completed" && !req.body?.force) {
       sendData(res, {
         analysis: appStore.getPhotoAnalysis(photo.id),
+        job: appStore.imageAnalysisJobsForInspection(photo.inspectionId).find((job) => job.photoId === photo.id) ?? null,
         suggestions: appStore.listSuggestions(photo.inspectionId).filter((suggestion) => suggestion.photoId === photo.id)
       });
       return;
     }
+    const job = appStore.enqueueImageAnalysis(photo, actor, req.header("idempotency-key") ?? req.body?.idempotencyKey ?? null);
+    appStore.startImageAnalysisJob(job.id, actor);
     const provider = getVisionProvider();
     try {
       const result = await provider.analyze({ filename: photo.originalFilename, storageKey: photo.storageKey });
@@ -206,15 +248,17 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
         provider: provider.name,
         promptVersion: provider.promptVersion,
         raw: result.raw,
-        validated: result.validated
+        validated: result.validated,
+        jobId: job.id
       }, actor);
       sendData(res, {
+        job: appStore.imageAnalysisJobs.get(job.id),
         analysis,
         suggestions: appStore.listSuggestions(photo.inspectionId).filter((suggestion) => suggestion.photoId === photo.id)
       });
     } catch (error) {
-      const analysis = appStore.failAnalysis(photo, provider.name, provider.promptVersion, error instanceof Error ? error.message : "Unknown analysis failure.", actor);
-      sendData(res, analysis, 502);
+      const analysis = appStore.failAnalysis(photo, provider.name, provider.promptVersion, error instanceof Error ? error.message : "Unknown analysis failure.", actor, job.id);
+      sendData(res, { job: appStore.imageAnalysisJobs.get(job.id), analysis }, 502);
     }
   }));
 
@@ -373,6 +417,15 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     sendData(res, { retryWith: `/api/inspections/${job.inspectionId}/ai-report` });
   }));
 
+  app.get("/api/reports/:id/export", asyncRoute((req, res) => {
+    const exported = appStore.buyerReportExport(req.params.id);
+    res
+      .status(200)
+      .type("text/plain")
+      .setHeader("content-disposition", `attachment; filename="${exported.filename}"`)
+      .send(exported.body);
+  }));
+
   app.patch("/api/reports/:id", asyncRoute((req, res) => {
     const input = PatchReportSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
@@ -388,6 +441,17 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
 
   app.get("/api/inspections/:id/audit-events", asyncRoute((req, res) => {
     sendData(res, appStore.auditForInspection(req.params.id));
+  }));
+
+  app.get("/api/inspections/:id/readiness", asyncRoute((req, res) => {
+    sendData(res, {
+      issues: appStore.readinessIssues(req.params.id),
+      buyerVisibleReady: appStore.buyerVisibleReady(req.params.id)
+    });
+  }));
+
+  app.get("/api/reports/:id", asyncRoute((req, res) => {
+    sendData(res, appStore.getFinalReport(req.params.id));
   }));
 
   app.get("/api/platform-health", (_req, res) => {

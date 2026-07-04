@@ -1,6 +1,7 @@
-import { FileText, RefreshCw } from "lucide-react";
+import { Download, FileText, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { apiBase } from "../api.js";
 import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
 
@@ -8,6 +9,20 @@ function reportSummary(record: InspectionReviewRecord): string {
   const output = record.bundle.aiReportDraft?.outputJson as { summary?: string } | undefined;
   if (output?.summary) return output.summary;
   return record.bundle.finalReport?.reportBody.split("\n").find(Boolean) ?? "Generate a report draft from the inspection workbench.";
+}
+
+async function downloadBuyerReport(reportId: string): Promise<void> {
+  const response = await fetch(`${apiBase}/api/reports/${reportId}/export`);
+  if (!response.ok) throw new Error("Could not export the buyer-ready report.");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = response.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? "condition-report.txt";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 export function ReportsPage() {
@@ -105,7 +120,16 @@ export function ReportsPage() {
                     <td>{readiness.reconditioningEstimate}</td>
                     <td>{bundle.finalReport?.version ?? "Pending"}</td>
                     <td>{reportSummary(record)}</td>
-                    <td><Link className="row-link" to={`/inspections/${inspection.id}`}>Open</Link></td>
+                    <td>
+                      <div className="row-actions">
+                        {bundle.finalReport ? (
+                          <button className="row-link button-link" type="button" onClick={() => void downloadBuyerReport(bundle.finalReport!.id)}>
+                            <Download size={14} /> Export
+                          </button>
+                        ) : null}
+                        <Link className="row-link" to={`/inspections/${inspection.id}`}>Open</Link>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}

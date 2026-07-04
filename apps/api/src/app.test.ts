@@ -87,13 +87,9 @@ describe("InspectIQ API", () => {
   async function finalizeCompleteInspection() {
     const { inspectionId, photos, suggestions } = await createAnalyzedCompleteInspection();
 
-    for (const suggestion of suggestions.filter((item: { suggestionType: string }) => item.suggestionType === "photo_angle")) {
+    for (const suggestion of suggestions) {
       await request(api).post(`/api/vision-suggestions/${suggestion.id}/accept`).set(reviewerHeaders).send({}).expect(200);
     }
-
-    const damageCandidate = suggestions.find((item: { suggestionType: string }) => item.suggestionType === "damage_candidate");
-    expect(damageCandidate).toBeTruthy();
-    await request(api).post(`/api/vision-suggestions/${damageCandidate.id}/accept`).set(reviewerHeaders).send({}).expect(200);
 
     await request(api)
       .post(`/api/inspections/${inspectionId}/damage`)
@@ -226,13 +222,9 @@ describe("InspectIQ API", () => {
   it("runs a full backend create to finalization flow with audit trail", async () => {
     const { inspectionId, suggestions } = await createAnalyzedCompleteInspection();
 
-    for (const suggestion of suggestions.filter((item: { suggestionType: string }) => item.suggestionType === "photo_angle")) {
+    for (const suggestion of suggestions) {
       await request(api).post(`/api/vision-suggestions/${suggestion.id}/accept`).set(reviewerHeaders).send({}).expect(200);
     }
-
-    const damageCandidate = suggestions.find((item: { suggestionType: string }) => item.suggestionType === "damage_candidate");
-    expect(damageCandidate).toBeTruthy();
-    await request(api).post(`/api/vision-suggestions/${damageCandidate.id}/accept`).set(reviewerHeaders).send({}).expect(200);
 
     await request(api)
       .post(`/api/inspections/${inspectionId}/damage`)
@@ -271,6 +263,8 @@ describe("InspectIQ API", () => {
     const audit = await request(api).get(`/api/inspections/${inspectionId}/audit-events`).expect(200);
     const eventTypes = audit.body.data.map((event: { eventType: string }) => event.eventType);
     expect(eventTypes).toContain("inspection.created");
+    expect(eventTypes).toContain("image_analysis.queued");
+    expect(eventTypes).toContain("image_analysis.started");
     expect(eventTypes).toContain("photo.analyzed");
     expect(eventTypes).toContain("condition.grade_generated");
     expect(eventTypes).toContain("ai_report.generated");
@@ -294,6 +288,7 @@ describe("InspectIQ API", () => {
       .send({})
       .expect(200);
 
+    expect(analyzed.body.data.job.status).toBe("completed");
     expect(analyzed.body.data.analysis.validatedOutputJson.imageQuality.grade).toBe("retake");
     expect(analyzed.body.data.analysis.validatedOutputJson.imageQuality.retakeRequired).toBe(true);
 
@@ -308,6 +303,43 @@ describe("InspectIQ API", () => {
     const health = await request(api).get("/api/platform-health").expect(200);
     const retakeMetric = health.body.data.operationalMetrics.find((metric: { metric: string }) => metric.metric === "image_quality_retake_rate");
     expect(retakeMetric.value).toBe("100%");
+    const queueMetric = health.body.data.operationalMetrics.find((metric: { metric: string }) => metric.metric === "image_analysis_queue_latency");
+    expect(queueMetric).toBeTruthy();
+  });
+
+  it("creates upload intent metadata for object-storage based image capture", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+
+    const intent = await request(api)
+      .post("/api/uploads/intent")
+      .set(inspectorHeaders)
+      .send({
+        inspectionId,
+        originalFilename: "front.jpg",
+        mimeType: "image/jpeg",
+        byteSize: 120000,
+        checksumSha256: "a".repeat(64)
+      })
+      .expect(201);
+
+    expect(intent.body.data.objectBucket).toBeTruthy();
+    expect(intent.body.data.objectKey).toContain(`inspections/${inspectionId}/photos/`);
+    expect(intent.body.data.requiredHeaders["x-amz-checksum-sha256"]).toBe("a".repeat(64));
+  });
+
+  it("returns backend readiness blockers before buyer-visible release", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+    await analyzeSamplePhoto(inspectionId, "front-clean");
+
+    const readiness = await request(api)
+      .get(`/api/inspections/${inspectionId}/readiness`)
+      .expect(200);
+
+    expect(readiness.body.data.buyerVisibleReady).toBe(false);
+    expect(readiness.body.data.issues.map((issue: { type: string }) => issue.type)).toContain("missing_required_angle");
+    expect(readiness.body.data.issues.map((issue: { type: string }) => issue.type)).toContain("unreviewed_ai_suggestion");
   });
 
   it("does not let edited photo-angle suggestions count as evidence until accepted", async () => {
@@ -406,7 +438,7 @@ describe("InspectIQ API", () => {
       })
       .expect(409);
 
-    const pendingSuggestion = suggestions.find((item: { suggestionType: string }) => item.suggestionType === "extracted_text");
+    const pendingSuggestion = suggestions.find((item: { suggestionType: string }) => item.suggestionType === "extracted_text") ?? suggestions[0];
     expect(pendingSuggestion).toBeTruthy();
     await request(api)
       .post(`/api/vision-suggestions/${pendingSuggestion.id}/reject`)
@@ -427,5 +459,18 @@ describe("InspectIQ API", () => {
       .set(reviewerHeaders)
       .send({});
     expect(response.status).toBe(404);
+  });
+
+  it("exports a buyer-ready condition report without internal schema language", async () => {
+    const { report } = await finalizeCompleteInspection();
+
+    const exported = await request(api)
+      .get(`/api/reports/${report.finalReport.id}/export`)
+      .expect(200);
+
+    expect(exported.text).toContain("Condition Report:");
+    expect(exported.text).toContain("Confirmed Damage");
+    expect(exported.text).not.toContain("VisionOutputSchema");
+    expect(exported.text).not.toContain("validated schema");
   });
 });

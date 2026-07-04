@@ -81,6 +81,11 @@ export function seedStore(store: MemoryStore): void {
       store.addPhoto({
         inspectionId: inspection.id,
         storageKey: `/sample-images/${sample.filename}`,
+        objectBucket: "inspectiq-sample-images",
+        objectKey: `sample-images/${sample.filename}`,
+        thumbnailStorageKey: `/sample-images/${sample.filename}`,
+        byteSize: null,
+        checksumSha256: null,
         originalFilename: sample.filename,
         mimeType: sample.mimeType,
         uploadedBy: inspector.id,

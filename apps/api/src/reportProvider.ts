@@ -12,8 +12,8 @@ export type ReportProvider = {
   }): Promise<{ raw: unknown; validated: AiReportOutput }>;
 };
 
-export const mockReportProvider: ReportProvider = {
-  name: "mockReportProvider",
+export const localReportProvider: ReportProvider = {
+  name: "localReportProvider",
   promptVersion: "inspection-report-v2",
   async generate(input) {
     const defects = input.damageItems.map((item) => `${item.severity} ${item.damageType.replaceAll("_", " ")} at ${item.location}`);
@@ -50,5 +50,5 @@ export const bedrockClaudeReportProvider: ReportProvider = {
 };
 
 export function getReportProvider(): ReportProvider {
-  return process.env.REPORT_PROVIDER === "bedrock" ? bedrockClaudeReportProvider : mockReportProvider;
+  return process.env.REPORT_PROVIDER === "bedrock" ? bedrockClaudeReportProvider : localReportProvider;
 }

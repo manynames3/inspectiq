@@ -38,14 +38,21 @@ function baseBundle(extraSuggestions: VisionSuggestion[] = []): InspectionBundle
       id: `photo-${index}`,
       inspectionId: "inspection-1",
       storageKey: `/sample-images/${angle}.png`,
+      objectBucket: "inspectiq-test",
+      objectKey: `sample-images/${angle}.png`,
+      thumbnailStorageKey: `/sample-images/${angle}.png`,
+      byteSize: 120000,
+      checksumSha256: null,
       originalFilename: `${angle}.png`,
       mimeType: "image/png",
+      uploadStatus: "uploaded",
       declaredAngle: angle,
       detectedAngle: angle,
       detectedAngleConfidence: 0.95,
       qualityStatus: "warning",
       analysisStatus: "completed"
     })),
+    imageAnalysisJobs: [],
     suggestions: [...acceptedAngleSuggestions(), ...extraSuggestions],
     damageItems: [],
     conditionGrade: {
@@ -64,7 +71,9 @@ function baseBundle(extraSuggestions: VisionSuggestion[] = []): InspectionBundle
       finalizedAt: "2026-07-03T18:00:00.000Z",
       version: 1
     },
-    auditEvents: []
+    auditEvents: [],
+    readinessIssues: [],
+    buyerVisibleReady: true
   };
 }
 

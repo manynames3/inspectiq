@@ -1,4 +1,4 @@
-import type { InspectionStatus, UserRole } from "@inspectiq/shared";
+import type { ImageAnalysisJobStatus, ImageUploadStatus, InspectionStatus, ReadinessIssue, UserRole } from "@inspectiq/shared";
 
 export type Actor = {
   id: string;
@@ -23,19 +23,40 @@ export type Inspection = {
   finalizedAt: string | null;
   conditionGrade?: ConditionGrade | null;
   humanReviewFlag?: boolean;
+  buyerVisibleReady?: boolean;
+  readinessIssueCount?: number;
 };
 
 export type VehiclePhoto = {
   id: string;
   inspectionId: string;
   storageKey: string;
+  objectBucket: string | null;
+  objectKey: string | null;
+  thumbnailStorageKey: string | null;
+  byteSize: number | null;
+  checksumSha256: string | null;
   originalFilename: string;
   mimeType: string;
+  uploadStatus: ImageUploadStatus;
   declaredAngle: string | null;
   detectedAngle: string | null;
   detectedAngleConfidence: number | null;
   qualityStatus: string;
   analysisStatus: string;
+};
+
+export type ImageAnalysisJob = {
+  id: string;
+  inspectionId: string;
+  photoId: string;
+  status: ImageAnalysisJobStatus;
+  idempotencyKey: string | null;
+  attempts: number;
+  errorMessage: string | null;
+  queuedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
 };
 
 export type VisionSuggestion = {
@@ -87,6 +108,7 @@ export type AuditEvent = {
 export type InspectionBundle = {
   inspection: Inspection;
   photos: VehiclePhoto[];
+  imageAnalysisJobs: ImageAnalysisJob[];
   suggestions: VisionSuggestion[];
   damageItems: DamageItem[];
   conditionGrade: ConditionGrade | null;
@@ -94,6 +116,8 @@ export type InspectionBundle = {
   aiReportDraft: any;
   finalReport: FinalReport | null;
   auditEvents: AuditEvent[];
+  readinessIssues: ReadinessIssue[];
+  buyerVisibleReady: boolean;
 };
 
 export type SampleImage = {
@@ -103,4 +127,3 @@ export type SampleImage = {
   angle: string;
   mimeType: string;
 };
-

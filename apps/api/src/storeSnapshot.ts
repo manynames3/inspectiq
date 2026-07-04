@@ -6,6 +6,7 @@ const storeMapNames = [
   "users",
   "inspections",
   "photos",
+  "imageAnalysisJobs",
   "analyses",
   "suggestions",
   "damageItems",

@@ -15,6 +15,23 @@ type Health = {
     productionTarget: string;
     imageQualityPolicy: string;
   };
+  persistence: {
+    activeMode: string;
+    postgresReady: boolean;
+    localMode: string;
+    productionMode: string;
+  };
+  storageContract: {
+    uploadIntentEndpoint: string;
+    localBehavior: string;
+    productionBehavior: string;
+  };
+  asyncWorkerContract: {
+    queueEvent: string;
+    statusValues: string[];
+    idempotency: string;
+    deadLetterPolicy: string;
+  };
   implementationBoundary: {
     local: string[];
     production: string[];
@@ -81,6 +98,26 @@ export function PlatformHealthPage() {
           <div className="contract-fields">
             {health.aiContract.validatedFields.map((field) => <span key={field}>{field}</span>)}
           </div>
+        </div>
+      ) : null}
+      {health ? (
+        <div className="production-readiness-grid">
+          <article>
+            <h2>Persistence</h2>
+            <strong>{health.persistence.activeMode}</strong>
+            <p>{health.persistence.postgresReady ? health.persistence.productionMode : health.persistence.localMode}</p>
+          </article>
+          <article>
+            <h2>Image storage</h2>
+            <strong>{health.storageContract.uploadIntentEndpoint}</strong>
+            <p>{health.storageContract.productionBehavior}</p>
+          </article>
+          <article>
+            <h2>Image worker</h2>
+            <strong>{health.asyncWorkerContract.queueEvent}</strong>
+            <p>{health.asyncWorkerContract.idempotency}</p>
+            <small>{health.asyncWorkerContract.deadLetterPolicy}</small>
+          </article>
         </div>
       ) : null}
       {health?.implementationBoundary ? (

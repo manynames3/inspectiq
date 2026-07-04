@@ -1,8 +1,8 @@
-import { AlertTriangle, ArrowDown, Bot, Check, ChevronLeft, ChevronRight, FileText, Filter, Flag, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, Bot, Check, ChevronLeft, ChevronRight, Download, FileText, Filter, Flag, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X } from "lucide-react";
 import { estimateDamageRepairCost, requiredPhotoAngles } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, assetUrl } from "../api.js";
+import { api, apiBase, assetUrl } from "../api.js";
 import { useActor } from "../App.js";
 import { StatusPill } from "../components/StatusPill.js";
 import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
@@ -268,6 +268,27 @@ function suggestionPriority(suggestion: VisionSuggestion) {
   return 3;
 }
 
+function formatJobStatus(value: string | null | undefined) {
+  if (!value) return "Not queued";
+  return value.replaceAll("_", " ");
+}
+
+async function downloadBuyerReport(reportId: string): Promise<void> {
+  const response = await fetch(`${apiBase}/api/reports/${reportId}/export`);
+  if (!response.ok) throw new Error("Could not export the buyer-ready report.");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? "condition-report.txt";
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function InspectionDetailPage() {
   const { id } = useParams();
   const { actor, can } = useActor();
@@ -341,6 +362,7 @@ export function InspectionDetailPage() {
     return values;
   }, [bundle, confirmedAngles]);
   const photosById = useMemo(() => new Map((bundle?.photos ?? []).map((photo) => [photo.id, photo])), [bundle]);
+  const imageJobByPhotoId = useMemo(() => new Map((bundle?.imageAnalysisJobs ?? []).map((job) => [job.photoId, job])), [bundle]);
   const inReviewInspections = useMemo(() => inspections.filter(isInReviewInspection), [inspections]);
   const queueCodeByInspectionId = useMemo(
     () => new Map(inspections.map((inspection, index) => [inspection.id, queueInspectionCode(index)])),
@@ -385,6 +407,8 @@ export function InspectionDetailPage() {
   const workflowStep = bundle.inspection.status === "FINALIZED" ? 4 : bundle.inspection.status === "HUMAN_REVIEW_REQUIRED" || bundle.inspection.status === "AI_DRAFTED" ? 3 : bundle.conditionGrade ? 2 : 1;
   const capturedEvidencePercent = Math.round((requiredAngles.filter((angle) => capturedAngles.has(angle)).length / requiredAngles.length) * 100);
   const marketplaceReadiness = deriveMarketplaceReadiness(bundle);
+  const blockerIssues = (bundle.readinessIssues ?? []).filter((issue) => issue.severity === "blocker");
+  const watchIssues = (bundle.readinessIssues ?? []).filter((issue) => issue.severity === "watch");
   const gradeExplanation = conditionGradeExplanation(bundle.conditionGrade);
   const gradeDeductions = conditionGradeDeductions(bundle.conditionGrade);
   const reportOutput = reportOutputView(bundle.aiReportDraft);
@@ -517,6 +541,17 @@ export function InspectionDetailPage() {
                 <span>{marketplaceReadiness.blockers.slice(0, 3).join(" · ")}</span>
               </div>
             ) : null}
+            {blockerIssues.length > 0 || watchIssues.length > 0 ? (
+              <div className="readiness-issue-grid">
+                {[...blockerIssues, ...watchIssues].slice(0, 4).map((issue) => (
+                  <article key={`${issue.type}-${issue.label}`} className={`readiness-issue-card ${issue.severity}`}>
+                    <strong>{issue.label}</strong>
+                    <span>{issue.detail}</span>
+                    <small>{issue.action}</small>
+                  </article>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           <div className="detail-core-grid">
@@ -585,6 +620,7 @@ export function InspectionDetailPage() {
                       </div>
                     ) : bundle.photos.map((photo) => {
                       const confidenceLabel = typeof photo.detectedAngleConfidence === "number" ? `${Math.round(photo.detectedAngleConfidence * 100)}%` : "Pending";
+                      const job = imageJobByPhotoId.get(photo.id);
                       return (
                         <article className="photo-tile" key={photo.id}>
                           <img src={assetUrl(photo.storageKey)} alt={photo.originalFilename} />
@@ -594,6 +630,9 @@ export function InspectionDetailPage() {
                               {confidenceLabel}
                             </span>
                             <span className="photo-file-name">{photo.originalFilename.replace(/\.[^.]+$/, "")}</span>
+                            <span className={`analysis-job-chip job-${job?.status ?? photo.analysisStatus}`}>
+                              Analysis {formatJobStatus(job?.status ?? photo.analysisStatus)}
+                            </span>
                             {photo.qualityStatus === "warning" ? <em><AlertTriangle size={13} /> warning</em> : null}
                           </div>
                         </article>
@@ -740,6 +779,9 @@ export function InspectionDetailPage() {
                   <div className="report-actions">
                     <button className="secondary-button" disabled={!bundle.finalReport || !canEditReport} title={canEditReport ? undefined : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("save-report", () => api(`/api/reports/${bundle.finalReport!.id}`, { method: "PATCH", body: JSON.stringify({ reportBody }) }, actor))}>
                       <FileText size={16} /> Save report edits
+                    </button>
+                    <button className="secondary-button" disabled={!bundle.finalReport} onClick={() => bundle.finalReport && void runAction("export-report", () => downloadBuyerReport(bundle.finalReport!.id))}>
+                      <Download size={16} /> Export buyer report
                     </button>
                     <button className="primary-button" disabled={!bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || !canFinalizeReport} title={canFinalizeReport ? undefined : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("finalize", () => api(`/api/reports/${bundle.finalReport!.id}/finalize`, { method: "POST", body: JSON.stringify({}) }, actor))}>
                       <Check size={16} /> Finalize

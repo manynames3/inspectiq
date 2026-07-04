@@ -36,7 +36,9 @@ Wholesale condition reports need consistent photo evidence, clear damage facts, 
 flowchart TD
   Web[React + TypeScript workbench] --> API[Node.js Express API]
   API --> Shared[Shared Zod schemas]
-  API --> Store[Local file snapshot + Postgres schema]
+  API --> Store[MemoryStore facade]
+  Store --> FileStore[Local file snapshot]
+  Store --> PostgresStore[Postgres persistence mode]
   API --> Vision[Vision provider interface]
   Vision --> MockVision[Mock deterministic analysis]
   Vision --> BedrockVision[Production Bedrock adapter seam]
@@ -60,9 +62,9 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 | --- | --- | --- |
 | Inspection workflow | Working React/TypeScript UI, role-aware actions, REST API, state machine, audit trail | Same workflow behind enterprise auth, object-level authorization, and operational SLAs |
 | Image analysis | Deterministic provider returning angle, image-quality scores, damage candidates, OCR, confidence, repair estimate range, and strict schema validation | S3 object event -> SQS/EventBridge worker -> Bedrock/Rekognition/custom model -> same schema contract |
-| Persistence | In-memory tests, local JSON snapshot, Cloudflare KV snapshot for hosted walkthroughs, Postgres schema/Drizzle definitions | Postgres repository with migrations, transactions, retention, backups, and audit durability |
-| Image storage | S3-style metadata and small local/browser preview payloads | Presigned S3 uploads with checksum, MIME validation, EXIF policy, lifecycle, and KMS encryption |
-| Java grading | Optional Spring Boot service plus identical Node fallback for demo reliability | Keep separate only when grading rules need independent ownership, versioning, or reuse |
+| Persistence | In-memory tests, local JSON snapshot, Cloudflare KV snapshot for hosted walkthroughs, and optional `PERSISTENCE_MODE=postgres` normalized Postgres persistence | Per-operation Postgres repository with stronger transaction scoping, retention, backups, and audit durability |
+| Image storage | Upload intent endpoint, S3-style object metadata, and small local/browser preview payloads | Presigned S3 uploads with checksum, MIME validation, EXIF policy, lifecycle, and KMS encryption |
+| Java grading | Optional Spring Boot service plus identical Node fallback for deterministic local reliability | Keep separate only when grading rules need independent ownership, versioning, or reuse |
 | Report generation | Async-shaped job model with deterministic local provider | Queue/Step Functions workflow with model retries, DLQ, provider telemetry, and reviewer approval |
 
 ## Tech Stack
@@ -72,10 +74,11 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 - Shared TypeScript schemas.
 - Java Spring Boot grading service.
 - Postgres schema and Drizzle table definitions.
+- Optional Postgres persistence mode using the existing `pg` client.
 - Local file snapshot persistence plus Cloudflare KV snapshot support for hosted Pages.
 - S3-style image storage interface.
-- Step Functions-style async report job model.
-- Provider interfaces with deterministic mock AI implementations.
+- Queue-shaped image analysis jobs and Step Functions-style report jobs.
+- Provider interfaces with deterministic local AI contract implementations.
 - Vitest, Supertest, React Testing Library, JUnit.
 - Terraform AWS skeleton.
 
@@ -107,11 +110,25 @@ Copy `.env.example` to `.env` if you want to customize:
 - `PORT`
 - `WEB_ORIGIN`
 - `DATABASE_URL`
-- `VISION_PROVIDER=mock|bedrock`
-- `REPORT_PROVIDER=mock|bedrock`
+- `VISION_PROVIDER=local|bedrock`
+- `REPORT_PROVIDER=local|bedrock`
 - `GRADING_SERVICE_URL`
-- `PERSISTENCE_MODE=file|memory`
+- `PERSISTENCE_MODE=file|memory|postgres`
 - `INSPECTIQ_STORE_FILE`
+- `DATABASE_URL`
+- `IMAGE_BUCKET`
+- `PG_POOL_SIZE`
+- `PG_IDLE_TIMEOUT_MS`
+
+Postgres mode:
+
+```bash
+export PERSISTENCE_MODE=postgres
+export DATABASE_URL='postgres://user:password@localhost:5432/inspectiq'
+npm run dev:api
+```
+
+The API applies `apps/api/src/db/schema.sql` on startup, loads existing rows, and persists workflow mutations back to Postgres. Local file mode remains the default for reliable interview walkthroughs.
 
 ## API Examples
 
@@ -151,6 +168,7 @@ The Postgres schema covers:
 - `users`
 - `inspections`
 - `vehicle_photos`
+- `image_analysis_jobs`
 - `photo_analysis_results`
 - `vision_suggestions`
 - `damage_items`
@@ -181,11 +199,12 @@ REPORT_FAILED -> AI_DRAFT_PENDING
 Local:
 
 1. Attach required photo evidence or upload a vehicle photo.
-2. Run the vision provider.
-3. Validate angle, image quality, damage, OCR, confidence, and repair estimate output with `VisionOutputSchema`.
-4. Save raw and validated output separately.
-5. Create pending suggestions, including retake-required quality warnings.
-6. Human reviewer accepts, rejects, or edits.
+2. Create an image-analysis job with an idempotency key.
+3. Mark the job running and call the vision provider.
+4. Validate angle, image quality, damage, OCR, confidence, and repair estimate output with `VisionOutputSchema`.
+5. Save raw and validated output separately.
+6. Create pending suggestions, including retake-required quality warnings.
+7. Human reviewer accepts, rejects, or edits.
 
 AWS target:
 
@@ -194,9 +213,20 @@ S3 upload -> EventBridge/SQS -> Image worker -> Bedrock multimodal model
 -> schema validation -> Postgres suggestions -> audit event
 ```
 
+Upload intent:
+
+```bash
+curl -X POST http://localhost:4000/api/uploads/intent \
+  -H 'content-type: application/json' \
+  -H 'x-actor-id: inspector-john-smith' \
+  -H 'x-actor-name: John Smith' \
+  -H 'x-actor-role: inspector' \
+  -d '{"inspectionId":"<inspection-id>","originalFilename":"front.jpg","mimeType":"image/jpeg","byteSize":120000}'
+```
+
 ## AI Report Workflow
 
-Local report jobs complete immediately through `mockReportProvider`, but the data model is async-ready:
+Local report jobs complete immediately through `localReportProvider`, but the data model is async-ready:
 
 ```txt
 Generate report -> ai_report_jobs -> gather confirmed facts -> provider call
@@ -213,6 +243,7 @@ AI never finalizes reports.
 - Damage candidates create damage items only after acceptance.
 - Low confidence or missing evidence forces human review.
 - Finalization requires valid state and complete evidence.
+- Buyer-visible release is blocked by missing required angles, unresolved AI suggestions, failed analysis, retake-required image quality, missing grade, or missing final report.
 - Audit trail records decisions and state changes.
 
 ## Testing
@@ -225,7 +256,7 @@ npm run lint
 npm run build
 ```
 
-The API tests cover the full create-to-finalize flow, schema validation failures, evidence completeness gates, AI suggestion review, audit trail events, and post-finalization immutability guards. The browser E2E script covers create -> attach photos -> analyze -> reviewer acceptance -> grade -> draft report -> finalize -> audit verification through the rendered React app.
+The API tests cover the full create-to-finalize flow, upload intent metadata, image-analysis job records, readiness blockers, schema validation failures, evidence completeness gates, AI suggestion review, audit trail events, buyer-ready report export, and post-finalization immutability guards. The browser E2E script covers role-specific dashboard context, create -> attach photos -> analyze -> reviewer acceptance -> grade -> draft report -> finalize -> export buyer report -> audit verification through the rendered React app.
 
 Java tests:
 
@@ -244,7 +275,7 @@ Implemented locally:
 - Audit events for key decisions.
 - Platform Health scorecard.
 
-Production metrics include image analysis success rate, missing required angle rate, human review rate, grade generation latency, report finalization rate, suggestion acceptance rate, and p95 API latency.
+Production metrics include image analysis success rate, image retake rate, image-analysis queue latency, missing required angle rate, human review rate, grade generation latency, report finalization rate, suggestion acceptance rate, buyer-visible ready rate, and p95 API latency.
 
 ## Security
 
@@ -279,7 +310,7 @@ Major drivers:
 - Aurora/RDS baseline.
 - CloudWatch logs.
 
-For 1,000 inspections with 10 images each, model calls dominate variable cost. The project uses mock providers locally to avoid accidental spend and documents idempotency to prevent duplicate jobs.
+For 1,000 inspections with 10 images each, model calls dominate variable cost. The project uses local deterministic providers to avoid accidental spend and documents idempotency to prevent duplicate jobs.
 
 ## Failure Handling
 

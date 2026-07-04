@@ -22,17 +22,22 @@ export function deriveMarketplaceReadiness(bundle: InspectionBundle): Marketplac
   const pendingQualityWarnings = pendingSuggestions.filter((suggestion) => suggestion.suggestionType === "quality_warning").length;
   const failedAnalyses = bundle.photos.filter((photo) => photo.qualityStatus === "fail" || photo.analysisStatus === "failed").length;
   const unresolvedQualityIssues = pendingQualityWarnings + failedAnalyses;
+  const backendBlockers = bundle.readinessIssues?.filter((issue) => issue.severity === "blocker") ?? [];
   const severeDamage = bundle.damageItems.some((item) => item.severity === "severe");
   const repairEstimate = estimateTotalRepairRange(bundle.damageItems);
-  const blockers = [
+  const derivedBlockers = [
     ...missingAngles.map((angle) => `Missing ${angle.replaceAll("_", " ")} angle`),
     ...(bundle.conditionGrade ? [] : ["Condition grade not calculated"]),
     ...(bundle.finalReport?.finalizedAt ? [] : ["Reviewer has not finalized the condition report"]),
     ...(pendingDamage ? ["Damage suggestion still needs reviewer decision"] : []),
     ...(unresolvedQualityIssues > 0 ? [`${unresolvedQualityIssues} image quality issue${unresolvedQualityIssues === 1 ? "" : "s"} need review`] : [])
   ];
-  const crReady = missingAngles.length === 0 && Boolean(bundle.conditionGrade) && !pendingDamage && unresolvedQualityIssues === 0;
-  const vdpReady = crReady && Boolean(bundle.finalReport?.finalizedAt);
+  const blockers = backendBlockers.length > 0 ? backendBlockers.map((issue) => issue.label) : derivedBlockers;
+  const crReady = backendBlockers.every((issue) => issue.type === "final_report_missing") && missingAngles.length === 0 && Boolean(bundle.conditionGrade) && !pendingDamage && unresolvedQualityIssues === 0;
+  const locallyVdpReady = crReady && Boolean(bundle.finalReport?.finalizedAt);
+  const vdpReady = (bundle.readinessIssues?.length ?? 0) > 0
+    ? Boolean(bundle.buyerVisibleReady)
+    : locallyVdpReady;
 
   return {
     crStatus: crReady ? "CR ready" : "CR blocked",

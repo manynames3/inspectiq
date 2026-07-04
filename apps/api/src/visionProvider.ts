@@ -49,8 +49,8 @@ function damageCandidate(input: {
   };
 }
 
-export const mockVisionProvider: VisionProvider = {
-  name: "mockVisionProvider",
+export const localVisionProvider: VisionProvider = {
+  name: "localVisionProvider",
   promptVersion: "photo-analysis-v2",
   async analyze(input) {
     const key = `${input.filename} ${input.storageKey}`.toLowerCase();
@@ -186,5 +186,5 @@ export const bedrockVisionProvider: VisionProvider = {
 };
 
 export function getVisionProvider(): VisionProvider {
-  return process.env.VISION_PROVIDER === "bedrock" ? bedrockVisionProvider : mockVisionProvider;
+  return process.env.VISION_PROVIDER === "bedrock" ? bedrockVisionProvider : localVisionProvider;
 }

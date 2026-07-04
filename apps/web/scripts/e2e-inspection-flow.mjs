@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
 
 const baseUrl = process.env.E2E_BASE_URL ?? "http://localhost:5173";
@@ -41,7 +42,11 @@ const browser = await chromium.launch({
   executablePath
 });
 
-const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+const context = await browser.newContext({
+  acceptDownloads: true,
+  viewport: { width: 1440, height: 1000 }
+});
+const page = await context.newPage();
 const consoleIssues = [];
 page.on("console", (message) => {
   if (message.type() === "error" || message.type() === "warning") {
@@ -54,6 +59,14 @@ page.on("pageerror", (error) => {
 
 try {
   const uniqueVin = `E2EVIN${Date.now().toString().slice(-10)}`;
+  await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await waitForBodyText(page, "Capture queue");
+  await page.locator(".role-select select").selectOption("reviewer");
+  await waitForBodyText(page, "Review queue");
+  await page.locator(".role-select select").selectOption("admin");
+  await waitForBodyText(page, "Operations control");
+  await page.locator(".role-select select").selectOption("inspector");
+
   await page.goto(`${baseUrl}/new`, { waitUntil: "networkidle" });
   await waitForBodyText(page, "New Inspection");
 
@@ -86,7 +99,19 @@ try {
   await waitForBodyText(page, "Draft summary");
   await page.getByRole("button", { name: /^finalize$/i }).click();
   await waitForBodyText(page, "Finalized");
+  await waitForBodyText(page, "Buyer-visible");
   await waitForBodyText(page, "report.finalized");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: /export buyer report/i }).click();
+  const download = await downloadPromise;
+  const downloadPath = await download.path();
+  if (!downloadPath) fail("Buyer report download did not produce a local file.");
+  const exportedText = await readFile(downloadPath, "utf8");
+  if (!exportedText.includes("Condition Report:")) fail("Buyer report export is missing the report header.");
+  if (exportedText.includes("VisionOutputSchema") || exportedText.includes("validated schema")) {
+    fail("Buyer report export leaked internal schema language.");
+  }
 
   const relevantConsoleIssues = consoleIssues.filter((message) =>
     !message.includes("Download the React DevTools")
@@ -101,5 +126,6 @@ try {
     url: page.url()
   }));
 } finally {
+  await context.close();
   await browser.close();
 }

@@ -2,12 +2,14 @@ import {
   DamageCandidateSchema,
   ImageQualitySchema,
   PhotoAngleSchema,
+  estimateDamageRepairCost,
   requiredPhotoAngles,
   type CreateInspectionSchema,
   type DamageSeverity,
   type DamageType,
   type InspectionStatus,
   type PhotoAngle,
+  type ReadinessIssue,
   type VisionOutput
 } from "@inspectiq/shared";
 import { z } from "zod";
@@ -19,6 +21,7 @@ import type {
   ConditionGrade,
   DamageItem,
   FinalReport,
+  ImageAnalysisJob,
   Inspection,
   InspectionBundle,
   OperationalMetric,
@@ -97,6 +100,7 @@ export class MemoryStore {
   users = new Map<string, User>();
   inspections = new Map<string, Inspection>();
   photos = new Map<string, VehiclePhoto>();
+  imageAnalysisJobs = new Map<string, ImageAnalysisJob>();
   analyses = new Map<string, PhotoAnalysisResult>();
   suggestions = new Map<string, VisionSuggestion>();
   damageItems = new Map<string, DamageItem>();
@@ -118,6 +122,7 @@ export class MemoryStore {
     this.users.clear();
     this.inspections.clear();
     this.photos.clear();
+    this.imageAnalysisJobs.clear();
     this.analyses.clear();
     this.suggestions.clear();
     this.damageItems.clear();
@@ -227,6 +232,11 @@ export class MemoryStore {
   addPhoto(input: {
     inspectionId: string;
     storageKey: string;
+    objectBucket?: string | null;
+    objectKey?: string | null;
+    thumbnailStorageKey?: string | null;
+    byteSize?: number | null;
+    checksumSha256?: string | null;
     originalFilename: string;
     mimeType: string;
     uploadedBy: string;
@@ -237,10 +247,16 @@ export class MemoryStore {
       id: id(),
       inspectionId: inspection.id,
       storageKey: input.storageKey,
+      objectBucket: input.objectBucket ?? null,
+      objectKey: input.objectKey ?? null,
+      thumbnailStorageKey: input.thumbnailStorageKey ?? null,
+      byteSize: input.byteSize ?? null,
+      checksumSha256: input.checksumSha256 ?? null,
       originalFilename: input.originalFilename,
       mimeType: input.mimeType,
       uploadedBy: input.uploadedBy,
       uploadedAt: now(),
+      uploadStatus: "uploaded",
       declaredAngle: input.declaredAngle ?? null,
       detectedAngle: null,
       detectedAngleConfidence: null,
@@ -252,6 +268,9 @@ export class MemoryStore {
     this.addAudit(inspection.id, actor, "photo.uploaded", {
       photoId: photo.id,
       storageKey: photo.storageKey,
+      objectBucket: photo.objectBucket,
+      objectKey: photo.objectKey,
+      byteSize: photo.byteSize,
       declaredAngle: photo.declaredAngle
     });
     return photo;
@@ -268,15 +287,84 @@ export class MemoryStore {
     return photo;
   }
 
+  enqueueImageAnalysis(photo: VehiclePhoto, actor: Actor, idempotencyKey: string | null): ImageAnalysisJob {
+    this.assertMutableInspection(photo.inspectionId, "queue photo analysis");
+    const reusable = [...this.imageAnalysisJobs.values()].find((job) =>
+      job.photoId === photo.id &&
+      job.status !== "failed" &&
+      job.status !== "dead_letter" &&
+      (idempotencyKey ? job.idempotencyKey === idempotencyKey : true)
+    );
+    if (reusable) return reusable;
+
+    const timestamp = now();
+    const job: ImageAnalysisJob = {
+      id: id(),
+      inspectionId: photo.inspectionId,
+      photoId: photo.id,
+      status: "queued",
+      idempotencyKey,
+      attempts: 0,
+      errorMessage: null,
+      queuedAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.imageAnalysisJobs.set(job.id, job);
+    photo.analysisStatus = "pending";
+    this.addAudit(photo.inspectionId, actor, "image_analysis.queued", {
+      jobId: job.id,
+      photoId: photo.id,
+      idempotencyKey
+    });
+    return job;
+  }
+
+  startImageAnalysisJob(jobId: string, actor: Actor): ImageAnalysisJob {
+    const job = this.imageAnalysisJobs.get(jobId);
+    if (!job) throw notFound("Image analysis job");
+    const photo = this.getPhoto(job.photoId);
+    this.assertMutableInspection(photo.inspectionId, "run photo analysis");
+    job.status = "running";
+    job.attempts += 1;
+    job.updatedAt = now();
+    photo.analysisStatus = "pending";
+    this.addAudit(photo.inspectionId, actor, "image_analysis.started", {
+      jobId: job.id,
+      photoId: photo.id,
+      attempt: job.attempts
+    });
+    return job;
+  }
+
+  imageAnalysisJobsForInspection(inspectionId: string): ImageAnalysisJob[] {
+    this.getInspection(inspectionId);
+    return [...this.imageAnalysisJobs.values()]
+      .filter((job) => job.inspectionId === inspectionId)
+      .sort((a, b) => a.queuedAt.localeCompare(b.queuedAt));
+  }
+
   saveAnalysis(photo: VehiclePhoto, input: {
     provider: string;
     promptVersion: string;
     raw: unknown;
     validated: VisionOutput;
+    jobId?: string | null;
   }, actor: Actor): PhotoAnalysisResult {
     this.assertMutableInspection(photo.inspectionId, "analyze photos");
     const duplicate = [...this.analyses.values()].find((analysis) => analysis.photoId === photo.id && analysis.status === "completed");
-    if (duplicate) return duplicate;
+    if (duplicate) {
+      if (input.jobId) {
+        const job = this.imageAnalysisJobs.get(input.jobId);
+        if (job) {
+          job.status = "completed";
+          job.errorMessage = null;
+          job.updatedAt = now();
+          job.completedAt = job.updatedAt;
+        }
+      }
+      return duplicate;
+    }
 
     const analysis: PhotoAnalysisResult = {
       id: id(),
@@ -296,6 +384,16 @@ export class MemoryStore {
     photo.detectedAngleConfidence = input.validated.confidence;
     photo.qualityStatus = input.validated.qualityWarnings.length > 0 ? "warning" : "ok";
     photo.analysisStatus = "completed";
+
+    if (input.jobId) {
+      const job = this.imageAnalysisJobs.get(input.jobId);
+      if (job) {
+        job.status = "completed";
+        job.errorMessage = null;
+        job.updatedAt = now();
+        job.completedAt = job.updatedAt;
+      }
+    }
 
     this.createSuggestion({
       inspectionId: photo.inspectionId,
@@ -340,6 +438,7 @@ export class MemoryStore {
     }
 
     this.addAudit(photo.inspectionId, actor, "photo.analyzed", {
+      jobId: input.jobId ?? null,
       photoId: photo.id,
       provider: input.provider,
       promptVersion: input.promptVersion,
@@ -351,10 +450,18 @@ export class MemoryStore {
     return analysis;
   }
 
-  failAnalysis(photo: VehiclePhoto, provider: string, promptVersion: string, errorMessage: string, actor: Actor): PhotoAnalysisResult {
+  failAnalysis(photo: VehiclePhoto, provider: string, promptVersion: string, errorMessage: string, actor: Actor, jobId?: string | null): PhotoAnalysisResult {
     this.assertMutableInspection(photo.inspectionId, "record photo analysis failures");
     photo.analysisStatus = "failed";
     photo.qualityStatus = "fail";
+    if (jobId) {
+      const job = this.imageAnalysisJobs.get(jobId);
+      if (job) {
+        job.status = job.attempts >= 3 ? "dead_letter" : "failed";
+        job.errorMessage = errorMessage;
+        job.updatedAt = now();
+      }
+    }
     const analysis: PhotoAnalysisResult = {
       id: id(),
       photoId: photo.id,
@@ -368,7 +475,7 @@ export class MemoryStore {
       createdAt: now()
     };
     this.analyses.set(analysis.id, analysis);
-    this.addAudit(photo.inspectionId, actor, "photo.analysis_failed", { photoId: photo.id, provider, errorMessage });
+    this.addAudit(photo.inspectionId, actor, "photo.analysis_failed", { jobId: jobId ?? null, photoId: photo.id, provider, errorMessage });
     return analysis;
   }
 
@@ -688,6 +795,49 @@ export class MemoryStore {
     return report;
   }
 
+  buyerReportExport(reportId: string): { filename: string; body: string } {
+    const report = this.getFinalReport(reportId);
+    const inspection = this.getInspection(report.inspectionId);
+    const grade = this.latestGrade(inspection.id);
+    const damage = this.listDamage(inspection.id);
+    const totalEstimate = damage.length > 0
+      ? damage.map((item) => estimateDamageRepairCost(item.damageType, item.severity))
+      : [];
+    const minEstimate = totalEstimate.reduce((sum, item) => sum + item.min, 0);
+    const maxEstimate = totalEstimate.reduce((sum, item) => sum + item.max, 0);
+    const estimateLabel = totalEstimate.length === 0
+      ? "No confirmed recon"
+      : minEstimate === 0 && maxEstimate === 0
+        ? "Estimator review"
+        : `$${minEstimate.toLocaleString()} - $${maxEstimate.toLocaleString()}`;
+    const damageLines = damage.length > 0
+      ? damage.map((item) => `- ${item.location}: ${item.severity} ${item.damageType.replaceAll("_", " ")}. ${item.notes}`)
+      : ["- No confirmed damage items."];
+    const body = [
+      `Condition Report: ${inspection.year} ${inspection.make} ${inspection.model} ${inspection.trim}`.trim(),
+      `VIN: ${inspection.vin}`,
+      `Odometer: ${inspection.mileage.toLocaleString()} mi`,
+      `Exterior: ${inspection.exteriorColor}`,
+      `Source: ${inspection.sellerSource}`,
+      "",
+      `Condition Grade: ${grade ? `${grade.grade} (${grade.score}/100)` : "Not graded"}`,
+      `Estimated Reconditioning: ${estimateLabel}`,
+      "",
+      "Confirmed Damage",
+      ...damageLines,
+      "",
+      "Reviewer Disclosure",
+      report.reportBody,
+      "",
+      `Report Version: ${report.version}`,
+      `Finalized: ${report.finalizedAt ? new Date(report.finalizedAt).toLocaleString("en-US") : "Not finalized"}`
+    ].join("\n");
+    return {
+      filename: `${inspection.vin}-condition-report.txt`,
+      body
+    };
+  }
+
   patchReport(reportId: string, reportBody: string, actor: Actor): FinalReport {
     const report = this.getFinalReport(reportId);
     if (report.finalizedAt) throw conflict("Finalized reports cannot be edited.");
@@ -705,6 +855,12 @@ export class MemoryStore {
       throw conflict("Cannot finalize until required photo evidence is complete.", {
         completenessPercentage: inspection.completenessPercentage
       });
+    }
+    const blockers = this.readinessIssues(inspection.id).filter((issue) =>
+      issue.severity === "blocker" && issue.type !== "final_report_missing"
+    );
+    if (blockers.length > 0) {
+      throw conflict("Cannot finalize until buyer-visible release blockers are resolved.", { blockers });
     }
     if (!canTransition(inspection.status, "FINALIZED")) {
       throw conflict(`Cannot finalize from status ${inspection.status}.`);
@@ -724,6 +880,9 @@ export class MemoryStore {
   }
 
   addAudit(inspectionId: string, actor: Actor, eventType: string, detailsJson: unknown): AuditEvent {
+    if (!this.users.has(actor.id)) {
+      this.addUser({ id: actor.id, name: actor.name, role: actor.role });
+    }
     const event: AuditEvent = {
       id: id(),
       inspectionId,
@@ -739,6 +898,7 @@ export class MemoryStore {
   operationalMetrics(): OperationalMetric[] {
     const inspections = [...this.inspections.values()];
     const analyses = [...this.analyses.values()];
+    const imageJobs = [...this.imageAnalysisJobs.values()];
     const suggestions = [...this.suggestions.values()];
     const grades = [...this.conditionGrades.values()];
     const reports = [...this.finalReports.values()];
@@ -774,6 +934,19 @@ export class MemoryStore {
     const reviewedSuggestions = suggestions.filter((suggestion) => suggestion.status === "accepted" || suggestion.status === "rejected");
     const acceptedSuggestions = reviewedSuggestions.filter((suggestion) => suggestion.status === "accepted").length;
     const acceptanceRate = rateValue(acceptedSuggestions, reviewedSuggestions.length, 0);
+    const finishedImageJobs = imageJobs.filter((job) => job.status === "completed" || job.status === "failed" || job.status === "dead_letter");
+    const queueLatencies = finishedImageJobs
+      .map((job) => {
+        const end = job.completedAt ?? job.updatedAt;
+        const latencyMs = new Date(end).getTime() - new Date(job.queuedAt).getTime();
+        return latencyMs >= 0 ? latencyMs / 1000 : null;
+      })
+      .filter((value): value is number => value !== null);
+    const averageQueueLatency = queueLatencies.length > 0
+      ? queueLatencies.reduce((sum, value) => sum + value, 0) / queueLatencies.length
+      : null;
+    const buyerReadyInspections = inspections.filter((inspection) => this.buyerVisibleReady(inspection.id)).length;
+    const buyerReadyRate = rateValue(buyerReadyInspections, inspections.length, 0);
 
     return [
       {
@@ -789,6 +962,13 @@ export class MemoryStore {
         value: percentLabel(retakeRequiredAnalyses, completedAnalyses, 0),
         status: retakeRate <= 0.08 ? "healthy" : retakeRate <= 0.2 ? "watch" : "blocked",
         evidence: `${retakeRequiredAnalyses} completed analyses require image retake before buyer-visible release.`
+      },
+      {
+        metric: "image_analysis_queue_latency",
+        label: "Image queue latency",
+        value: averageQueueLatency === null ? "No jobs yet" : averageQueueLatency < 1 ? "<1 sec" : `${Math.round(averageQueueLatency)} sec`,
+        status: averageQueueLatency === null || averageQueueLatency <= 30 ? "healthy" : averageQueueLatency <= 120 ? "watch" : "blocked",
+        evidence: `${finishedImageJobs.length} image-analysis jobs completed or exited.`
       },
       {
         metric: "missing_required_angle_rate",
@@ -824,6 +1004,13 @@ export class MemoryStore {
         value: percentLabel(acceptedSuggestions, reviewedSuggestions.length, 0),
         status: reviewedSuggestions.length === 0 || acceptanceRate >= 0.65 ? "healthy" : acceptanceRate >= 0.45 ? "watch" : "blocked",
         evidence: `${acceptedSuggestions} accepted decisions out of ${reviewedSuggestions.length} reviewed suggestions.`
+      },
+      {
+        metric: "buyer_visible_ready_rate",
+        label: "Buyer-visible ready",
+        value: percentLabel(buyerReadyInspections, inspections.length, 0),
+        status: buyerReadyRate >= 0.7 ? "healthy" : buyerReadyRate >= 0.35 ? "watch" : "blocked",
+        evidence: `${buyerReadyInspections} inspections clear all buyer-visible readiness blockers.`
       }
     ];
   }
@@ -832,14 +1019,116 @@ export class MemoryStore {
     return {
       inspection: this.getInspection(inspectionId),
       photos: this.listPhotos(inspectionId),
+      imageAnalysisJobs: this.imageAnalysisJobsForInspection(inspectionId),
       suggestions: this.listSuggestions(inspectionId),
       damageItems: this.listDamage(inspectionId),
       conditionGrade: this.latestGrade(inspectionId),
       aiReportJob: this.latestReportJob(inspectionId),
       aiReportDraft: this.latestReportDraft(inspectionId),
       finalReport: this.latestFinalReport(inspectionId),
-      auditEvents: this.auditForInspection(inspectionId)
+      auditEvents: this.auditForInspection(inspectionId),
+      readinessIssues: this.readinessIssues(inspectionId),
+      buyerVisibleReady: this.buyerVisibleReady(inspectionId)
     };
+  }
+
+  readinessIssues(inspectionId: string): ReadinessIssue[] {
+    const inspection = this.getInspection(inspectionId);
+    const suggestions = this.listSuggestions(inspectionId);
+    const photos = this.listPhotos(inspectionId);
+    const damageItems = this.listDamage(inspectionId);
+    const issues: ReadinessIssue[] = [];
+    for (const angle of this.missingRequiredEvidence(inspectionId)) {
+      issues.push({
+        type: "missing_required_angle",
+        severity: "blocker",
+        label: `Missing ${angle.replaceAll("_", " ")} angle`,
+        detail: "Required photo evidence has not been human-confirmed.",
+        action: "Capture or accept a photo-angle suggestion."
+      });
+    }
+    const failedPhotos = photos.filter((photo) => photo.analysisStatus === "failed" || photo.qualityStatus === "fail");
+    for (const photo of failedPhotos) {
+      issues.push({
+        type: "image_analysis_failed",
+        severity: "blocker",
+        label: `Image analysis failed for ${photo.originalFilename}`,
+        detail: "The photo cannot support buyer-facing condition data until analysis succeeds or the image is replaced.",
+        action: "Retry analysis or request a retake."
+      });
+    }
+    const qualityWarnings = suggestions.filter((suggestion) =>
+      suggestion.suggestionType === "quality_warning" &&
+      (suggestion.status === "pending" || suggestion.status === "edited")
+    );
+    for (const suggestion of qualityWarnings) {
+      issues.push({
+        type: "image_quality_retake",
+        severity: "blocker",
+        label: "Image quality needs review",
+        detail: suggestion.explanation,
+        action: "Accept the retake requirement, reject it with reviewer rationale, or replace the image."
+      });
+    }
+    const unreviewed = suggestions.filter((suggestion) =>
+      suggestion.suggestionType !== "quality_warning" &&
+      (suggestion.status === "pending" || suggestion.status === "edited")
+    );
+    if (unreviewed.length > 0) {
+      issues.push({
+        type: "unreviewed_ai_suggestion",
+        severity: "blocker",
+        label: `${unreviewed.length} AI suggestion${unreviewed.length === 1 ? "" : "s"} need review`,
+        detail: "AI findings are advisory and must be accepted, edited, or rejected before release.",
+        action: "Complete the human review queue."
+      });
+    }
+    if (!this.latestGrade(inspectionId)) {
+      issues.push({
+        type: "condition_grade_missing",
+        severity: "blocker",
+        label: "Condition grade missing",
+        detail: "The condition report does not have a deterministic grade.",
+        action: "Run the Java grading service after evidence is complete."
+      });
+    }
+    const estimateMissing = damageItems.some((item) => {
+      const estimate = estimateDamageRepairCost(item.damageType, item.severity);
+      return estimate.min === 0 && estimate.max === 0;
+    });
+    if (estimateMissing) {
+      issues.push({
+        type: "repair_estimate_missing",
+        severity: "watch",
+        label: "Repair estimate needs estimator review",
+        detail: "At least one confirmed damage item has unknown type or severity.",
+        action: "Classify the damage item or add estimator notes."
+      });
+    }
+    if (damageItems.some((item) => item.severity === "severe")) {
+      issues.push({
+        type: "high_arbitration_risk",
+        severity: "watch",
+        label: "High arbitration risk",
+        detail: "Severe confirmed damage should be explicit in buyer disclosures.",
+        action: "Verify photos, notes, and report disclosure before release."
+      });
+    }
+    const report = this.latestFinalReport(inspectionId);
+    if (!report?.finalizedAt) {
+      issues.push({
+        type: "final_report_missing",
+        severity: "blocker",
+        label: "Final report not released",
+        detail: `Current inspection status is ${inspection.status}.`,
+        action: "Generate, review, and finalize the buyer-ready condition report."
+      });
+    }
+    return issues;
+  }
+
+  buyerVisibleReady(inspectionId: string): boolean {
+    return this.readinessIssues(inspectionId).every((issue) => issue.severity !== "blocker");
   }
 
   missingRequiredEvidence(inspectionId: string): string[] {

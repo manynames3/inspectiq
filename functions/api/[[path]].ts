@@ -7,14 +7,15 @@ import {
   PatchReportSchema,
   SamplePhotoSchema,
   UpdateSuggestionSchema,
+  UploadIntentSchema,
   UploadPhotoSchema
 } from "@inspectiq/shared";
 import { ZodError } from "zod";
 import { ApiError, conflict, validation } from "../../apps/api/src/errors.js";
 import { gradeCondition } from "../../apps/api/src/gradingClient.js";
-import { mockVisionProvider } from "../../apps/api/src/mockVisionProvider.js";
+import { localVisionProvider } from "../../apps/api/src/visionProvider.js";
 import { platformHealthPayload } from "../../apps/api/src/platformHealth.js";
-import { mockReportProvider } from "../../apps/api/src/reportProvider.js";
+import { localReportProvider } from "../../apps/api/src/reportProvider.js";
 import { requireAction } from "../../apps/api/src/rbac.js";
 import { findSampleImage, sampleBundles, sampleImages } from "../../apps/api/src/sampleImages.js";
 import { seedStore } from "../../apps/api/src/seedData.js";
@@ -28,6 +29,7 @@ const storeMapNames = [
   "users",
   "inspections",
   "photos",
+  "imageAnalysisJobs",
   "analyses",
   "suggestions",
   "damageItems",
@@ -181,6 +183,11 @@ function reportBodyFromDraft(output: unknown): string {
   ].join("\n");
 }
 
+function objectKeyForUpload(inspectionId: string, filename: string): string {
+  const cleanName = filename.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 120);
+  return `inspections/${inspectionId}/photos/${crypto.randomUUID()}-${cleanName}`;
+}
+
 async function handleApi(request: Request, requestId: string): Promise<Response> {
   ensureSeeded();
   const url = new URL(request.url);
@@ -195,16 +202,16 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
       ok: true,
       service: "inspectiq-pages-function",
       providers: {
-        vision: "mock",
-        report: "mock"
+        vision: "local",
+        report: "local"
       }
     }, requestId);
   }
 
   if (method === "GET" && path === "platform-health") {
     return json(platformHealthPayload(store, {
-      visionProviderName: mockVisionProvider.name,
-      visionPromptVersion: mockVisionProvider.promptVersion
+      visionProviderName: localVisionProvider.name,
+      visionPromptVersion: localVisionProvider.promptVersion
     }), requestId);
   }
 
@@ -212,7 +219,9 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
     return json(store.listInspections().map((inspection) => ({
       ...inspection,
       conditionGrade: store.latestGrade(inspection.id),
-      humanReviewFlag: inspection.status === "HUMAN_REVIEW_REQUIRED"
+      humanReviewFlag: inspection.status === "HUMAN_REVIEW_REQUIRED",
+      buyerVisibleReady: store.buyerVisibleReady(inspection.id),
+      readinessIssueCount: store.readinessIssues(inspection.id).length
     })), requestId);
   }
 
@@ -240,6 +249,11 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
       return store.addPhoto({
         inspectionId: segments[1],
         storageKey: `/sample-images/${sample.filename}`,
+        objectBucket: "inspectiq-sample-images",
+        objectKey: `sample-images/${sample.filename}`,
+        thumbnailStorageKey: `/sample-images/${sample.filename}`,
+        byteSize: null,
+        checksumSha256: null,
         originalFilename: sample.filename,
         mimeType: sample.mimeType,
         uploadedBy: actor.id,
@@ -252,14 +266,37 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
   if (segments[0] === "inspections" && segments[1] && segments[2] === "photos" && segments[3] === "upload" && method === "POST") {
     requireAction(actor, "photo:capture");
     const input = UploadPhotoSchema.parse(body);
+    const objectKey = input.objectKey ?? objectKeyForUpload(segments[1], input.originalFilename);
     return json(store.addPhoto({
       inspectionId: segments[1],
-      storageKey: input.storageKey ?? `/uploads/${crypto.randomUUID()}-${input.originalFilename}`,
+      storageKey: input.storageKey ?? `/uploads/${objectKey}`,
+      objectBucket: input.objectBucket ?? "inspectiq-pages-uploads",
+      objectKey,
+      thumbnailStorageKey: input.thumbnailStorageKey ?? null,
+      byteSize: input.byteSize ?? null,
+      checksumSha256: input.checksumSha256 ?? null,
       originalFilename: input.originalFilename,
       mimeType: input.mimeType,
       uploadedBy: actor.id,
       declaredAngle: input.declaredAngle ?? null
     }, actor), requestId, 201);
+  }
+
+  if (segments[0] === "uploads" && segments[1] === "intent" && method === "POST") {
+    requireAction(actor, "photo:capture");
+    const input = UploadIntentSchema.parse(body);
+    store.assertMutableInspection(input.inspectionId, "create upload intent");
+    const objectKey = objectKeyForUpload(input.inspectionId, input.originalFilename);
+    return json({
+      objectBucket: "inspectiq-pages-uploads",
+      objectKey,
+      uploadUrl: null,
+      requiredHeaders: {
+        "content-type": input.mimeType,
+        ...(input.checksumSha256 ? { "x-amz-checksum-sha256": input.checksumSha256 } : {})
+      },
+      expiresInSeconds: 900
+    }, requestId, 201);
   }
 
   if (segments[0] === "inspections" && segments[1] && segments[2] === "photos" && method === "GET") {
@@ -272,17 +309,22 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
     if (photo.analysisStatus === "completed" && !(body as { force?: boolean })?.force) {
       return json({
         analysis: store.getPhotoAnalysis(photo.id),
+        job: store.imageAnalysisJobsForInspection(photo.inspectionId).find((job) => job.photoId === photo.id) ?? null,
         suggestions: store.listSuggestions(photo.inspectionId).filter((suggestion) => suggestion.photoId === photo.id)
       }, requestId);
     }
-    const result = await mockVisionProvider.analyze({ filename: photo.originalFilename, storageKey: photo.storageKey });
+    const job = store.enqueueImageAnalysis(photo, actor, request.headers.get("idempotency-key") ?? (body as { idempotencyKey?: string })?.idempotencyKey ?? null);
+    store.startImageAnalysisJob(job.id, actor);
+    const result = await localVisionProvider.analyze({ filename: photo.originalFilename, storageKey: photo.storageKey });
     const analysis = store.saveAnalysis(photo, {
-      provider: mockVisionProvider.name,
-      promptVersion: mockVisionProvider.promptVersion,
+      provider: localVisionProvider.name,
+      promptVersion: localVisionProvider.promptVersion,
       raw: result.raw,
-      validated: result.validated
+      validated: result.validated,
+      jobId: job.id
     }, actor);
     return json({
+      job: store.imageAnalysisJobs.get(job.id),
       analysis,
       suggestions: store.listSuggestions(photo.inspectionId).filter((suggestion) => suggestion.photoId === photo.id)
     }, requestId);
@@ -381,7 +423,7 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
     }
     const job = store.createReportJob(inspection.id, request.headers.get("idempotency-key") ?? (body as { idempotencyKey?: string })?.idempotencyKey ?? null, actor);
     store.markJobRunning(job.id);
-    const result = await mockReportProvider.generate({
+    const result = await localReportProvider.generate({
       inspection,
       grade,
       missingEvidence: store.missingRequiredEvidence(inspection.id),
@@ -390,8 +432,8 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
     const draft = store.completeReportJob(job.id, {
       inspectionId: inspection.id,
       jobId: job.id,
-      provider: mockReportProvider.name,
-      promptVersion: mockReportProvider.promptVersion,
+      provider: localReportProvider.name,
+      promptVersion: localReportProvider.promptVersion,
       inputSummaryJson: {
         gradeId: grade.id,
         damageItemCount: store.listDamage(inspection.id).length,
@@ -426,10 +468,25 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
     return json({ retryWith: `/api/inspections/${job.inspectionId}/ai-report` }, requestId);
   }
 
+  if (segments[0] === "reports" && segments[1] && segments[2] === "export" && method === "GET") {
+    const exported = store.buyerReportExport(segments[1]);
+    return new Response(exported.body, {
+      status: 200,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "content-disposition": `attachment; filename="${exported.filename}"`
+      }
+    });
+  }
+
   if (segments[0] === "reports" && segments[1] && method === "PATCH") {
     requireAction(actor, "report:edit");
     const input = PatchReportSchema.parse(body);
     return json(store.patchReport(segments[1], input.reportBody, actor), requestId);
+  }
+
+  if (segments[0] === "reports" && segments[1] && segments.length === 2 && method === "GET") {
+    return json(store.getFinalReport(segments[1]), requestId);
   }
 
   if (segments[0] === "reports" && segments[1] && segments[2] === "finalize" && method === "POST") {
@@ -439,6 +496,13 @@ async function handleApi(request: Request, requestId: string): Promise<Response>
 
   if (segments[0] === "inspections" && segments[1] && segments[2] === "audit-events" && method === "GET") {
     return json(store.auditForInspection(segments[1]), requestId);
+  }
+
+  if (segments[0] === "inspections" && segments[1] && segments[2] === "readiness" && method === "GET") {
+    return json({
+      issues: store.readinessIssues(segments[1]),
+      buyerVisibleReady: store.buyerVisibleReady(segments[1])
+    }, requestId);
   }
 
   return Response.json({

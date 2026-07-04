@@ -9,14 +9,18 @@ This project is strongest when presented as a production-shaped inspection workf
 - State machine guards for evidence completion, grading, report generation, finalization, and post-finalization immutability.
 - Shared Zod schemas for API inputs, vision output, grading output, report output, and suggestion edits.
 - Vision-provider contract storing raw output, validated output, provider name, prompt version, confidence, image-quality scores, and audit metadata.
+- Image-analysis job records with queued/running/completed/failed/dead-letter state and idempotency keys.
+- Upload intent endpoint and photo records carrying object bucket, object key, thumbnail key, byte size, MIME type, and checksum metadata.
+- Backend-derived readiness blockers for CR readiness, VDP readiness, and buyer-visible release.
+- Buyer-ready text report export that avoids schema/provider/internal debug language.
 - Deterministic grading rules in Java with an equivalent Node fallback for reliable local operation.
-- Postgres schema and Drizzle table definitions for production relational state.
+- Postgres schema, Drizzle table definitions, and optional `PERSISTENCE_MODE=postgres` persistence through the existing `pg` client.
 - Cloudflare Pages deployment path for a hosted walkthrough.
 
 ## Deterministic Local By Design
 
 - Vision and report providers are deterministic so tests and walkthroughs do not fail because of missing model credentials, model latency, cost, or nondeterministic output.
-- Local file/KV persistence exists for portfolio reliability, not multi-user production durability.
+- Local file/KV persistence exists for portfolio reliability. Postgres mode exists for a real relational path, but the next production step is a per-operation repository rather than whole-store snapshot writes.
 - Browser image uploads use small preview payloads; production should write image objects through presigned S3 upload URLs.
 - Role headers simulate authenticated claims; production should use Cognito or enterprise OIDC.
 
@@ -25,7 +29,7 @@ This project is strongest when presented as a production-shaped inspection workf
 ```txt
 React workbench
 -> API Gateway + Lambda or ECS/Fargate API
--> Postgres repository with migrations and transactions
+-> Postgres repository with migrations, indexes, and transaction-scoped writes
 -> Presigned S3 image upload
 -> S3 metadata event or API-created job
 -> SQS/EventBridge image-analysis queue
@@ -54,4 +58,3 @@ The local provider is not a model-quality claim. It is a contract and workflow c
 - raw and validated outputs are stored separately;
 - every AI-generated fact remains advisory until a reviewer accepts or edits it;
 - retake-required image quality warnings block buyer-visible release until resolved.
-

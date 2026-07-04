@@ -1,6 +1,7 @@
 import type { Actor } from "./types.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
+export const apiBase = API_BASE;
 
 export const assetUrl = (storageKey: string): string => {
   const migratedStorageKey = storageKey.startsWith("/sample-images/")

@@ -8,7 +8,7 @@ Image analysis is advisory evidence triage. It helps reviewers find missing angl
 
 Current local provider:
 
-- Provider: `mockVisionProvider`
+- Provider: `localVisionProvider`
 - Prompt version: `photo-analysis-v2`
 - Schema: `VisionOutputSchema`
 

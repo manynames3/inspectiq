@@ -9,7 +9,9 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 - Required-angle checklist covers front, rear, side, interior, engine bay, odometer, and VIN plate evidence.
 - Image analysis returns angle confidence, image-quality scores, retake policy, quality warnings, damage candidates, OCR/VIN/odometer extraction, severity, and repair estimate range.
 - Reviewers convert AI suggestions into facts only by accept/edit/reject decisions.
+- Backend readiness blockers prevent buyer-visible release while required evidence, retake issues, failed analysis, or unreviewed AI suggestions remain.
 - The workbench shows CR readiness, buyer-visible VDP readiness, reconditioning estimate, and arbitration risk.
+- Buyer-ready report export keeps internal model/schema details out of end-user output.
 - Audit events preserve photo analysis, schema validation metadata, reviewer decisions, grading, report drafting, edits, and finalization.
 
 ## Stack Mapping
@@ -17,7 +19,8 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 - React + TypeScript workbench for inspector/reviewer/admin roles.
 - Node + Express REST API with Zod request/output validation.
 - Java Spring Boot grading service boundary for deterministic business rules.
-- Postgres schema and Drizzle table definitions for production relational state.
+- Postgres schema, Drizzle table definitions, and optional `PERSISTENCE_MODE=postgres` persistence using `pg`.
+- Upload intent and image-analysis job records shaped for S3 plus SQS/EventBridge worker processing.
 - Deterministic local providers shaped around Bedrock/Rekognition/custom-model interfaces.
 - Cloudflare Pages Functions and KV snapshot support for hosted walkthroughs.
 - AWS target: React -> API Gateway/Lambda or ECS -> Neon Free Postgres or Aurora -> S3 images -> SQS/EventBridge -> image worker -> Bedrock/Rekognition/custom model -> validated suggestions -> audit trail.
@@ -26,16 +29,16 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 
 - AI is deterministic locally so the walkthrough is reliable without paid model credentials.
 - Deterministic image analysis still uses the production-shaped contract: angle, image quality, damage, OCR, confidence, repair estimate, provider metadata, prompt version, raw output, validated output, and audit event.
-- Local server persists to a JSON snapshot and Cloudflare Pages can persist to KV; production state belongs in Postgres.
-- Browser uploads use small data URLs for preview; production should use S3 presigned uploads and object metadata.
+- Local server persists to a JSON snapshot by default, Cloudflare Pages can persist to KV, and `PERSISTENCE_MODE=postgres` provides a real relational path. A full production version should move from snapshot persistence to per-operation repository transactions.
+- Browser uploads use small data URLs for preview; upload intent and photo metadata show the intended S3/R2 presigned-object path.
 - The Java grading service is optional locally; the API fallback keeps the workflow available while preserving the service boundary.
 - Auth is role-header based locally; production should use Cognito/OIDC claims mapped to RBAC actions.
 
 ## What I Would Build Next In Production
 
-- Postgres repository implementation behind the current store contract, with migrations and transaction boundaries.
+- Replace whole-store Postgres snapshot writes with per-operation repository methods and narrower transaction boundaries.
 - S3/R2 object storage with presigned uploads, EXIF stripping, image normalization, and retryable ingestion jobs.
-- Queue-backed image worker with idempotency keys, dead-letter handling, and model-provider metadata.
+- Queue-backed image worker using the existing image-analysis job contract, idempotency keys, dead-letter handling, and model-provider metadata.
 - Bedrock/Rekognition/custom model adapter with confidence thresholds and rejected-output audit records.
 - Operational dashboards for image analysis success, missing angle rate, human review rate, grade latency, finalization rate, and suggestion acceptance.
 - Real authentication, object-level authorization, CloudWatch/X-Ray tracing, alarms, and runbooks.
@@ -44,10 +47,10 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 
 1. Open Dashboard: "This is a wholesale inspection queue. The key outcomes are CR readiness, buyer-visible release, and arbitration risk."
 2. Switch to Inspector, create an inspection, attach the required photo set, and run analysis: "Inspectors own capture and analysis execution."
-3. Open the detail workbench: "The model contract validates angle, image quality, damage, OCR, confidence, and repair estimate before creating suggestions."
+3. Open the detail workbench: "The model contract validates angle, image quality, damage, OCR, confidence, and repair estimate before creating suggestions; image jobs move through queued/running/completed states."
 4. Switch to Reviewer and accept/edit/reject suggestions: "AI is advisory; accepted suggestions become facts and trigger audit events."
-5. Confirm damage and check recon/arbitration status: "Damage decisions feed reconditioning estimate and seller disclosure."
-6. Calculate grade, draft report, edit, and finalize: "The CR uses confirmed facts and finalization is terminal."
+5. Confirm damage and check recon/arbitration status: "Damage decisions feed reconditioning estimate, seller disclosure, and release blockers."
+6. Calculate grade, draft report, edit, finalize, and export buyer report: "The CR uses confirmed facts, finalization is terminal, and buyer output hides internal schema/model details."
 7. Open Audit and Platform Health: "This is the operations story: schema validation, prompt versions, metrics, RBAC, and failure handling."
 
 ## Hiring Manager Signal
