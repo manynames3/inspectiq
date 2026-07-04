@@ -2342,6 +2342,60 @@ pre {
   font-weight: 700;
 }
 
+.implementation-boundary-panel {
+  margin-top: 18px;
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+  padding: 16px;
+}
+
+.implementation-boundary-panel h2,
+.implementation-boundary-panel h3 {
+  margin: 0;
+}
+
+.implementation-boundary-panel h2 {
+  font-size: 16px;
+}
+
+.implementation-boundary-panel h3 {
+  font-size: 13px;
+}
+
+.implementation-boundary-panel p {
+  margin: 6px 0 0;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.boundary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.boundary-grid article {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.boundary-grid ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #334155;
+  line-height: 1.45;
+  font-size: 13px;
+}
+
+.boundary-grid li + li {
+  margin-top: 6px;
+}
+
 .loading {
   color: var(--muted);
 }
@@ -2493,7 +2547,8 @@ pre {
   }
 
   .marketplace-readiness-strip,
-  .ai-contract-panel dl {
+  .ai-contract-panel dl,
+  .boundary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2576,6 +2631,7 @@ pre {
   .metric-card-grid,
   .marketplace-readiness-strip,
   .ai-contract-panel dl,
+  .boundary-grid,
   .damage-form {
     grid-template-columns: 1fr;
   }

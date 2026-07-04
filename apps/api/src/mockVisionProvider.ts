@@ -6,9 +6,24 @@ export type VisionProvider = {
   analyze(input: { filename: string; storageKey: string }): Promise<{ raw: unknown; validated: VisionOutput }>;
 };
 
-const cleanOutput = (photoAngle: VisionOutput["photoAngle"], confidence = 0.94): VisionOutput => ({
+function imageQuality(overrides: Partial<VisionOutput["imageQuality"]> = {}): VisionOutput["imageQuality"] {
+  return {
+    grade: "pass",
+    blurScore: 0.96,
+    exposureScore: 0.94,
+    framingScore: 0.95,
+    resolutionScore: 0.97,
+    occlusionRisk: 0.04,
+    retakeRequired: false,
+    notes: [],
+    ...overrides
+  };
+}
+
+const cleanOutput = (photoAngle: VisionOutput["photoAngle"], confidence = 0.94, quality: VisionOutput["imageQuality"] = imageQuality()): VisionOutput => ({
   photoAngle,
   confidence,
+  imageQuality: quality,
   qualityWarnings: [],
   detectedDamageCandidates: [],
   extractedText: {},
@@ -43,7 +58,11 @@ export const mockVisionProvider: VisionProvider = {
 
     if (key.includes("rear-severe-damage")) {
       raw = {
-        ...cleanOutput("rear", 0.96),
+        ...cleanOutput("rear", 0.96, imageQuality({
+          grade: "review",
+          framingScore: 0.89,
+          notes: ["Rear angle is usable, but confirmed damage requires reviewer close inspection."]
+        })),
         detectedDamageCandidates: [damageCandidate({
           location: "rear bumper",
           damageType: "dent",
@@ -55,7 +74,12 @@ export const mockVisionProvider: VisionProvider = {
       };
     } else if (key.includes("driver-side-scratch")) {
       raw = {
-        ...cleanOutput("driver_side", 0.93),
+        ...cleanOutput("driver_side", 0.93, imageQuality({
+          grade: "review",
+          blurScore: 0.9,
+          framingScore: 0.9,
+          notes: ["Side panel is visible; scratch candidate should be confirmed against glare."]
+        })),
         detectedDamageCandidates: [damageCandidate({
           location: "driver side door",
           damageType: "scratch",
@@ -66,7 +90,12 @@ export const mockVisionProvider: VisionProvider = {
       };
     } else if (key.includes("interior-wear")) {
       raw = {
-        ...cleanOutput("interior", 0.91),
+        ...cleanOutput("interior", 0.91, imageQuality({
+          grade: "review",
+          exposureScore: 0.86,
+          occlusionRisk: 0.12,
+          notes: ["Interior lighting is acceptable, but seat-bolster wear requires human confirmation."]
+        })),
         detectedDamageCandidates: [damageCandidate({
           location: "driver seat bolster",
           damageType: "interior_wear",
@@ -78,12 +107,21 @@ export const mockVisionProvider: VisionProvider = {
       };
     } else if (key.includes("odometer")) {
       raw = {
-        ...cleanOutput("odometer", 0.98),
+        ...cleanOutput("odometer", 0.98, imageQuality({
+          blurScore: 0.98,
+          exposureScore: 0.96,
+          framingScore: 0.97,
+          notes: ["Odometer digits are centered and readable."]
+        })),
         extractedText: { odometer: "64231" }
       };
     } else if (key.includes("vin-plate")) {
       raw = {
-        ...cleanOutput("vin_plate", 0.97),
+        ...cleanOutput("vin_plate", 0.97, imageQuality({
+          blurScore: 0.96,
+          framingScore: 0.96,
+          notes: ["VIN plate is framed tightly enough for OCR review."]
+        })),
         extractedText: { vin: "4T1G11AK8MU123456" }
       };
     } else if (key.includes("passenger-side")) {
@@ -96,6 +134,16 @@ export const mockVisionProvider: VisionProvider = {
       raw = {
         photoAngle: "front",
         confidence: 0.58,
+        imageQuality: imageQuality({
+          grade: "retake",
+          blurScore: 0.42,
+          exposureScore: 0.51,
+          framingScore: 0.82,
+          resolutionScore: 0.72,
+          occlusionRisk: 0.08,
+          retakeRequired: true,
+          notes: ["Blur and low light reduce buyer trust; retake before CR release."]
+        }),
         qualityWarnings: ["Image appears blurry or low-light; retake recommended before final report."],
         detectedDamageCandidates: [],
         extractedText: {},
@@ -105,6 +153,16 @@ export const mockVisionProvider: VisionProvider = {
       raw = {
         photoAngle: "unknown",
         confidence: 0.3,
+        imageQuality: imageQuality({
+          grade: "retake",
+          blurScore: 0.68,
+          exposureScore: 0.7,
+          framingScore: 0.32,
+          resolutionScore: 0.82,
+          occlusionRisk: 0.24,
+          retakeRequired: true,
+          notes: ["Required vehicle angle is not framed clearly enough for automated classification."]
+        }),
         qualityWarnings: ["Unable to classify photo angle from available image; human review required."],
         detectedDamageCandidates: [],
         extractedText: {},

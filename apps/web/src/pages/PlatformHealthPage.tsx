@@ -13,6 +13,12 @@ type Health = {
     validatedFields: string[];
     confidencePolicy: string;
     productionTarget: string;
+    imageQualityPolicy: string;
+  };
+  implementationBoundary: {
+    local: string[];
+    production: string[];
+    javaBoundary: string;
   };
 };
 
@@ -64,6 +70,7 @@ export function PlatformHealthPage() {
           <div>
             <h2>AI validation contract</h2>
             <p>{health.aiContract.confidencePolicy}</p>
+            <p>{health.aiContract.imageQualityPolicy}</p>
           </div>
           <dl>
             <div><dt>Provider</dt><dd>{health.aiContract.provider}</dd></div>
@@ -73,6 +80,28 @@ export function PlatformHealthPage() {
           </dl>
           <div className="contract-fields">
             {health.aiContract.validatedFields.map((field) => <span key={field}>{field}</span>)}
+          </div>
+        </div>
+      ) : null}
+      {health?.implementationBoundary ? (
+        <div className="implementation-boundary-panel">
+          <div>
+            <h2>Implementation boundary</h2>
+            <p>{health.implementationBoundary.javaBoundary}</p>
+          </div>
+          <div className="boundary-grid">
+            <article>
+              <h3>Local walkthrough</h3>
+              <ul>
+                {health.implementationBoundary.local.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </article>
+            <article>
+              <h3>Production path</h3>
+              <ul>
+                {health.implementationBoundary.production.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </article>
           </div>
         </div>
       ) : null}

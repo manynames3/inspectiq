@@ -98,6 +98,14 @@ function repairEstimateForDamage(value: Record<string, unknown>) {
   return estimateDamageRepairCost(String(value.damageType ?? "unknown"), String(value.severityEstimate ?? "unknown")).label;
 }
 
+function qualityValueRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+}
+
+function formatQualityScore(value: unknown) {
+  return typeof value === "number" ? `${Math.round(value * 100)}%` : "Not scored";
+}
+
 type SuggestionFact = {
   label: string;
   value: string;
@@ -122,6 +130,15 @@ function suggestionFacts(suggestion: VisionSuggestion): SuggestionFact[] {
       .filter(([, rowValue]) => rowValue !== null && rowValue !== undefined && rowValue !== "")
       .map(([key, rowValue]) => ({ label: formatAngleLabel(key), value: formatSuggestionValue(rowValue) }));
     return extracted.length > 0 ? extracted : [{ label: "Extracted Text", value: "No text found" }];
+  }
+  if (suggestion.suggestionType === "quality_warning") {
+    const quality = qualityValueRecord(value.imageQuality);
+    return [
+      { label: "Quality Grade", value: formatTitleValue(quality.grade ?? "review") },
+      { label: "Retake Required", value: quality.retakeRequired === true ? "Yes" : "No" },
+      { label: "Blur Score", value: formatQualityScore(quality.blurScore) },
+      { label: "Framing Score", value: formatQualityScore(quality.framingScore) }
+    ];
   }
   return Object.entries(value).slice(0, 4).map(([key, rowValue]) => ({ label: formatAngleLabel(key), value: formatSuggestionValue(rowValue) }));
 }

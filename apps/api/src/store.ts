@@ -1,12 +1,14 @@
 import {
   DamageCandidateSchema,
+  ImageQualitySchema,
   PhotoAngleSchema,
   requiredPhotoAngles,
   type CreateInspectionSchema,
   type DamageSeverity,
   type DamageType,
   type InspectionStatus,
-  type PhotoAngle
+  type PhotoAngle,
+  type VisionOutput
 } from "@inspectiq/shared";
 import { z } from "zod";
 import type {
@@ -44,7 +46,10 @@ const mutableInspectionFields = [
   "inspectorName"
 ] as const;
 const PhotoAngleSuggestionSchema = z.object({ photoAngle: PhotoAngleSchema }).strict();
-const QualityWarningSuggestionSchema = z.object({ warning: z.string().trim().min(1).max(160) }).strict();
+const QualityWarningSuggestionSchema = z.object({
+  warning: z.string().trim().min(1).max(160),
+  imageQuality: ImageQualitySchema.optional()
+}).strict();
 const ExtractedTextSuggestionSchema = z.object({
   odometer: z.string().nullable().optional(),
   vin: z.string().nullable().optional()
@@ -65,6 +70,14 @@ function formatLatency(minutes: number | null): string {
   if (minutes < 1) return "<1 min";
   if (minutes < 60) return `${Math.round(minutes)} min`;
   return `${(minutes / 60).toFixed(1)} hr`;
+}
+
+function analysisRequiresRetake(analysis: PhotoAnalysisResult): boolean {
+  const output = analysis.validatedOutputJson;
+  if (!output || typeof output !== "object") return false;
+  const imageQuality = (output as { imageQuality?: unknown }).imageQuality;
+  if (!imageQuality || typeof imageQuality !== "object") return false;
+  return (imageQuality as { retakeRequired?: unknown }).retakeRequired === true;
 }
 
 function validateSuggestionValue(suggestion: VisionSuggestion): unknown {
@@ -259,29 +272,7 @@ export class MemoryStore {
     provider: string;
     promptVersion: string;
     raw: unknown;
-    validated: {
-      photoAngle: PhotoAngle;
-      confidence: number;
-      qualityWarnings: string[];
-      detectedDamageCandidates: Array<{
-        location: string;
-        damageType: DamageType;
-        severityEstimate: DamageSeverity;
-        confidence: number;
-        explanation: string;
-        repairEstimateUsd: {
-          min: number;
-          max: number;
-          rationale: string;
-        };
-        requiresHumanConfirmation: boolean;
-      }>;
-      extractedText: {
-        odometer?: string | null;
-        vin?: string | null;
-      };
-      humanReviewRequired: boolean;
-    };
+    validated: VisionOutput;
   }, actor: Actor): PhotoAnalysisResult {
     this.assertMutableInspection(photo.inspectionId, "analyze photos");
     const duplicate = [...this.analyses.values()].find((analysis) => analysis.photoId === photo.id && analysis.status === "completed");
@@ -320,7 +311,7 @@ export class MemoryStore {
         inspectionId: photo.inspectionId,
         photoId: photo.id,
         suggestionType: "quality_warning",
-        suggestedValueJson: { warning },
+        suggestedValueJson: { warning, imageQuality: input.validated.imageQuality },
         confidence: Math.min(input.validated.confidence, 0.75),
         explanation: `${warning} AI suggestion - requires human confirmation.`
       });
@@ -354,6 +345,7 @@ export class MemoryStore {
       promptVersion: input.promptVersion,
       schema: "VisionOutputSchema",
       confidence: input.validated.confidence,
+      imageQuality: input.validated.imageQuality,
       humanReviewRequired: input.validated.humanReviewRequired
     });
     return analysis;
@@ -751,9 +743,12 @@ export class MemoryStore {
     const grades = [...this.conditionGrades.values()];
     const reports = [...this.finalReports.values()];
 
-    const completedAnalyses = analyses.filter((analysis) => analysis.status === "completed").length;
+    const completedAnalysisRows = analyses.filter((analysis) => analysis.status === "completed");
+    const completedAnalyses = completedAnalysisRows.length;
     const failedAnalyses = analyses.filter((analysis) => analysis.status === "failed").length;
     const analysisRate = rateValue(completedAnalyses, analyses.length, 1);
+    const retakeRequiredAnalyses = completedAnalysisRows.filter(analysisRequiresRetake).length;
+    const retakeRate = rateValue(retakeRequiredAnalyses, completedAnalyses, 0);
 
     const totalRequiredAngles = inspections.length * requiredPhotoAngles.length;
     const missingRequiredAngles = inspections.reduce((total, inspection) => total + this.missingRequiredEvidence(inspection.id).length, 0);
@@ -787,6 +782,13 @@ export class MemoryStore {
         value: percentLabel(completedAnalyses, analyses.length, 100),
         status: analysisRate >= 0.98 ? "healthy" : analysisRate >= 0.9 ? "watch" : "blocked",
         evidence: `${completedAnalyses} completed, ${failedAnalyses} failed analyses.`
+      },
+      {
+        metric: "image_quality_retake_rate",
+        label: "Image retake rate",
+        value: percentLabel(retakeRequiredAnalyses, completedAnalyses, 0),
+        status: retakeRate <= 0.08 ? "healthy" : retakeRate <= 0.2 ? "watch" : "blocked",
+        evidence: `${retakeRequiredAnalyses} completed analyses require image retake before buyer-visible release.`
       },
       {
         metric: "missing_required_angle_rate",

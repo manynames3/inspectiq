@@ -7,7 +7,7 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 ## Why It Maps To Automotive Inspection Teams
 
 - Required-angle checklist covers front, rear, side, interior, engine bay, odometer, and VIN plate evidence.
-- Image analysis returns angle confidence, quality warnings, damage candidates, OCR/VIN/odometer extraction, severity, and repair estimate range.
+- Image analysis returns angle confidence, image-quality scores, retake policy, quality warnings, damage candidates, OCR/VIN/odometer extraction, severity, and repair estimate range.
 - Reviewers convert AI suggestions into facts only by accept/edit/reject decisions.
 - The workbench shows CR readiness, buyer-visible VDP readiness, reconditioning estimate, and arbitration risk.
 - Audit events preserve photo analysis, schema validation metadata, reviewer decisions, grading, report drafting, edits, and finalization.
@@ -25,6 +25,7 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 ## Intentional Local Tradeoffs
 
 - AI is deterministic locally so the walkthrough is reliable without paid model credentials.
+- Deterministic image analysis still uses the production-shaped contract: angle, image quality, damage, OCR, confidence, repair estimate, provider metadata, prompt version, raw output, validated output, and audit event.
 - Local server persists to a JSON snapshot and Cloudflare Pages can persist to KV; production state belongs in Postgres.
 - Browser uploads use small data URLs for preview; production should use S3 presigned uploads and object metadata.
 - The Java grading service is optional locally; the API fallback keeps the workflow available while preserving the service boundary.
@@ -43,7 +44,7 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 
 1. Open Dashboard: "This is a wholesale inspection queue. The key outcomes are CR readiness, buyer-visible release, and arbitration risk."
 2. Switch to Inspector, create an inspection, attach the required photo set, and run analysis: "Inspectors own capture and analysis execution."
-3. Open the detail workbench: "The model contract validates angle, quality, damage, OCR, confidence, and repair estimate before creating suggestions."
+3. Open the detail workbench: "The model contract validates angle, image quality, damage, OCR, confidence, and repair estimate before creating suggestions."
 4. Switch to Reviewer and accept/edit/reject suggestions: "AI is advisory; accepted suggestions become facts and trigger audit events."
 5. Confirm damage and check recon/arbitration status: "Damage decisions feed reconditioning estimate and seller disclosure."
 6. Calculate grade, draft report, edit, and finalize: "The CR uses confirmed facts and finalization is terminal."
@@ -52,3 +53,5 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 ## Hiring Manager Signal
 
 This project is strongest when explained as a workflow reliability exercise, not an AI showcase. It shows that the engineer can ship a coherent vertical slice, keep AI constrained by schemas and human review, reason about operational metrics, and map a local implementation to enterprise production architecture without overclaiming.
+
+See `docs/implementation-boundary.md` for the crisp "real vs deterministic local" explanation.

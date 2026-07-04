@@ -6,7 +6,7 @@
 4. Why deterministic grading? Scores need explainable, repeatable business rules.
 5. Why Java service? It shows a service boundary for independently owned business rules; it could be collapsed early in a smaller system.
 6. Why async reports? Model calls can be slow, fail, or need retries without blocking the UI.
-7. Image processing? Provider interface, strict schema validation, raw and validated output, angle confidence, damage confidence, OCR, repair estimate range, pending suggestions.
+7. Image processing? Provider interface, strict schema validation, raw and validated output, angle confidence, image-quality scores, retake policy, damage confidence, OCR, repair estimate range, pending suggestions.
 8. AWS scale? React -> API Gateway/Lambda or ECS -> Neon Free Postgres/Aurora -> S3 -> SQS/EventBridge -> image worker -> Bedrock/Rekognition/custom model -> validated suggestions -> audit trail.
 9. AI failure? Save failed jobs, preserve audit events, block finalization, retry safely.
 10. Prevent hallucinations? Constrain prompts to confirmed facts and validate schema.
@@ -20,7 +20,7 @@
 
 1. Start on Dashboard: "This is a wholesale inspection queue. The operational outcome is a trusted CR and buyer-visible release."
 2. Start as Inspector, open New Inspection, create a vehicle, then attach the required photo set: "Inspectors own intake, photo evidence, and image-analysis execution."
-3. Run analysis: "The provider returns angle, quality, damage, OCR, confidence, and repair estimate fields, and the API validates the schema before creating suggestions."
+3. Run analysis: "The provider returns angle, image quality, retake policy, damage, OCR, confidence, and repair estimate fields, and the API validates the schema before creating suggestions."
 4. Switch to Reviewer and open Suggestions: "AI is advisory. Photo angles, damage candidates, and OCR stay pending until a reviewer accepts, rejects, or edits them."
 5. Accept required photo-angle suggestions and damage candidates: "Accepted evidence updates completeness, accepted damage materializes as a damage item, and the workbench updates CR/VDP/recon/arbitration status."
 6. Open Damage and Report: "Manual and AI-sourced damage feed deterministic grading and reconditioning estimates. The report draft only uses confirmed facts."

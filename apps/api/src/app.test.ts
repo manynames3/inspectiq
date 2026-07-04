@@ -278,6 +278,38 @@ describe("InspectIQ API", () => {
     expect(eventTypes).toContain("report.finalized");
   });
 
+  it("persists image-quality scores and retake policy from analysis output", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+    const attached = await request(api)
+      .post(`/api/inspections/${inspectionId}/photos/sample`)
+      .set(inspectorHeaders)
+      .send({ sampleKey: "blurry-front" })
+      .expect(201);
+    const [photo] = attached.body.data;
+
+    const analyzed = await request(api)
+      .post(`/api/photos/${photo.id}/analyze`)
+      .set(inspectorHeaders)
+      .send({})
+      .expect(200);
+
+    expect(analyzed.body.data.analysis.validatedOutputJson.imageQuality.grade).toBe("retake");
+    expect(analyzed.body.data.analysis.validatedOutputJson.imageQuality.retakeRequired).toBe(true);
+
+    const qualitySuggestion = analyzed.body.data.suggestions.find((item: { suggestionType: string }) => item.suggestionType === "quality_warning");
+    expect(qualitySuggestion).toBeTruthy();
+    expect(qualitySuggestion.suggestedValueJson.imageQuality.blurScore).toBeLessThan(0.6);
+
+    const audit = await request(api).get(`/api/inspections/${inspectionId}/audit-events`).expect(200);
+    const analyzedEvent = audit.body.data.find((event: { eventType: string }) => event.eventType === "photo.analyzed");
+    expect(analyzedEvent.detailsJson.imageQuality.retakeRequired).toBe(true);
+
+    const health = await request(api).get("/api/platform-health").expect(200);
+    const retakeMetric = health.body.data.operationalMetrics.find((metric: { metric: string }) => metric.metric === "image_quality_retake_rate");
+    expect(retakeMetric.value).toBe("100%");
+  });
+
   it("does not let edited photo-angle suggestions count as evidence until accepted", async () => {
     const created = await createInspection();
     const inspectionId = created.body.data.id as string;

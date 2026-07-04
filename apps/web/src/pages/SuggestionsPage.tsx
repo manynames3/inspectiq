@@ -35,6 +35,10 @@ function titleCase(value: unknown): string {
     .replace(/\bAi\b/g, "AI");
 }
 
+function percentScore(value: unknown): string | null {
+  return typeof value === "number" ? `${Math.round(value * 100)}%` : null;
+}
+
 function cleanExplanation(value: string): string {
   return value
     .replaceAll("_", " ")
@@ -82,9 +86,15 @@ function evidenceSummary(suggestion: VisionSuggestion): EvidenceSummary {
   }
 
   if (suggestion.suggestionType === "quality_warning") {
+    const quality = asRecord(value.imageQuality);
+    const scoreSummary = [
+      percentScore(quality.blurScore) ? `Blur ${percentScore(quality.blurScore)}` : null,
+      percentScore(quality.exposureScore) ? `Exposure ${percentScore(quality.exposureScore)}` : null,
+      percentScore(quality.framingScore) ? `Framing ${percentScore(quality.framingScore)}` : null
+    ].filter(Boolean).join(" | ");
     return {
-      primary: `Photo quality: ${titleCase(value.warning)}`,
-      secondary: "Retake may be needed before final report."
+      primary: `Photo quality: ${titleCase(quality.grade ?? "review")}`,
+      secondary: [titleCase(value.warning), scoreSummary].filter(Boolean).join(" | ") || "Retake may be needed before final report."
     };
   }
 

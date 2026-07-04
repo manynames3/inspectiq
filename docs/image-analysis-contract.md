@@ -16,6 +16,13 @@ Required validated fields:
 
 - `photoAngle`
 - `confidence`
+- `imageQuality.grade`
+- `imageQuality.blurScore`
+- `imageQuality.exposureScore`
+- `imageQuality.framingScore`
+- `imageQuality.resolutionScore`
+- `imageQuality.occlusionRisk`
+- `imageQuality.retakeRequired`
 - `qualityWarnings`
 - `detectedDamageCandidates`
 - `detectedDamageCandidates[].repairEstimateUsd`
@@ -29,6 +36,18 @@ Required validated fields:
 {
   "photoAngle": "rear",
   "confidence": 0.96,
+  "imageQuality": {
+    "grade": "review",
+    "blurScore": 0.96,
+    "exposureScore": 0.94,
+    "framingScore": 0.89,
+    "resolutionScore": 0.97,
+    "occlusionRisk": 0.04,
+    "retakeRequired": false,
+    "notes": [
+      "Rear angle is usable, but confirmed damage requires reviewer close inspection."
+    ]
+  },
   "qualityWarnings": [],
   "detectedDamageCandidates": [
     {
@@ -54,6 +73,8 @@ Required validated fields:
 
 - Raw model output and validated output are stored separately.
 - Invalid schema output is rejected and recorded as a failed analysis.
+- Image quality is evaluated separately from damage confidence.
+- Retake-required photos create quality-warning suggestions and block buyer-visible release until resolved.
 - Every suggestion starts as pending.
 - Reviewers can accept, reject, or edit suggestions.
 - Accepted photo-angle suggestions update required evidence completeness.

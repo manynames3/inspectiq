@@ -11,6 +11,7 @@ Implemented:
 Metrics to publish in production:
 
 - `image_analysis_success_rate`
+- `image_quality_retake_rate`
 - `missing_required_angle_rate`
 - `human_review_rate`
 - `grade_generation_latency`

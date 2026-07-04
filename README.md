@@ -52,6 +52,19 @@ flowchart TD
 
 This is a working portfolio application, not a claimed production inspection platform. Local and Cloudflare Pages workflows use deterministic AI providers and lightweight persistence so the end-to-end flow is reliable without paid model credentials. The repo includes Postgres schema, Drizzle table definitions, Terraform skeleton, provider interfaces, and AWS design notes to show the production direction.
 
+For the concise interview explanation, see `docs/implementation-boundary.md`.
+
+## Real Vs Deterministic Local
+
+| Area | Implemented in this repo | Production replacement |
+| --- | --- | --- |
+| Inspection workflow | Working React/TypeScript UI, role-aware actions, REST API, state machine, audit trail | Same workflow behind enterprise auth, object-level authorization, and operational SLAs |
+| Image analysis | Deterministic provider returning angle, image-quality scores, damage candidates, OCR, confidence, repair estimate range, and strict schema validation | S3 object event -> SQS/EventBridge worker -> Bedrock/Rekognition/custom model -> same schema contract |
+| Persistence | In-memory tests, local JSON snapshot, Cloudflare KV snapshot for hosted walkthroughs, Postgres schema/Drizzle definitions | Postgres repository with migrations, transactions, retention, backups, and audit durability |
+| Image storage | S3-style metadata and small local/browser preview payloads | Presigned S3 uploads with checksum, MIME validation, EXIF policy, lifecycle, and KMS encryption |
+| Java grading | Optional Spring Boot service plus identical Node fallback for demo reliability | Keep separate only when grading rules need independent ownership, versioning, or reuse |
+| Report generation | Async-shaped job model with deterministic local provider | Queue/Step Functions workflow with model retries, DLQ, provider telemetry, and reviewer approval |
+
 ## Tech Stack
 
 - React, TypeScript, Vite, React Router, CSS.
@@ -169,9 +182,9 @@ Local:
 
 1. Attach required photo evidence or upload a vehicle photo.
 2. Run the vision provider.
-3. Validate output with `VisionOutputSchema`.
+3. Validate angle, image quality, damage, OCR, confidence, and repair estimate output with `VisionOutputSchema`.
 4. Save raw and validated output separately.
-5. Create pending suggestions.
+5. Create pending suggestions, including retake-required quality warnings.
 6. Human reviewer accepts, rejects, or edits.
 
 AWS target:
@@ -276,6 +289,7 @@ Handled or documented:
 - Provider failure records.
 - Invalid schema rejection.
 - Unknown photo angle routing.
+- Image quality retake policy.
 - Duplicate analysis handling.
 - Missing evidence before grading.
 - Report job failure and retry path.

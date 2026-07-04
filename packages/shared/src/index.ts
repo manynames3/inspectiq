@@ -256,9 +256,21 @@ export const DamageCandidateSchema = z.object({
   requiresHumanConfirmation: z.boolean()
 });
 
+export const ImageQualitySchema = z.object({
+  grade: z.enum(["pass", "review", "retake"]),
+  blurScore: z.number().min(0).max(1),
+  exposureScore: z.number().min(0).max(1),
+  framingScore: z.number().min(0).max(1),
+  resolutionScore: z.number().min(0).max(1),
+  occlusionRisk: z.number().min(0).max(1),
+  retakeRequired: z.boolean(),
+  notes: z.array(z.string().trim().min(1).max(160))
+}).strict();
+
 export const VisionOutputSchema = z.object({
   photoAngle: PhotoAngleSchema,
   confidence: z.number().min(0).max(1),
+  imageQuality: ImageQualitySchema,
   qualityWarnings: z.array(z.string().trim().min(1).max(160)),
   detectedDamageCandidates: z.array(DamageCandidateSchema),
   extractedText: z.object({
