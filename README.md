@@ -6,6 +6,8 @@ InspectIQ is a production-shaped vertical slice of an automotive inspection syst
 
 Live walkthrough: https://inspectiq.pages.dev
 
+The hosted walkthrough is Cognito-protected to show the real authenticated path. Temporary Inspector, Reviewer, or Admin credentials can be provided for interview review; local setup remains available for unrestricted code review.
+
 ## What This Demonstrates
 
 This repo is designed to answer a hiring manager's core question: can this engineer turn an ambiguous operational workflow into a reliable system with clear boundaries, credible tradeoffs, and a path to production?
@@ -15,7 +17,7 @@ It demonstrates:
 - domain understanding of wholesale/offsite inspection workflows, CR readiness, VDP readiness, buyer trust, seller disclosure, reconditioning estimates, and arbitration risk;
 - end-to-end product execution across React, TypeScript, Node, Java, Postgres schema design, REST APIs, RBAC, audit trails, and browser E2E tests;
 - responsible AI design where model output is validated, treated as advisory, reviewed by humans, and kept out of buyer-facing output until confirmed;
-- production architecture thinking around S3 image storage, async image-analysis workers, Neon Postgres persistence, metrics, runbooks, and AWS Lambda deployment.
+- production architecture thinking around private S3 image storage, protected short-lived image previews, async image-analysis workers, Neon Postgres persistence, metrics, runbooks, and AWS Lambda deployment.
 
 It does not use Cox Automotive branding, proprietary data, or unlicensed assets. Vehicle records are synthetic, and bundled sample photos use license-safe public image sources documented in `sample-data/IMAGE_CREDITS.md`.
 
@@ -98,7 +100,7 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 | Inspection workflow | Working React/TypeScript UI, role-aware actions, REST API, state machine, audit trail | Same workflow behind enterprise auth, object-level authorization, and operational SLAs |
 | Image analysis | Deterministic local provider plus deployed SQS -> Lambda -> Bedrock multimodal provider using the same strict schema contract and `npm run eval:vision` evaluation set | Larger labeled evaluation corpus, confidence calibration, and provider fallback policy |
 | Persistence | In-memory tests, local JSON snapshot, and deployed `PERSISTENCE_MODE=postgres` against Neon with row-level upsert/delete transactions | Direct DB-first repositories for the highest-concurrency production paths, retention, backups, and audit durability |
-| Image storage | Deployed presigned S3 upload intent, private S3 objects, object key metadata, MIME type, byte size, and checksum capture | EXIF stripping, image normalization, thumbnails, lifecycle, KMS key policy, and object-level auth |
+| Image storage | Deployed presigned S3 upload intent, private S3 objects, protected preview intent, object key metadata, MIME type, byte size, and checksum capture | EXIF stripping, image normalization, thumbnails, lifecycle, KMS key policy, and CDN/object access policy hardening |
 | Java grading | Optional Spring Boot service plus identical Node fallback for deterministic local reliability | Keep separate only when grading rules need independent ownership, versioning, or reuse |
 | Report generation | Async-shaped job model with deterministic local provider | Queue/Step Functions workflow with model retries, DLQ, provider telemetry, and reviewer approval |
 
@@ -308,6 +310,8 @@ npm run build
 
 The API tests cover the full create-to-finalize flow, upload intent metadata, image-analysis job records, readiness blockers, schema validation failures, evidence completeness gates, AI suggestion review, audit trail events, buyer-ready report export, and post-finalization immutability guards. The browser E2E script covers role-specific dashboard context, create -> attach photos -> analyze -> reviewer acceptance -> grade -> draft report -> finalize -> export buyer report -> audit verification through the rendered React app.
 
+The live hosted flow has also been verified against Cognito sign-in, presigned S3 upload, protected preview intent, rendered object-storage image, Bedrock-backed image-analysis completion, and desktop/tablet/mobile overflow checks.
+
 Java tests:
 
 ```bash
@@ -329,7 +333,7 @@ Production metrics include image analysis success rate, image retake rate, image
 
 ## Security
 
-Local review uses role-aware UI controls and API RBAC for Inspector, Reviewer, and Admin workflows. The deployed path uses Cognito hosted OIDC, API Gateway JWT enforcement, Lambda-side JWT/JWKS validation, object-level authorization, S3 presigned uploads, encrypted S3/Postgres-adjacent storage, Secrets Manager, and least-privilege IAM.
+Local review uses role-aware UI controls and API RBAC for Inspector, Reviewer, and Admin workflows. The deployed path uses Cognito hosted OIDC, API Gateway JWT enforcement, Lambda-side JWT/JWKS validation, object-level authorization, S3 presigned uploads, protected short-lived image preview URLs, encrypted S3 storage, Secrets Manager, and least-privilege IAM.
 
 ## AWS Deployment Architecture
 
