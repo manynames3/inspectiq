@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="600" viewBox="0 0 900 600">
+  <defs>
+    <linearGradient id="dash" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="0.55" stop-color="#263241"/>
+      <stop offset="1" stop-color="#070b12"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" x2="1">
+      <stop offset="0" stop-color="#e8f7ff"/>
+      <stop offset="1" stop-color="#a7c7d7"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="600" fill="url(#dash)"/>
+  <circle cx="450" cy="310" r="245" fill="#0f172a" stroke="#64748b" stroke-width="18"/>
+  <circle cx="450" cy="310" r="205" fill="#111827" stroke="#1f2937" stroke-width="12"/>
+  <path d="M250 396 A220 220 0 0 1 650 396" fill="none" stroke="#94a3b8" stroke-width="12" stroke-linecap="round"/>
+  <g fill="#dbeafe" font-family="Arial, Helvetica, sans-serif" font-weight="700" text-anchor="middle">
+    <text x="272" y="392" font-size="34">0</text>
+    <text x="336" y="286" font-size="34">20</text>
+    <text x="450" y="245" font-size="34">40</text>
+    <text x="564" y="286" font-size="34">60</text>
+    <text x="628" y="392" font-size="34">80</text>
+  </g>
+  <rect x="290" y="352" width="320" height="95" rx="14" fill="url(#glass)" stroke="#e0f2fe" stroke-width="5"/>
+  <text x="450" y="418" fill="#111827" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="800" text-anchor="middle">64231 mi</text>
+  <text x="450" y="488" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" text-anchor="middle">ODOMETER</text>
+</svg>

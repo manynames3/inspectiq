@@ -1,6 +1,7 @@
 import { RefreshCw, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useActor } from "../App.js";
 import type { AuditEvent } from "../types.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
 
@@ -19,13 +20,14 @@ function eventFamily(eventType: string): string {
 }
 
 export function AuditPage() {
+  const { actor } = useActor();
   const [records, setRecords] = useState<InspectionReviewRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setError(null);
     try {
-      setRecords(await loadInspectionReviewRecords());
+      setRecords(await loadInspectionReviewRecords(actor));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load audit events.");
     }
@@ -33,7 +35,7 @@ export function AuditPage() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [actor]);
 
   const rows = useMemo<AuditRow[]>(() => records
     .flatMap((record) => record.bundle.auditEvents.map((event) => ({ record, event })))

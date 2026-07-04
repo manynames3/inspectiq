@@ -46,13 +46,13 @@ Current persistence:
 
 - The deployed API runs with `PERSISTENCE_MODE=postgres`.
 - Neon schema is applied from `apps/api/src/db/schema.sql`.
-- Workflow state is loaded from Postgres and persisted through the existing store facade.
-- `pg_advisory_xact_lock` serializes whole-snapshot writes to avoid concurrent overwrite races in the current bridge implementation.
+- Workflow state is loaded from Postgres and persisted through transactional row-level upserts/deletes behind the existing store facade.
+- `pg_advisory_xact_lock` serializes concurrent Lambda store-bridge mutations while preserving normalized Postgres rows.
 
 Production repository hardening:
 
 1. Keep `MemoryStore` behavior as a test fixture and local workflow facade.
-2. Replace whole-store snapshot writes with per-operation Postgres repository methods.
+2. Move the busiest mutation paths from the store bridge to DB-first repository methods.
 3. Add a formal migration runner and release rollback workflow.
 4. Wrap reviewer accept/edit/reject, damage confirmation, grading, and finalization in narrow transactions.
 5. Store image bytes only in S3; keep Postgres to object keys, checksums, MIME metadata, provider outputs, and audit facts.
@@ -70,7 +70,7 @@ Image worker requirements:
 
 Known open gaps:
 
-- Frontend OIDC is not wired yet, so API Gateway JWT enforcement is feature-flagged off for the public walkthrough.
+- Frontend OIDC is wired through Cognito hosted login. API Gateway JWT enforcement and Lambda-side JWT/JWKS validation are enabled for the deployed path.
 - The Java grading service remains optional; the deployed Lambda uses the equivalent Node fallback unless `GRADING_SERVICE_URL` points to a reachable service.
 - Report generation is async-shaped in the data model but not yet moved to SQS or Step Functions.
-- Model evaluation datasets and confidence calibration are still required before production claims about detection quality.
+- The included model evaluation set now gates Bedrock promotion, but production confidence claims still require a larger labeled auction/offsite image corpus and calibration report.

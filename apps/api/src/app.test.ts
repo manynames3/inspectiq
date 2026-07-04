@@ -1,6 +1,8 @@
+import { createSign, generateKeyPairSync } from "node:crypto";
 import request from "supertest";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
+import { clearAuthCacheForTests } from "./auth.js";
 import { MemoryStore } from "./store.js";
 
 const inspectorHeaders = {
@@ -21,13 +23,65 @@ const adminHeaders = {
   "x-actor-role": "admin"
 };
 
+const authEnvKeys = ["AUTH_MODE", "OIDC_ISSUER", "OIDC_AUDIENCE", "OIDC_JWKS_JSON"] as const;
+const originalAuthEnv = Object.fromEntries(authEnvKeys.map((key) => [key, process.env[key]]));
+
+function restoreAuthEnv(): void {
+  for (const key of authEnvKeys) {
+    const original = originalAuthEnv[key];
+    if (original === undefined) delete process.env[key];
+    else process.env[key] = original;
+  }
+  clearAuthCacheForTests();
+}
+
+function createTestJwtFactory() {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const kid = "inspectiq-test-key";
+  const jwk = {
+    ...publicKey.export({ format: "jwk" }),
+    kid,
+    alg: "RS256",
+    use: "sig"
+  };
+
+  function encode(value: unknown): string {
+    return Buffer.from(JSON.stringify(value)).toString("base64url");
+  }
+
+  function token(payload: Record<string, unknown>): string {
+    const header = encode({ alg: "RS256", typ: "JWT", kid });
+    const body = encode({
+      iss: "https://issuer.test/inspectiq",
+      aud: "inspectiq-web",
+      exp: Math.floor(Date.now() / 1000) + 300,
+      ...payload
+    });
+    const signingInput = `${header}.${body}`;
+    const signer = createSign("RSA-SHA256");
+    signer.update(signingInput);
+    signer.end();
+    return `${signingInput}.${signer.sign(privateKey).toString("base64url")}`;
+  }
+
+  return {
+    jwksJson: JSON.stringify({ keys: [jwk] }),
+    token
+  };
+}
+
 describe("InspectIQ API", () => {
   let store: MemoryStore;
   let api: ReturnType<typeof createApp>;
 
   beforeEach(() => {
+    restoreAuthEnv();
     store = new MemoryStore();
     api = createApp(store);
+  });
+
+  afterEach(() => {
+    restoreAuthEnv();
   });
 
   async function createInspection() {
@@ -75,6 +129,7 @@ describe("InspectIQ API", () => {
 
     const suggestions = await request(api)
       .get(`/api/inspections/${inspectionId}/vision-suggestions`)
+      .set(reviewerHeaders)
       .expect(200);
 
     return {
@@ -179,6 +234,7 @@ describe("InspectIQ API", () => {
 
     const suggestions = await request(api)
       .get(`/api/inspections/${inspectionId}/vision-suggestions`)
+      .set(reviewerHeaders)
       .expect(200);
     const angleSuggestion = suggestions.body.data.find((item: { suggestionType: string }) => item.suggestionType === "photo_angle");
     expect(angleSuggestion).toBeTruthy();
@@ -219,6 +275,71 @@ describe("InspectIQ API", () => {
       .expect(200);
   });
 
+  it("enforces JWT identity and object-level inspection authorization", async () => {
+    const jwt = createTestJwtFactory();
+    process.env.AUTH_MODE = "jwt";
+    process.env.OIDC_ISSUER = "https://issuer.test/inspectiq";
+    process.env.OIDC_AUDIENCE = "inspectiq-web";
+    process.env.OIDC_JWKS_JSON = jwt.jwksJson;
+    clearAuthCacheForTests();
+
+    const jwtStore = new MemoryStore();
+    const jwtApi = createApp(jwtStore);
+    const inspectorToken = jwt.token({
+      sub: "jwt-inspector-a",
+      name: "JWT Inspector A",
+      "custom:role": "inspector"
+    });
+    const otherInspectorToken = jwt.token({
+      sub: "jwt-inspector-b",
+      name: "JWT Inspector B",
+      "custom:role": "inspector"
+    });
+    const reviewerToken = jwt.token({
+      sub: "jwt-reviewer",
+      name: "JWT Reviewer",
+      "custom:role": "reviewer"
+    });
+
+    await request(jwtApi)
+      .get("/api/inspections")
+      .expect(401);
+
+    const created = await request(jwtApi)
+      .post("/api/inspections")
+      .set("authorization", `Bearer ${inspectorToken}`)
+      .send({
+        vin: "WBA5R1C00LFH12345",
+        year: 2020,
+        make: "BMW",
+        model: "330i",
+        trim: "xDrive",
+        mileage: 44750,
+        exteriorColor: "Black",
+        sellerSource: "Lease grounding inspection",
+        inspectorName: "JWT Inspector A"
+      })
+      .expect(201);
+    const inspectionId = created.body.data.id as string;
+
+    await request(jwtApi)
+      .get(`/api/inspections/${inspectionId}`)
+      .set("authorization", `Bearer ${otherInspectorToken}`)
+      .expect(403);
+
+    const filtered = await request(jwtApi)
+      .get("/api/inspections")
+      .set("authorization", `Bearer ${otherInspectorToken}`)
+      .expect(200);
+    expect(filtered.body.data.some((inspection: { id: string }) => inspection.id === inspectionId)).toBe(false);
+
+    const reviewerView = await request(jwtApi)
+      .get(`/api/inspections/${inspectionId}`)
+      .set("authorization", `Bearer ${reviewerToken}`)
+      .expect(200);
+    expect(reviewerView.body.data.inspection.id).toBe(inspectionId);
+  });
+
   it("analyzes outstanding photos for an inspection in one batch action", async () => {
     const created = await createInspection();
     const inspectionId = created.body.data.id as string;
@@ -238,7 +359,7 @@ describe("InspectIQ API", () => {
     expect(analyzed.body.data.jobs.every((job: { status: string }) => job.status === "completed")).toBe(true);
     expect(analyzed.body.data.suggestions.length).toBeGreaterThanOrEqual(attached.body.data.length);
 
-    const bundle = await request(api).get(`/api/inspections/${inspectionId}`).expect(200);
+    const bundle = await request(api).get(`/api/inspections/${inspectionId}`).set(inspectorHeaders).expect(200);
     expect(bundle.body.data.photos.every((photo: { analysisStatus: string }) => photo.analysisStatus === "completed")).toBe(true);
   });
 
@@ -283,7 +404,7 @@ describe("InspectIQ API", () => {
       .expect(200);
     expect(finalized.body.data.finalizedAt).toBeTruthy();
 
-    const audit = await request(api).get(`/api/inspections/${inspectionId}/audit-events`).expect(200);
+    const audit = await request(api).get(`/api/inspections/${inspectionId}/audit-events`).set(reviewerHeaders).expect(200);
     const eventTypes = audit.body.data.map((event: { eventType: string }) => event.eventType);
     expect(eventTypes).toContain("inspection.created");
     expect(eventTypes).toContain("image_analysis.queued");
@@ -319,7 +440,7 @@ describe("InspectIQ API", () => {
     expect(qualitySuggestion).toBeTruthy();
     expect(qualitySuggestion.suggestedValueJson.imageQuality.blurScore).toBeLessThan(0.6);
 
-    const audit = await request(api).get(`/api/inspections/${inspectionId}/audit-events`).expect(200);
+    const audit = await request(api).get(`/api/inspections/${inspectionId}/audit-events`).set(inspectorHeaders).expect(200);
     const analyzedEvent = audit.body.data.find((event: { eventType: string }) => event.eventType === "photo.analyzed");
     expect(analyzedEvent.detailsJson.imageQuality.retakeRequired).toBe(true);
 
@@ -358,6 +479,7 @@ describe("InspectIQ API", () => {
 
     const readiness = await request(api)
       .get(`/api/inspections/${inspectionId}/readiness`)
+      .set(inspectorHeaders)
       .expect(200);
 
     expect(readiness.body.data.buyerVisibleReady).toBe(false);
@@ -372,6 +494,7 @@ describe("InspectIQ API", () => {
 
     const suggestions = await request(api)
       .get(`/api/inspections/${inspectionId}/vision-suggestions`)
+      .set(reviewerHeaders)
       .expect(200);
     const angleSuggestion = suggestions.body.data.find((item: { suggestionType: string }) => item.suggestionType === "photo_angle");
     expect(angleSuggestion).toBeTruthy();
@@ -413,6 +536,7 @@ describe("InspectIQ API", () => {
 
     const suggestions = await request(api)
       .get(`/api/inspections/${inspectionId}/vision-suggestions`)
+      .set(reviewerHeaders)
       .expect(200);
     const angleSuggestion = suggestions.body.data.find((item: { suggestionType: string }) => item.suggestionType === "photo_angle");
     expect(angleSuggestion).toBeTruthy();
@@ -489,6 +613,7 @@ describe("InspectIQ API", () => {
 
     const exported = await request(api)
       .get(`/api/reports/${report.finalReport.id}/export`)
+      .set(reviewerHeaders)
       .expect(200);
 
     expect(exported.text).toContain("Condition Report:");

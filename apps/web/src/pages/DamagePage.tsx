@@ -2,6 +2,7 @@ import { AlertTriangle, RefreshCw } from "lucide-react";
 import { estimateDamageRepairCost, estimateTotalRepairRange } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useActor } from "../App.js";
 import type { DamageItem } from "../types.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
 
@@ -20,13 +21,14 @@ function titleCase(value: string): string {
 }
 
 export function DamagePage() {
+  const { actor } = useActor();
   const [records, setRecords] = useState<InspectionReviewRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setError(null);
     try {
-      setRecords(await loadInspectionReviewRecords());
+      setRecords(await loadInspectionReviewRecords(actor));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load damage items.");
     }
@@ -34,7 +36,7 @@ export function DamagePage() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [actor]);
 
   const rows = useMemo<DamageRow[]>(() => records.flatMap((record) =>
     record.bundle.damageItems.map((item) => ({ record, item }))

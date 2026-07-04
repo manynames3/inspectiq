@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
+    "eval:vision": "tsx scripts/vision-eval.ts",
     "lint": "tsc -p tsconfig.json --noEmit",
     "seed": "tsx scripts/seed.ts",
     "start": "node dist/src/server.js",

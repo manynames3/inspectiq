@@ -144,6 +144,16 @@ export class MemoryStore {
     return user;
   }
 
+  ensureUser(actor: Actor): User {
+    const existing = this.users.get(actor.id);
+    if (existing) {
+      existing.name = actor.name;
+      existing.role = actor.role;
+      return existing;
+    }
+    return this.addUser({ id: actor.id, name: actor.name, role: actor.role });
+  }
+
   defaultActor(): Actor {
     const user = [...this.users.values()][0] ?? this.addUser({ name: "John Smith", role: "inspector" });
     return { id: user.id, name: user.name, role: user.role };
@@ -621,9 +631,14 @@ export class MemoryStore {
     return item;
   }
 
-  patchDamage(idValue: string, patch: Partial<DamageItem>, actor: Actor): DamageItem {
+  getDamage(idValue: string): DamageItem {
     const item = this.damageItems.get(idValue);
     if (!item) throw notFound("Damage item");
+    return item;
+  }
+
+  patchDamage(idValue: string, patch: Partial<DamageItem>, actor: Actor): DamageItem {
+    const item = this.getDamage(idValue);
     this.assertMutableInspection(item.inspectionId, "edit damage");
     const before = { ...item };
     Object.assign(item, {
@@ -639,8 +654,7 @@ export class MemoryStore {
   }
 
   deleteDamage(idValue: string, actor: Actor): void {
-    const item = this.damageItems.get(idValue);
-    if (!item) throw notFound("Damage item");
+    const item = this.getDamage(idValue);
     this.assertMutableInspection(item.inspectionId, "delete damage");
     this.damageItems.delete(idValue);
     this.addAudit(item.inspectionId, actor, "damage.deleted", { damageItemId: idValue, item });

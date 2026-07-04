@@ -23,7 +23,7 @@ variable "bedrock_model_id" {
 
 variable "enable_cognito_authorizer" {
   type    = bool
-  default = false
+  default = true
 }
 
 variable "cognito_callback_urls" {

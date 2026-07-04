@@ -123,7 +123,7 @@ export function SuggestionsPage() {
   async function load() {
     setError(null);
     try {
-      setRecords(await loadInspectionReviewRecords());
+      setRecords(await loadInspectionReviewRecords(actor));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load suggestions.");
     }
@@ -144,7 +144,7 @@ export function SuggestionsPage() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [actor]);
 
   const rows = useMemo<SuggestionRow[]>(() => records.flatMap((record) =>
     record.bundle.suggestions.map((suggestion) => ({ record, suggestion }))

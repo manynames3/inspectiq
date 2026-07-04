@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { createApp } from "./app.js";
-import { loadPostgresSnapshot, savePostgresSnapshot } from "./postgresPersistence.js";
+import { loadPostgresRows, savePostgresRows } from "./postgresPersistence.js";
 import { createPostgresPool } from "./postgresPool.js";
 import { resolveDatabaseUrl } from "./runtimeConfig.js";
 import { store } from "./store.js";
@@ -27,8 +27,8 @@ export async function createRuntime(): Promise<Runtime> {
 
     const pool = persistPostgres && databaseUrl ? createPostgresPool(databaseUrl, "inspectiq-api") : null;
 
-    const loadedSnapshot = persistPostgres && pool
-      ? await loadPostgresSnapshot(store, pool)
+    const loadedStore = persistPostgres && pool
+      ? await loadPostgresRows(store, pool)
       : persistLocally
         ? await loadStoreSnapshot(store)
         : false;
@@ -36,20 +36,20 @@ export async function createRuntime(): Promise<Runtime> {
     const app = createApp(store, {
       beforeRequest: persistPostgres && pool
         ? async () => {
-          await loadPostgresSnapshot(store, pool);
+          await loadPostgresRows(store, pool);
         }
         : undefined,
       afterMutation: persistPostgres && pool
-        ? () => savePostgresSnapshot(store, pool)
+        ? () => savePostgresRows(store, pool)
         : persistLocally
           ? () => saveStoreSnapshot(store)
           : undefined
     });
 
-    if (persistPostgres && pool && !loadedSnapshot) {
-      await savePostgresSnapshot(store, pool);
+    if (persistPostgres && pool && !loadedStore) {
+      await savePostgresRows(store, pool);
     }
-    if (persistLocally && !loadedSnapshot) {
+    if (persistLocally && !loadedStore) {
       await saveStoreSnapshot(store);
     }
 

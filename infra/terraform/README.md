@@ -13,8 +13,7 @@ Terraform deploys the live AWS backend for InspectIQ in `us-east-1`.
 - Cognito user pool, app client, and hosted domain.
 - CloudWatch log groups, alarms, and dashboard.
 - Bedrock IAM permissions for the configured multimodal inference profile.
-
-The public portfolio walkthrough currently leaves API Gateway JWT enforcement disabled via `enable_cognito_authorizer = false` so the Cloudflare Pages frontend can be opened without a sign-in step. Turn it on after wiring frontend OIDC.
+- Cognito groups for `inspector`, `reviewer`, and `admin`; API Gateway JWT enforcement is enabled by default.
 
 ## Commands
 
@@ -44,11 +43,11 @@ aws secretsmanager put-secret-value \
 - `cognito_user_pool_id`
 - `cognito_user_pool_client_id`
 - `cognito_domain`
+- `cognito_issuer`
 
 ## Known Hardening Gaps
 
-- Replace the whole-snapshot Postgres adapter with per-operation repository writes before concurrent production use.
-- Enable Cognito/OIDC in the frontend and set `enable_cognito_authorizer = true`.
+- Move high-concurrency mutation paths from the row-level store bridge to DB-first repository methods.
 - Add alarm notification targets.
 - Add remote Terraform state, environment promotion, and rollback workflow.
 - Add image normalization, EXIF stripping, thumbnail generation, and object lifecycle policy.

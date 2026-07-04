@@ -1,7 +1,8 @@
 import { Activity, Check, CircleHelp, ClipboardCheck, Clock3, FileText, LayoutDashboard, Menu, Plus, Search, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { canRole, type RoleAction } from "@inspectiq/shared";
+import { beginLogin, completeLoginFromCallback, oidcEnabled, signOut, storedAuthSession, type AuthSession } from "./auth.js";
 import type { Actor } from "./types.js";
 
 type ActorContextValue = {
@@ -38,14 +39,48 @@ const topbarMetrics = [
 
 export function App() {
   const [role, setRole] = useState<Actor["role"]>("inspector");
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => storedAuthSession());
+  const [authReady, setAuthReady] = useState(!oidcEnabled());
+  const [authError, setAuthError] = useState<string | null>(null);
   const location = useLocation();
-  const actor = useMemo<Actor>(() => ({
+  const isOidcEnabled = oidcEnabled();
+  const simulatedActor = useMemo<Actor>(() => ({
     id: `operator-${role}`,
     name: role === "reviewer" ? "Review Lead" : role === "admin" ? "Admin Operator" : "John Smith",
     role
   }), [role]);
-  const can = useCallback((action: RoleAction) => canRole(role, action), [role]);
+  const actor = authSession?.actor ?? simulatedActor;
+  const can = useCallback((action: RoleAction) => canRole(actor.role, action), [actor.role]);
   const userInitials = actor.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+
+  useEffect(() => {
+    if (!isOidcEnabled) return;
+    let cancelled = false;
+    completeLoginFromCallback()
+      .then((session) => {
+        if (cancelled) return;
+        setAuthSession(session);
+        setAuthReady(true);
+        setAuthError(null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setAuthError(error instanceof Error ? error.message : "Sign-in failed.");
+        setAuthReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOidcEnabled]);
+
+  const changeRole = useCallback((nextRole: Actor["role"]) => {
+    if (!isOidcEnabled) setRole(nextRole);
+  }, [isOidcEnabled]);
+
+  const logOut = useCallback(() => {
+    setAuthSession(null);
+    signOut();
+  }, []);
 
   const isActive = (label: string, to: string): boolean => {
     if (label === "Dashboard") return location.pathname === "/";
@@ -60,7 +95,7 @@ export function App() {
   };
 
   return (
-    <ActorContext.Provider value={{ actor, setRole, can }}>
+    <ActorContext.Provider value={{ actor, setRole: changeRole, can }}>
       <div className="app-shell">
         <aside className="sidebar">
           <Link to="/" className="brand">
@@ -86,7 +121,7 @@ export function App() {
               </button>
               <label className="role-select">
                 <span>Role</span>
-                <select value={role} onChange={(event) => setRole(event.target.value as Actor["role"])}>
+                <select value={actor.role} disabled={isOidcEnabled} onChange={(event) => changeRole(event.target.value as Actor["role"])}>
                   <option value="inspector">Inspector</option>
                   <option value="reviewer">Reviewer</option>
                   <option value="admin">Admin</option>
@@ -108,9 +143,28 @@ export function App() {
               <CircleHelp size={17} />
               <span className="user-avatar">{userInitials}</span>
               <strong>{actor.name}</strong>
+              {isOidcEnabled && authSession ? (
+                <button className="text-button" onClick={logOut}>Sign out</button>
+              ) : null}
             </div>
           </header>
-          <Outlet />
+          {isOidcEnabled && !authReady ? (
+            <section className="auth-gate">
+              <h1>Signing in</h1>
+              <p>Completing secure workspace access.</p>
+            </section>
+          ) : isOidcEnabled && !authSession ? (
+            <section className="auth-gate">
+              <h1>InspectIQ Workspace</h1>
+              <p>Sign in to review vehicle evidence, AI suggestions, condition reports, and audit history.</p>
+              {authError ? <div className="form-error">{authError}</div> : null}
+              <div className="auth-actions">
+                <button className="primary-button" onClick={() => void beginLogin()}>Sign in with Cognito</button>
+              </div>
+            </section>
+          ) : (
+            <Outlet />
+          )}
         </main>
       </div>
     </ActorContext.Provider>

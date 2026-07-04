@@ -2,7 +2,7 @@ import { AlertTriangle, ArrowDown, Bot, Check, ChevronLeft, ChevronRight, Downlo
 import { estimateDamageRepairCost, requiredPhotoAngles } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, apiBase, assetUrl } from "../api.js";
+import { api, apiBase, assetUrl, requestHeaders } from "../api.js";
 import { useActor } from "../App.js";
 import { StatusPill } from "../components/StatusPill.js";
 import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
@@ -338,8 +338,10 @@ function formatJobStatus(value: string | null | undefined) {
   return value.replaceAll("_", " ");
 }
 
-async function downloadBuyerReport(reportId: string): Promise<void> {
-  const response = await fetch(`${apiBase}/api/reports/${reportId}/export`);
+async function downloadBuyerReport(reportId: string, actor: ReturnType<typeof useActor>["actor"]): Promise<void> {
+  const response = await fetch(`${apiBase}/api/reports/${reportId}/export`, {
+    headers: requestHeaders(actor)
+  });
   if (!response.ok) throw new Error("Could not export the buyer-ready report.");
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
@@ -405,8 +407,8 @@ export function InspectionDetailPage() {
     if (!id) return;
     setError(null);
     const [nextBundle, nextInspections, health] = await Promise.all([
-      api<InspectionBundle>(`/api/inspections/${id}`),
-      api<Inspection[]>("/api/inspections"),
+      api<InspectionBundle>(`/api/inspections/${id}`, {}, actor),
+      api<Inspection[]>("/api/inspections", {}, actor),
       api<{ sampleImages: SampleImage[] }>("/api/platform-health")
     ]);
     setBundle(nextBundle);
@@ -430,7 +432,7 @@ export function InspectionDetailPage() {
 
   useEffect(() => {
     void load().catch((err) => setError(err instanceof Error ? err.message : "Failed to load inspection."));
-  }, [id]);
+  }, [id, actor]);
 
   const confirmedAngles = useMemo(() => {
     const values = new Set<string>();
@@ -865,7 +867,7 @@ export function InspectionDetailPage() {
                     <button className="secondary-button" disabled={!bundle.finalReport || !canEditReport} title={canEditReport ? undefined : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("save-report", () => api(`/api/reports/${bundle.finalReport!.id}`, { method: "PATCH", body: JSON.stringify({ reportBody }) }, actor))}>
                       <FileText size={16} /> Save report edits
                     </button>
-                    <button className="secondary-button" disabled={!bundle.finalReport} onClick={() => bundle.finalReport && void runAction("export-report", () => downloadBuyerReport(bundle.finalReport!.id))}>
+                    <button className="secondary-button" disabled={!bundle.finalReport} onClick={() => bundle.finalReport && void runAction("export-report", () => downloadBuyerReport(bundle.finalReport!.id, actor))}>
                       <Download size={16} /> Export buyer report
                     </button>
                     <button className="primary-button" disabled={!bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || !canFinalizeReport} title={canFinalizeReport ? undefined : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("finalize", () => api(`/api/reports/${bundle.finalReport!.id}/finalize`, { method: "POST", body: JSON.stringify({}) }, actor))}>

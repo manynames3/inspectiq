@@ -1,18 +1,20 @@
 import { ArrowRight, ClipboardList, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useActor } from "../App.js";
 import { StatusPill } from "../components/StatusPill.js";
 import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
 
 export function InspectionsPage() {
+  const { actor } = useActor();
   const [records, setRecords] = useState<InspectionReviewRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setError(null);
     try {
-      setRecords(await loadInspectionReviewRecords());
+      setRecords(await loadInspectionReviewRecords(actor));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load inspections.");
     }
@@ -20,7 +22,7 @@ export function InspectionsPage() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [actor]);
 
   const reviewCount = useMemo(() => records.filter(({ inspection }) =>
     inspection.status === "HUMAN_REVIEW_REQUIRED" || inspection.status === "AI_DRAFTED"

@@ -12,7 +12,7 @@
 10. Prevent hallucinations? Constrain prompts to confirmed facts and validate schema.
 11. Audit trail value? It explains every AI suggestion, human decision, grade, report edit, and finalization.
 12. Role model? Inspector handles intake and image analysis, Reviewer confirms AI findings and finalizes reports, Admin owns corrections and exception handling.
-13. More time? Per-operation Postgres repository writes, frontend OIDC, model evaluation data, richer failed-image workflows, thumbnail generation, and environment promotion/rollback.
+13. More time? Larger labeled model-evaluation corpus, DB-first repositories for high-concurrency mutation paths, thumbnail generation, X-Ray tracing, alarm notifications, and environment promotion/rollback.
 14. AI coding tools? Use them to draft, then validate with tests, schemas, and manual review.
 15. MVP tradeoff? I kept AI deterministic locally so tests and local walkthroughs never depend on model credentials, then deployed the same contract through SQS, Lambda, and Bedrock for the cloud path.
 

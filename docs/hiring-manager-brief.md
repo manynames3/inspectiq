@@ -29,6 +29,9 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 - S3 presigned upload intent, private object metadata, and photo image redirect flow.
 - SQS-backed image-analysis jobs processed by a Lambda worker.
 - Deterministic local providers plus deployed Bedrock multimodal provider behind the same schema contract.
+- Vision evaluation command/dataset for angle, OCR, false-positive, and retake metrics.
+- JWT verification path and API object-level authorization tests.
+- Platform Health SLO panels, CloudWatch alarms, dashboard widgets, and failed-job recovery runbook.
 - Cloudflare Pages frontend and AWS API Gateway/Lambda backend.
 - Deployed shape: React -> Cloudflare Pages -> API Gateway/Lambda -> Neon Postgres -> S3 images -> SQS -> Lambda image worker -> Bedrock multimodal model -> validated suggestions -> audit trail.
 
@@ -36,19 +39,18 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 
 - AI is deterministic locally so tests and local walkthroughs are reliable without model credentials.
 - Deterministic image analysis and Bedrock image analysis use the same production-shaped contract: angle, image quality, damage, OCR, confidence, repair estimate, provider metadata, prompt version, raw output, validated output, and audit event.
-- Local server persists to a JSON snapshot by default; the deployed backend persists to Neon Postgres. A full production version should move from snapshot persistence to per-operation repository transactions.
+- Local server persists to a JSON snapshot by default; the deployed backend persists normalized rows to Neon Postgres through transactional row-level upserts/deletes. A high-concurrency production version should move the busiest mutation paths to DB-first repositories.
 - Local browser uploads can use small data URLs for preview; deployed uploads use S3 presigned object URLs.
 - The Java grading service is optional locally; the API fallback keeps the workflow available while preserving the service boundary.
-- Auth is role-header based in the public walkthrough; Cognito resources are provisioned and should be enforced after frontend OIDC is wired.
+- Local auth is role-header based for deterministic testing; the deployed walkthrough uses Cognito hosted OIDC, API Gateway JWT enforcement, Lambda-side JWT/JWKS validation, Cognito groups, and object-level inspection authorization.
 
 ## What I Would Build Next In Production
 
-- Replace whole-store Postgres snapshot writes with per-operation repository methods and narrower transaction boundaries.
+- Move reviewer accept/edit/reject, grading, and finalization from the store bridge to DB-first repository transactions as concurrency grows.
 - Add EXIF stripping, image normalization, thumbnail generation, and object lifecycle policies.
 - Expand queue-backed worker recovery with richer retry classification and DLQ replay tooling.
-- Add model evaluation sets, confidence thresholds, calibration reporting, and rejected-output audit records.
-- Operational dashboards for image analysis success, missing angle rate, human review rate, grade latency, finalization rate, and suggestion acceptance.
-- Frontend OIDC, object-level authorization, X-Ray tracing, alarm notification targets, and runbooks.
+- Expand the model evaluation corpus, confidence thresholds, calibration reporting, and rejected-output audit records.
+- Add X-Ray tracing, alarm notification targets, and environment promotion/rollback.
 
 ## Five-Minute Walkthrough
 

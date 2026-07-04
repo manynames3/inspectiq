@@ -8,17 +8,100 @@ export type PlatformHealthProvider = {
 
 export function platformHealthPayload(store: MemoryStore, provider: PlatformHealthProvider) {
   const env = typeof process !== "undefined" ? process.env : {};
+  const operationalMetrics = store.operationalMetrics();
+  const metricValue = (metric: string) => operationalMetrics.find((item) => item.metric === metric)?.value ?? "No data";
   return {
     scorecard: [
       { pillar: "Operational excellence", status: "implemented", evidence: "Request IDs, structured logs, runbook, retryable report jobs, audit events." },
-      { pillar: "Security", status: "implemented", evidence: "Role-aware UI controls and API RBAC for inspector, reviewer, and admin workflows; production plan covers Cognito/OIDC, presigned S3, encryption, Secrets Manager." },
+      { pillar: "Security", status: "implemented", evidence: "Role-aware UI/API RBAC, JWT/JWKS verification path, object-level inspection authorization tests, presigned S3, encryption, and Secrets Manager." },
       { pillar: "Reliability", status: "implemented", evidence: "Provider failures captured, invalid schemas rejected, state machine guards finalization." },
       { pillar: "Performance efficiency", status: "designed", evidence: "CRUD stays in request path; image/report analysis is shaped for async queue workers." },
       { pillar: "Cost optimization", status: "documented", evidence: "Cost model separates image storage, model calls, relational storage, and logs." },
       { pillar: "AI governance", status: "implemented", evidence: "AI output is schema-validated, prompt-versioned, and advisory until human acceptance." }
     ],
     sampleImages,
-    operationalMetrics: store.operationalMetrics(),
+    operationalMetrics,
+    serviceLevelObjectives: [
+      {
+        name: "Image analysis success",
+        target: ">= 99% completed without provider/schema failure",
+        current: metricValue("image_analysis_success_rate"),
+        risk: "Failed analysis jobs delay CR readiness and buyer-visible photos.",
+        evidence: "Computed from persisted photo_analysis_results rows."
+      },
+      {
+        name: "Retake precision",
+        target: ">= 80% on the evaluation set before model/prompt promotion",
+        current: "Measured by npm run eval:vision",
+        risk: "Poor retake precision wastes inspector time and slows offsite/mobile capture.",
+        evidence: "evals/vision-eval-set.json covers blurry, clean, damage, OCR, and required-angle cases."
+      },
+      {
+        name: "Human review queue freshness",
+        target: "Pending AI suggestions reviewed during the same inspection workflow",
+        current: metricValue("human_review_rate"),
+        risk: "Unreviewed suggestions block trusted disclosure and final report release.",
+        evidence: "Computed from pending/edited suggestion rows."
+      },
+      {
+        name: "Final report release",
+        target: ">= 95% of generated reports finalized after reviewer approval",
+        current: metricValue("report_finalization_rate"),
+        risk: "Reports that stop before finalization never become buyer-visible CR artifacts.",
+        evidence: "Computed from final_reports rows."
+      }
+    ],
+    alerts: [
+      {
+        name: "inspectiq-api-errors",
+        signal: "Lambda Errors >= 1 in 1 minute",
+        response: "Check request logs by requestId, identify failed endpoint, replay only idempotent operations."
+      },
+      {
+        name: "inspectiq-worker-errors",
+        signal: "Image worker Lambda Errors >= 1 in 1 minute",
+        response: "Inspect SQS message payload, provider error, schema rejection, and photo object metadata."
+      },
+      {
+        name: "inspectiq-image-dlq-visible",
+        signal: "DLQ visible messages >= 1",
+        response: "Run failed-job recovery: inspect dead-letter payload, fix root cause, retry job or require retake."
+      },
+      {
+        name: "inspectiq-image-queue-age",
+        signal: "Oldest image-analysis message age >= 5 minutes",
+        response: "Scale worker concurrency or pause new captures until backlog returns below threshold."
+      },
+      {
+        name: "inspectiq-api-p95-latency",
+        signal: "API Gateway p95 latency >= 2 seconds",
+        response: "Check Neon connection latency, Lambda cold starts, and oversized payload paths."
+      }
+    ],
+    failedJobRecovery: {
+      detection: "Image jobs move through queued -> running -> completed/failed/dead_letter and emit audit events.",
+      operatorWorkflow: [
+        "Open Platform Health and confirm the queue/DLQ alert.",
+        "Open the affected inspection audit trail and identify the photo/job/provider failure.",
+        "If the image is usable, retry the job; if quality is poor or object metadata is bad, request retake.",
+        "Verify the readiness blockers clear before report generation/finalization."
+      ],
+      safeguards: [
+        "Idempotency keys prevent duplicate image-analysis work per photo.",
+        "Schema validation stores failed provider output as a failure instead of materializing unsafe suggestions.",
+        "Buyer-visible readiness remains blocked while failed/dead-letter jobs or retake warnings exist."
+      ]
+    },
+    operationsDashboard: {
+      name: "inspectiq-ops",
+      region: env.AWS_REGION ?? env.AWS_DEFAULT_REGION ?? "us-east-1",
+      widgets: [
+        "API Gateway p95 latency and 5xx rate",
+        "API and image-worker Lambda errors, duration, and throttles",
+        "SQS visible backlog, oldest-message age, and DLQ depth",
+        "Image analysis success/retake/human-review metrics from the application payload"
+      ]
+    },
     metricsTracked: [
       "image_analysis_success_rate",
       "image_quality_retake_rate",
@@ -56,7 +139,7 @@ export function platformHealthPayload(store: MemoryStore, provider: PlatformHeal
       activeMode: env.PERSISTENCE_MODE ?? "file",
       postgresReady: Boolean(env.DATABASE_URL || env.DATABASE_SECRET_ARN),
       localMode: "File snapshot is retained for repeatable local walkthroughs and tests.",
-      productionMode: "Set PERSISTENCE_MODE=postgres and DATABASE_URL or DATABASE_SECRET_ARN to persist normalized inspection, photo, suggestion, report, and audit records in Postgres."
+      productionMode: "Set PERSISTENCE_MODE=postgres and DATABASE_URL or DATABASE_SECRET_ARN to persist normalized inspection, photo, suggestion, report, and audit records through row-level Postgres upsert/delete transactions."
     },
     storageContract: {
       uploadIntentEndpoint: "/api/uploads/intent",
@@ -72,13 +155,13 @@ export function platformHealthPayload(store: MemoryStore, provider: PlatformHeal
     implementationBoundary: {
       local: [
         "Deterministic vision and report providers keep walkthroughs repeatable without model credentials.",
-        "Express uses file snapshots locally by default; PERSISTENCE_MODE=postgres switches to normalized Postgres persistence.",
+        "Express uses file snapshots locally by default; PERSISTENCE_MODE=postgres switches to normalized row-level Postgres persistence.",
         "Cloudflare Pages can host the web client while API state lives in Postgres.",
         "Browser uploads store small preview data URLs instead of production object-storage writes.",
         "Role headers simulate authenticated role claims for local inspection/reviewer/admin flows."
       ],
       production: [
-        "Postgres repository with schema migrations, indexed foreign keys, transaction boundaries, and retention policy.",
+        "DB-first repositories for high-concurrency mutation paths, schema migrations, indexed foreign keys, transaction boundaries, and retention policy.",
         "S3 presigned uploads with checksum, MIME validation, metadata, lifecycle, and KMS encryption.",
         "SQS image-analysis jobs with idempotency keys, DLQ, retries, and worker observability.",
         "Bedrock multimodal adapter storing raw output, validated output, prompt version, provider metadata, and rejected-output audit records.",

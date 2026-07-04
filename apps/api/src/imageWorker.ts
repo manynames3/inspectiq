@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { runImageAnalysisJob } from "./imageAnalysisRunner.js";
-import { mutatePostgresSnapshot } from "./postgresPersistence.js";
+import { mutatePostgresRows } from "./postgresPersistence.js";
 import { createPostgresPool } from "./postgresPool.js";
 import { resolveDatabaseUrl } from "./runtimeConfig.js";
 import { store } from "./store.js";
@@ -38,7 +38,7 @@ export async function handler(event: SqsEvent): Promise<{ batchItemFailures: Arr
       };
       const jobIds = message.jobIds?.length ? message.jobIds : message.jobId ? [message.jobId] : [];
       if (jobIds.length === 0) throw new Error("Image analysis message did not include jobId or jobIds.");
-      await mutatePostgresSnapshot(store, activePool, async () => {
+      await mutatePostgresRows(store, activePool, async () => {
         await Promise.all(jobIds.map((jobId) =>
           runImageAnalysisJob(store, jobId, message.actor ?? {
             id: "image-worker",

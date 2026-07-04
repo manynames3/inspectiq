@@ -14,7 +14,7 @@ export function DashboardPage() {
   async function load() {
     setError(null);
     try {
-      setInspections(await api<Inspection[]>("/api/inspections"));
+      setInspections(await api<Inspection[]>("/api/inspections", {}, actor));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load inspections.");
     }
@@ -22,7 +22,7 @@ export function DashboardPage() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [actor]);
 
   const visibleInspections = inspections.filter((inspection) => {
     if (actor.role === "inspector") {

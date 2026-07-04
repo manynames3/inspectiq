@@ -18,22 +18,7 @@ import type {
 } from "./domain.js";
 import type { MemoryStore } from "./store.js";
 
-const deleteOrder = [
-  "audit_events",
-  "final_reports",
-  "ai_report_drafts",
-  "ai_report_jobs",
-  "condition_grades",
-  "damage_items",
-  "vision_suggestions",
-  "photo_analysis_results",
-  "image_analysis_jobs",
-  "vehicle_photos",
-  "inspections",
-  "users"
-] as const;
-
-const SNAPSHOT_MUTATION_LOCK_KEY = "7803144587035695001";
+const POSTGRES_ROW_STORE_LOCK_KEY = "7803144587035695001";
 
 function schemaPath(): string {
   const candidates = [
@@ -63,14 +48,29 @@ function nullableNum(value: unknown): number | null {
   return num(value);
 }
 
-async function insertRows(client: PoolClient, table: string, columns: string[], rows: unknown[][]): Promise<void> {
+async function upsertRows(client: PoolClient, table: string, columns: string[], rows: unknown[][]): Promise<void> {
   if (rows.length === 0) return;
   const values = rows.flat();
   const rowSql = rows.map((row, rowIndex) => {
     const slots = row.map((_, colIndex) => `$${rowIndex * columns.length + colIndex + 1}`);
     return `(${slots.join(", ")})`;
   });
-  await client.query(`insert into ${table} (${columns.join(", ")}) values ${rowSql.join(", ")}`, values);
+  const updates = columns
+    .filter((column) => column !== "id")
+    .map((column) => `${column} = excluded.${column}`)
+    .join(", ");
+  await client.query(
+    `insert into ${table} (${columns.join(", ")}) values ${rowSql.join(", ")} on conflict (id) do update set ${updates}`,
+    values
+  );
+}
+
+async function deleteRowsMissingFromStore(client: PoolClient, table: string, ids: string[]): Promise<void> {
+  if (ids.length === 0) {
+    await client.query(`delete from ${table}`);
+    return;
+  }
+  await client.query(`delete from ${table} where not (id = any($1::text[]))`, [ids]);
 }
 
 export async function migratePostgres(pool: Pool, filePath = schemaPath()): Promise<void> {
@@ -78,7 +78,7 @@ export async function migratePostgres(pool: Pool, filePath = schemaPath()): Prom
   await pool.query(schema);
 }
 
-async function loadPostgresSnapshotFromClient(store: MemoryStore, client: PoolClient): Promise<boolean> {
+async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient): Promise<boolean> {
     const { rowCount } = await client.query("select 1 from inspections limit 1");
     if (rowCount === 0) return false;
 
@@ -277,29 +277,38 @@ async function loadPostgresSnapshotFromClient(store: MemoryStore, client: PoolCl
     return true;
 }
 
-export async function loadPostgresSnapshot(store: MemoryStore, pool: Pool): Promise<boolean> {
+export async function loadPostgresRows(store: MemoryStore, pool: Pool): Promise<boolean> {
   await migratePostgres(pool);
   const client = await pool.connect();
   try {
-    return await loadPostgresSnapshotFromClient(store, client);
+    return await loadPostgresRowsFromClient(store, client);
   } finally {
     client.release();
   }
 }
 
-async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolClient): Promise<void> {
-    for (const table of deleteOrder) {
-      await client.query(`delete from ${table}`);
-    }
+async function writePostgresRowsFromStore(store: MemoryStore, client: PoolClient): Promise<void> {
+    await deleteRowsMissingFromStore(client, "audit_events", [...store.auditEvents.keys()]);
+    await deleteRowsMissingFromStore(client, "final_reports", [...store.finalReports.keys()]);
+    await deleteRowsMissingFromStore(client, "ai_report_drafts", [...store.reportDrafts.keys()]);
+    await deleteRowsMissingFromStore(client, "ai_report_jobs", [...store.reportJobs.keys()]);
+    await deleteRowsMissingFromStore(client, "condition_grades", [...store.conditionGrades.keys()]);
+    await deleteRowsMissingFromStore(client, "damage_items", [...store.damageItems.keys()]);
+    await deleteRowsMissingFromStore(client, "vision_suggestions", [...store.suggestions.keys()]);
+    await deleteRowsMissingFromStore(client, "photo_analysis_results", [...store.analyses.keys()]);
+    await deleteRowsMissingFromStore(client, "image_analysis_jobs", [...store.imageAnalysisJobs.keys()]);
+    await deleteRowsMissingFromStore(client, "vehicle_photos", [...store.photos.keys()]);
+    await deleteRowsMissingFromStore(client, "inspections", [...store.inspections.keys()]);
+    await deleteRowsMissingFromStore(client, "users", [...store.users.keys()]);
 
-    await insertRows(client, "users", ["id", "name", "role", "created_at"], [...store.users.values()].map((record) => [
+    await upsertRows(client, "users", ["id", "name", "role", "created_at"], [...store.users.values()].map((record) => [
       record.id,
       record.name,
       record.role,
       record.createdAt
     ]));
 
-    await insertRows(client, "inspections", ["id", "vin", "year", "make", "model", "trim", "mileage", "exterior_color", "seller_source", "inspector_name", "status", "completeness_percentage", "created_by", "created_at", "updated_at", "finalized_at"], [...store.inspections.values()].map((record) => [
+    await upsertRows(client, "inspections", ["id", "vin", "year", "make", "model", "trim", "mileage", "exterior_color", "seller_source", "inspector_name", "status", "completeness_percentage", "created_by", "created_at", "updated_at", "finalized_at"], [...store.inspections.values()].map((record) => [
       record.id,
       record.vin,
       record.year,
@@ -318,7 +327,7 @@ async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolCli
       record.finalizedAt
     ]));
 
-    await insertRows(client, "vehicle_photos", ["id", "inspection_id", "storage_key", "object_bucket", "object_key", "thumbnail_storage_key", "byte_size", "checksum_sha256", "original_filename", "mime_type", "uploaded_by", "uploaded_at", "upload_status", "declared_angle", "detected_angle", "detected_angle_confidence", "quality_status", "analysis_status"], [...store.photos.values()].map((record) => [
+    await upsertRows(client, "vehicle_photos", ["id", "inspection_id", "storage_key", "object_bucket", "object_key", "thumbnail_storage_key", "byte_size", "checksum_sha256", "original_filename", "mime_type", "uploaded_by", "uploaded_at", "upload_status", "declared_angle", "detected_angle", "detected_angle_confidence", "quality_status", "analysis_status"], [...store.photos.values()].map((record) => [
       record.id,
       record.inspectionId,
       record.storageKey,
@@ -339,7 +348,7 @@ async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolCli
       record.analysisStatus
     ]));
 
-    await insertRows(client, "image_analysis_jobs", ["id", "inspection_id", "photo_id", "status", "idempotency_key", "attempts", "error_message", "queued_at", "updated_at", "completed_at"], [...store.imageAnalysisJobs.values()].map((record) => [
+    await upsertRows(client, "image_analysis_jobs", ["id", "inspection_id", "photo_id", "status", "idempotency_key", "attempts", "error_message", "queued_at", "updated_at", "completed_at"], [...store.imageAnalysisJobs.values()].map((record) => [
       record.id,
       record.inspectionId,
       record.photoId,
@@ -352,7 +361,7 @@ async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolCli
       record.completedAt
     ]));
 
-    await insertRows(client, "photo_analysis_results", ["id", "photo_id", "provider", "prompt_version", "raw_model_output_json", "validated_output_json", "confidence", "status", "error_message", "created_at"], [...store.analyses.values()].map((record) => [
+    await upsertRows(client, "photo_analysis_results", ["id", "photo_id", "provider", "prompt_version", "raw_model_output_json", "validated_output_json", "confidence", "status", "error_message", "created_at"], [...store.analyses.values()].map((record) => [
       record.id,
       record.photoId,
       record.provider,
@@ -365,7 +374,7 @@ async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolCli
       record.createdAt
     ]));
 
-    await insertRows(client, "vision_suggestions", ["id", "inspection_id", "photo_id", "suggestion_type", "suggested_value_json", "confidence", "explanation", "status", "reviewed_by", "reviewed_at", "created_at"], [...store.suggestions.values()].map((record) => [
+    await upsertRows(client, "vision_suggestions", ["id", "inspection_id", "photo_id", "suggestion_type", "suggested_value_json", "confidence", "explanation", "status", "reviewed_by", "reviewed_at", "created_at"], [...store.suggestions.values()].map((record) => [
       record.id,
       record.inspectionId,
       record.photoId,
@@ -379,7 +388,7 @@ async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolCli
       record.createdAt
     ]));
 
-    await insertRows(client, "damage_items", ["id", "inspection_id", "photo_id", "location", "damage_type", "severity", "notes", "source", "confirmed_by", "created_at", "updated_at"], [...store.damageItems.values()].map((record) => [
+    await upsertRows(client, "damage_items", ["id", "inspection_id", "photo_id", "location", "damage_type", "severity", "notes", "source", "confirmed_by", "created_at", "updated_at"], [...store.damageItems.values()].map((record) => [
       record.id,
       record.inspectionId,
       record.photoId,
@@ -393,7 +402,7 @@ async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolCli
       record.updatedAt
     ]));
 
-    await insertRows(client, "condition_grades", ["id", "inspection_id", "score", "grade", "explanation_json", "grading_version", "created_at"], [...store.conditionGrades.values()].map((record) => [
+    await upsertRows(client, "condition_grades", ["id", "inspection_id", "score", "grade", "explanation_json", "grading_version", "created_at"], [...store.conditionGrades.values()].map((record) => [
       record.id,
       record.inspectionId,
       record.score,
@@ -403,7 +412,7 @@ async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolCli
       record.createdAt
     ]));
 
-    await insertRows(client, "ai_report_jobs", ["id", "inspection_id", "status", "idempotency_key", "error_message", "attempts", "created_at", "updated_at"], [...store.reportJobs.values()].map((record) => [
+    await upsertRows(client, "ai_report_jobs", ["id", "inspection_id", "status", "idempotency_key", "error_message", "attempts", "created_at", "updated_at"], [...store.reportJobs.values()].map((record) => [
       record.id,
       record.inspectionId,
       record.status,
@@ -414,7 +423,7 @@ async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolCli
       record.updatedAt
     ]));
 
-    await insertRows(client, "ai_report_drafts", ["id", "inspection_id", "job_id", "provider", "prompt_version", "input_summary_json", "output_json", "confidence", "human_review_required", "validation_status", "created_at"], [...store.reportDrafts.values()].map((record) => [
+    await upsertRows(client, "ai_report_drafts", ["id", "inspection_id", "job_id", "provider", "prompt_version", "input_summary_json", "output_json", "confidence", "human_review_required", "validation_status", "created_at"], [...store.reportDrafts.values()].map((record) => [
       record.id,
       record.inspectionId,
       record.jobId,
@@ -428,7 +437,7 @@ async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolCli
       record.createdAt
     ]));
 
-    await insertRows(client, "final_reports", ["id", "inspection_id", "report_body", "finalized_by", "finalized_at", "version"], [...store.finalReports.values()].map((record) => [
+    await upsertRows(client, "final_reports", ["id", "inspection_id", "report_body", "finalized_by", "finalized_at", "version"], [...store.finalReports.values()].map((record) => [
       record.id,
       record.inspectionId,
       record.reportBody,
@@ -437,7 +446,7 @@ async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolCli
       record.version
     ]));
 
-    await insertRows(client, "audit_events", ["id", "inspection_id", "actor", "event_type", "details_json", "created_at"], [...store.auditEvents.values()].map((record) => [
+    await upsertRows(client, "audit_events", ["id", "inspection_id", "actor", "event_type", "details_json", "created_at"], [...store.auditEvents.values()].map((record) => [
       record.id,
       record.inspectionId,
       record.actor,
@@ -447,13 +456,13 @@ async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolCli
     ]));
 }
 
-export async function savePostgresSnapshot(store: MemoryStore, pool: Pool): Promise<void> {
+export async function savePostgresRows(store: MemoryStore, pool: Pool): Promise<void> {
   await migratePostgres(pool);
   const client = await pool.connect();
   try {
     await client.query("begin");
-    await client.query("select pg_advisory_xact_lock($1::bigint)", [SNAPSHOT_MUTATION_LOCK_KEY]);
-    await writePostgresSnapshotToClient(store, client);
+    await client.query("select pg_advisory_xact_lock($1::bigint)", [POSTGRES_ROW_STORE_LOCK_KEY]);
+    await writePostgresRowsFromStore(store, client);
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -463,7 +472,7 @@ export async function savePostgresSnapshot(store: MemoryStore, pool: Pool): Prom
   }
 }
 
-export async function mutatePostgresSnapshot(
+export async function mutatePostgresRows(
   store: MemoryStore,
   pool: Pool,
   mutation: () => Promise<void>
@@ -472,10 +481,10 @@ export async function mutatePostgresSnapshot(
   const client = await pool.connect();
   try {
     await client.query("begin");
-    await client.query("select pg_advisory_xact_lock($1::bigint)", [SNAPSHOT_MUTATION_LOCK_KEY]);
-    const loaded = await loadPostgresSnapshotFromClient(store, client);
+    await client.query("select pg_advisory_xact_lock($1::bigint)", [POSTGRES_ROW_STORE_LOCK_KEY]);
+    const loaded = await loadPostgresRowsFromClient(store, client);
     await mutation();
-    await writePostgresSnapshotToClient(store, client);
+    await writePostgresRowsFromStore(store, client);
     await client.query("commit");
     return loaded;
   } catch (error) {

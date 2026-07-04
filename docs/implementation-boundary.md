@@ -18,14 +18,17 @@ This project is strongest when presented as a production-shaped inspection workf
 - S3 presigned upload intent, private object metadata, and image redirect flow.
 - SQS-backed image-analysis jobs processed by a Lambda worker.
 - Bedrock multimodal provider using the same `VisionOutputSchema` contract as local analysis.
+- Formal vision evaluation command and dataset for angle accuracy, OCR accuracy, damage false positives, retake precision, and retake recall.
+- JWT verification path with RS256/JWKS validation plus API object-level inspection authorization tests.
+- Platform Health SLO panels plus Terraform-managed CloudWatch alarms and dashboard widgets.
 - Cloudflare Pages deployment for the hosted walkthrough and AWS API Gateway/Lambda for the backend.
 
 ## Deterministic Local By Design
 
 - Vision and report providers are deterministic so tests and walkthroughs do not fail because of missing model credentials, model latency, cost, or nondeterministic output.
-- Local file persistence exists for reliable walkthroughs and repeatable tests. The deployed backend uses Neon Postgres, but the next production step is a per-operation repository rather than whole-store snapshot writes.
+- Local file persistence exists for reliable walkthroughs and repeatable tests. The deployed backend uses Neon Postgres with transactional row-level upserts/deletes through the store bridge. The next production step is DB-first repositories for the busiest mutation paths.
 - Local browser uploads can use small preview payloads; the deployed path writes image objects through presigned S3 upload URLs.
-- Role headers simulate authenticated claims; production should use Cognito or enterprise OIDC.
+- Role headers simulate authenticated claims for local tests; the deployed frontend uses Cognito hosted OIDC and the API validates JWTs through API Gateway and service middleware.
 
 ## Production Path
 
@@ -46,7 +49,7 @@ React workbench
 -> finalized condition report
 ```
 
-The current deployed backend intentionally keeps the public walkthrough accessible by leaving API Gateway JWT enforcement off. Cognito resources are provisioned and should be enabled after frontend OIDC is wired.
+The deployed backend enforces Cognito JWTs at API Gateway and validates JWT/JWKS claims again in the API service before applying object-level inspection authorization. Local development keeps role headers so tests and walkthroughs remain fast.
 
 ## Java Boundary Decision
 
@@ -63,3 +66,4 @@ The local provider is not a model-quality claim. It is a contract and workflow c
 - raw and validated outputs are stored separately;
 - every AI-generated fact remains advisory until a reviewer accepts or edits it;
 - retake-required image quality warnings block buyer-visible release until resolved.
+- model/prompt changes should pass `npm run eval:vision` before promotion.

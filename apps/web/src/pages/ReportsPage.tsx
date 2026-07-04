@@ -1,8 +1,10 @@
 import { Download, FileText, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiBase } from "../api.js";
+import { apiBase, requestHeaders } from "../api.js";
+import { useActor } from "../App.js";
 import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
+import type { Actor } from "../types.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
 
 function reportSummary(record: InspectionReviewRecord): string {
@@ -11,8 +13,10 @@ function reportSummary(record: InspectionReviewRecord): string {
   return record.bundle.finalReport?.reportBody.split("\n").find(Boolean) ?? "Generate a report draft from the inspection workbench.";
 }
 
-async function downloadBuyerReport(reportId: string): Promise<void> {
-  const response = await fetch(`${apiBase}/api/reports/${reportId}/export`);
+async function downloadBuyerReport(reportId: string, actor: Actor): Promise<void> {
+  const response = await fetch(`${apiBase}/api/reports/${reportId}/export`, {
+    headers: requestHeaders(actor)
+  });
   if (!response.ok) throw new Error("Could not export the buyer-ready report.");
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
@@ -26,13 +30,14 @@ async function downloadBuyerReport(reportId: string): Promise<void> {
 }
 
 export function ReportsPage() {
+  const { actor } = useActor();
   const [records, setRecords] = useState<InspectionReviewRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setError(null);
     try {
-      setRecords(await loadInspectionReviewRecords());
+      setRecords(await loadInspectionReviewRecords(actor));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load reports.");
     }
@@ -40,7 +45,7 @@ export function ReportsPage() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [actor]);
 
   const reportRecords = useMemo(() => records.filter(({ bundle }) => bundle.finalReport), [records]);
   const finalizedCount = reportRecords.filter(({ bundle }) => bundle.finalReport?.finalizedAt).length;
@@ -123,7 +128,7 @@ export function ReportsPage() {
                     <td>
                       <div className="row-actions">
                         {bundle.finalReport ? (
-                          <button className="row-link button-link" type="button" onClick={() => void downloadBuyerReport(bundle.finalReport!.id)}>
+                          <button className="row-link button-link" type="button" onClick={() => void downloadBuyerReport(bundle.finalReport!.id, actor)}>
                             <Download size={14} /> Export
                           </button>
                         ) : null}

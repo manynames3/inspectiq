@@ -1,0 +1,152 @@
+{
+  "name": "inspectiq-vision-contract-v1",
+  "thresholds": {
+    "angleAccuracy": 0.9,
+    "ocrAccuracy": 0.9,
+    "damageRecall": 0.9,
+    "damageTypeAccuracy": 0.85,
+    "damageFalsePositiveRate": 0.1,
+    "retakePrecision": 0.8,
+    "retakeRecall": 0.8
+  },
+  "cases": [
+    {
+      "id": "front_clean_required_angle",
+      "sampleKey": "front-clean",
+      "expectedAngle": "front",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "front_clean_vdp_ready_no_false_damage",
+      "sampleKey": "front-clean",
+      "expectedAngle": "front",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "rear_bumper_damage",
+      "sampleKey": "rear-severe-damage",
+      "expectedAngle": "rear",
+      "expectedDamagePresent": true,
+      "expectedDamageType": "dent",
+      "expectedDamageSeverity": "severe",
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "rear_damage_arbitration_risk",
+      "sampleKey": "rear-severe-damage",
+      "expectedAngle": "rear",
+      "expectedDamagePresent": true,
+      "expectedDamageType": "dent",
+      "expectedDamageSeverity": "severe",
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "driver_side_scratch",
+      "sampleKey": "driver-side-scratch",
+      "expectedAngle": "driver_side",
+      "expectedDamagePresent": true,
+      "expectedDamageType": "scratch",
+      "expectedDamageSeverity": "minor",
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "driver_side_scratch_recon_estimate",
+      "sampleKey": "driver-side-scratch",
+      "expectedAngle": "driver_side",
+      "expectedDamagePresent": true,
+      "expectedDamageType": "scratch",
+      "expectedDamageSeverity": "minor",
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "passenger_side_clean",
+      "sampleKey": "passenger-side-clean",
+      "expectedAngle": "passenger_side",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "passenger_side_vdp_ready_no_false_damage",
+      "sampleKey": "passenger-side-clean",
+      "expectedAngle": "passenger_side",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "interior_overview_review",
+      "sampleKey": "interior-overview",
+      "expectedAngle": "interior",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "interior_overview_no_false_damage",
+      "sampleKey": "interior-overview",
+      "expectedAngle": "interior",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "engine_bay_clean",
+      "sampleKey": "engine-bay-clean",
+      "expectedAngle": "engine_bay",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "engine_bay_no_mechanical_false_positive",
+      "sampleKey": "engine-bay-clean",
+      "expectedAngle": "engine_bay",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "odometer_ocr",
+      "sampleKey": "odometer-closeup-64231",
+      "expectedAngle": "odometer",
+      "expectedOdometer": "64231",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "odometer_lender_repo_ocr",
+      "sampleKey": "odometer-closeup-64231",
+      "expectedAngle": "odometer",
+      "expectedOdometer": "64231",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "vin_ocr",
+      "sampleKey": "vin-plate-4t1g11ak8mu123456",
+      "expectedAngle": "vin_plate",
+      "expectedVin": "4T1G11AK8MU123456",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "vin_seller_disclosure_ocr",
+      "sampleKey": "vin-plate-4t1g11ak8mu123456",
+      "expectedAngle": "vin_plate",
+      "expectedVin": "4T1G11AK8MU123456",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
+    },
+    {
+      "id": "blurry_front_retake",
+      "sampleKey": "blurry-front",
+      "expectedAngle": "front",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": true
+    },
+    {
+      "id": "offsite_mobile_front_retake",
+      "sampleKey": "blurry-front",
+      "expectedAngle": "front",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": true
+    }
+  ]
+}

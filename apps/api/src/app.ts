@@ -22,17 +22,19 @@ import { createPresignedDownload, createPresignedUpload, s3ObjectUrl } from "./a
 import { sendImageAnalysisMessage } from "./awsQueue.js";
 import { runImageAnalysisJob } from "./imageAnalysisRunner.js";
 import { platformHealthPayload } from "./platformHealth.js";
-import { requireAction } from "./rbac.js";
+import { authenticateRequest } from "./auth.js";
+import { canAccessInspection, requireAction, requireInspectionAccess } from "./rbac.js";
 import { findSampleImage, sampleBundles, sampleImageDirectory } from "./sampleImages.js";
 import { seedStore } from "./seedData.js";
 import { MemoryStore, store as defaultStore } from "./store.js";
-import type { Actor } from "./domain.js";
+import type { Actor, DamageItem, FinalReport, Inspection, VehiclePhoto, VisionSuggestion } from "./domain.js";
 
 type AsyncRoute = (req: Request, res: Response, next: NextFunction) => Promise<void> | void;
 type AppOptions = {
   beforeRequest?: () => void | Promise<void>;
   afterMutation?: () => void | Promise<void>;
 };
+type AuthenticatedRequest = Request & { actor?: Actor };
 
 function asyncRoute(handler: AsyncRoute): AsyncRoute {
   return (req, res, next) => {
@@ -53,13 +55,55 @@ async function persistMutation(options: AppOptions): Promise<void> {
 }
 
 function actorFromRequest(req: Request, store: MemoryStore): Actor {
+  const authenticatedActor = (req as AuthenticatedRequest).actor;
+  if (authenticatedActor) {
+    store.ensureUser(authenticatedActor);
+    return authenticatedActor;
+  }
+
   const fallback = store.defaultActor();
   const role = req.header("x-actor-role");
-  return {
+  const actor: Actor = {
     id: String(req.header("x-actor-id") ?? fallback.id),
     name: String(req.header("x-actor-name") ?? fallback.name),
     role: role === "inspector" || role === "reviewer" || role === "admin" ? role : fallback.role
   };
+  store.ensureUser(actor);
+  return actor;
+}
+
+function inspectionForRequest(store: MemoryStore, inspectionId: string, actor: Actor, action?: string): Inspection {
+  const inspection = store.getInspection(inspectionId);
+  requireInspectionAccess(actor, inspection, action);
+  return inspection;
+}
+
+function photoForRequest(store: MemoryStore, photoId: string, actor: Actor, action?: string): VehiclePhoto {
+  const photo = store.getPhoto(photoId);
+  const inspection = store.getInspection(photo.inspectionId);
+  requireInspectionAccess(actor, inspection, action ?? "access this photo");
+  return photo;
+}
+
+function suggestionForRequest(store: MemoryStore, suggestionId: string, actor: Actor, action?: string): VisionSuggestion {
+  const suggestion = store.getSuggestion(suggestionId);
+  const inspection = store.getInspection(suggestion.inspectionId);
+  requireInspectionAccess(actor, inspection, action ?? "access this AI suggestion");
+  return suggestion;
+}
+
+function damageForRequest(store: MemoryStore, damageId: string, actor: Actor, action?: string): DamageItem {
+  const damage = store.getDamage(damageId);
+  const inspection = store.getInspection(damage.inspectionId);
+  requireInspectionAccess(actor, inspection, action ?? "access this damage item");
+  return damage;
+}
+
+function reportForRequest(store: MemoryStore, reportId: string, actor: Actor, action?: string): FinalReport {
+  const report = store.getFinalReport(reportId);
+  const inspection = store.getInspection(report.inspectionId);
+  requireInspectionAccess(actor, inspection, action ?? "access this report");
+  return report;
 }
 
 function reportBodyFromDraft(output: unknown): string {
@@ -116,6 +160,18 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       .then(() => next())
       .catch(next);
   });
+  app.use("/api", asyncRoute(async (req, _res, next) => {
+    if (req.path === "/health") {
+      next();
+      return;
+    }
+    const actor = await authenticateRequest(req);
+    if (actor) {
+      appStore.ensureUser(actor);
+      (req as AuthenticatedRequest).actor = actor;
+    }
+    next();
+  }));
   app.use("/sample-images", express.static(sampleImageDirectory()));
 
   app.get("/api/health", (_req, res) => {
@@ -130,8 +186,9 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     });
   });
 
-  app.get("/api/inspections", (_req, res) => {
-    sendData(res, appStore.listInspections().map((inspection) => ({
+  app.get("/api/inspections", (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    sendData(res, appStore.listInspections().filter((inspection) => canAccessInspection(actor, inspection)).map((inspection) => ({
       ...inspection,
       conditionGrade: appStore.latestGrade(inspection.id),
       humanReviewFlag: inspection.status === "HUMAN_REVIEW_REQUIRED",
@@ -149,6 +206,8 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   }));
 
   app.get("/api/inspections/:id", asyncRoute((req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    inspectionForRequest(appStore, req.params.id, actor);
     sendData(res, appStore.bundle(req.params.id));
   }));
 
@@ -156,6 +215,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const input = PatchInspectionSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "inspection:update");
+    inspectionForRequest(appStore, req.params.id, actor, "update this inspection");
     const inspection = appStore.patchInspection(req.params.id, input, actor);
     return persistMutation(options).then(() => sendData(res, inspection));
   }));
@@ -164,6 +224,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const input = UploadPhotoSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:capture");
+    inspectionForRequest(appStore, req.params.id, actor, "upload photos to this inspection");
     const objectKey = input.objectKey ?? objectKeyForUpload(req.params.id, input.originalFilename);
     const photo = appStore.addPhoto({
       inspectionId: req.params.id,
@@ -186,6 +247,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const input = UploadIntentSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:capture");
+    inspectionForRequest(appStore, input.inspectionId, actor, "create upload intent for this inspection");
     appStore.assertMutableInspection(input.inspectionId, "create upload intent");
     const objectKey = objectKeyForUpload(input.inspectionId, input.originalFilename);
     const objectBucket = process.env.IMAGE_BUCKET ?? "inspectiq-local-uploads";
@@ -222,6 +284,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const input = SamplePhotoSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:capture");
+    inspectionForRequest(appStore, req.params.id, actor, "attach sample photos to this inspection");
     const keys = sampleBundles[input.sampleKey] ?? [input.sampleKey];
     const photos = keys.map((key) => {
       const sample = findSampleImage(key);
@@ -245,13 +308,15 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   }));
 
   app.get("/api/inspections/:id/photos", asyncRoute((req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    inspectionForRequest(appStore, req.params.id, actor, "view photos for this inspection");
     sendData(res, appStore.listPhotos(req.params.id));
   }));
 
   app.post("/api/inspections/:id/photos/analyze", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:analyze");
-    appStore.getInspection(req.params.id);
+    inspectionForRequest(appStore, req.params.id, actor, "analyze photos for this inspection");
 
     const photos = appStore.listPhotos(req.params.id).filter((photo) => photo.analysisStatus !== "completed");
     const idempotencyKeyPrefix = req.header("idempotency-key") ?? req.body?.idempotencyKeyPrefix ?? null;
@@ -295,7 +360,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   app.post("/api/photos/:photoId/analyze", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:analyze");
-    const photo = appStore.getPhoto(req.params.photoId);
+    const photo = photoForRequest(appStore, req.params.photoId, actor, "analyze this photo");
     if (photo.analysisStatus === "completed" && !req.body?.force) {
       sendData(res, {
         analysis: appStore.getPhotoAnalysis(photo.id),
@@ -326,6 +391,8 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   }));
 
   app.get("/api/photos/:photoId/analysis", asyncRoute((req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    photoForRequest(appStore, req.params.photoId, actor, "view analysis for this photo");
     sendData(res, appStore.getPhotoAnalysis(req.params.photoId));
   }));
 
@@ -343,12 +410,15 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   }));
 
   app.get("/api/inspections/:id/vision-suggestions", asyncRoute((req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    inspectionForRequest(appStore, req.params.id, actor, "view AI suggestions for this inspection");
     sendData(res, appStore.listSuggestions(req.params.id));
   }));
 
   app.post("/api/vision-suggestions/:id/accept", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "suggestion:review");
+    suggestionForRequest(appStore, req.params.id, actor, "accept this AI suggestion");
     const suggestion = appStore.acceptSuggestion(req.params.id, actor);
     await persistMutation(options);
     sendData(res, suggestion);
@@ -357,6 +427,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   app.post("/api/vision-suggestions/:id/reject", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "suggestion:review");
+    suggestionForRequest(appStore, req.params.id, actor, "reject this AI suggestion");
     const suggestion = appStore.rejectSuggestion(req.params.id, actor);
     await persistMutation(options);
     sendData(res, suggestion);
@@ -369,6 +440,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     }
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "suggestion:review");
+    suggestionForRequest(appStore, req.params.id, actor, "edit this AI suggestion");
     const suggestion = appStore.editSuggestion(req.params.id, {
       suggestedValue: input.suggestedValue,
       explanation: input.explanation
@@ -381,6 +453,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const input = CreateDamageItemSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "damage:create");
+    inspectionForRequest(appStore, req.params.id, actor, "add damage to this inspection");
     const damage = appStore.addDamage({
       inspectionId: req.params.id,
       photoId: input.photoId ?? null,
@@ -398,6 +471,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const input = PatchDamageItemSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "damage:update");
+    damageForRequest(appStore, req.params.id, actor, "update this damage item");
     const damage = appStore.patchDamage(req.params.id, input, actor);
     await persistMutation(options);
     sendData(res, damage);
@@ -406,6 +480,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   app.delete("/api/damage/:id", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "damage:delete");
+    damageForRequest(appStore, req.params.id, actor, "delete this damage item");
     appStore.deleteDamage(req.params.id, actor);
     await persistMutation(options);
     sendData(res, { deleted: true });
@@ -415,7 +490,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     GradeRequestSchema.parse(req.body ?? {});
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "grade:calculate");
-    const inspection = appStore.getInspection(req.params.id);
+    const inspection = inspectionForRequest(appStore, req.params.id, actor, "grade this inspection");
     const missing = appStore.missingRequiredEvidence(inspection.id);
     if (missing.length > 0) {
       throw conflict("Cannot grade before required photo evidence is confirmed.", { missingEvidence: missing });
@@ -445,7 +520,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   app.post("/api/inspections/:id/ai-report", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "report:draft");
-    const inspection = appStore.getInspection(req.params.id);
+    const inspection = inspectionForRequest(appStore, req.params.id, actor, "draft a report for this inspection");
     const grade = appStore.latestGrade(inspection.id);
     if (!grade) throw conflict("Calculate the condition grade before requesting a report draft.");
     if (inspection.status !== "GRADED" && inspection.status !== "REPORT_FAILED" && inspection.status !== "HUMAN_REVIEW_REQUIRED") {
@@ -490,7 +565,8 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   }));
 
   app.get("/api/inspections/:id/ai-report", asyncRoute((req, res) => {
-    appStore.getInspection(req.params.id);
+    const actor = actorFromRequest(req, appStore);
+    inspectionForRequest(appStore, req.params.id, actor, "view report workflow for this inspection");
     sendData(res, {
       job: appStore.latestReportJob(req.params.id),
       draft: appStore.latestReportDraft(req.params.id),
@@ -503,11 +579,13 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     requireAction(actor, "report:retry");
     const job = appStore.reportJobs.get(req.params.jobId);
     if (!job) throw validation("Unknown AI report job.");
-    appStore.getInspection(job.inspectionId);
+    inspectionForRequest(appStore, job.inspectionId, actor, "retry this report job");
     sendData(res, { retryWith: `/api/inspections/${job.inspectionId}/ai-report` });
   }));
 
   app.get("/api/reports/:id/export", asyncRoute((req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    reportForRequest(appStore, req.params.id, actor, "export this report");
     const exported = appStore.buyerReportExport(req.params.id);
     res
       .status(200)
@@ -520,6 +598,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const input = PatchReportSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "report:edit");
+    reportForRequest(appStore, req.params.id, actor, "edit this report");
     const report = appStore.patchReport(req.params.id, input.reportBody, actor);
     await persistMutation(options);
     sendData(res, report);
@@ -528,16 +607,21 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   app.post("/api/reports/:id/finalize", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "report:finalize");
+    reportForRequest(appStore, req.params.id, actor, "finalize this report");
     const report = appStore.finalizeReport(req.params.id, actor);
     await persistMutation(options);
     sendData(res, report);
   }));
 
   app.get("/api/inspections/:id/audit-events", asyncRoute((req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    inspectionForRequest(appStore, req.params.id, actor, "view audit events for this inspection");
     sendData(res, appStore.auditForInspection(req.params.id));
   }));
 
   app.get("/api/inspections/:id/readiness", asyncRoute((req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    inspectionForRequest(appStore, req.params.id, actor, "view readiness for this inspection");
     sendData(res, {
       issues: appStore.readinessIssues(req.params.id),
       buyerVisibleReady: appStore.buyerVisibleReady(req.params.id)
@@ -545,7 +629,8 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   }));
 
   app.get("/api/reports/:id", asyncRoute((req, res) => {
-    sendData(res, appStore.getFinalReport(req.params.id));
+    const actor = actorFromRequest(req, appStore);
+    sendData(res, reportForRequest(appStore, req.params.id, actor, "view this report"));
   }));
 
   app.get("/api/platform-health", (_req, res) => {

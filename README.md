@@ -75,7 +75,7 @@ flowchart TD
 
 This is a production-shaped reference implementation with a live hosted frontend and AWS backend. Local development still defaults to deterministic providers and file persistence for repeatable tests, while the deployed path uses Cloudflare Pages, API Gateway, Lambda, Neon Postgres, S3 presigned uploads, SQS, Bedrock multimodal analysis, Secrets Manager, Cognito resources, CloudWatch logs, alarms, and a dashboard.
 
-Remaining production hardening is called out directly: replace whole-snapshot persistence with per-operation repository writes, enable end-user OIDC in the frontend before turning on the API Gateway JWT authorizer, add model evaluation datasets, and add environment promotion/rollback automation.
+Remaining production hardening is called out directly: expand the model evaluation set with labeled production images, move the highest-concurrency persistence paths to DB-first repositories, and add environment promotion/rollback automation.
 
 For the concise interview explanation, see `docs/implementation-boundary.md`.
 
@@ -86,6 +86,7 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 - `docs/implementation-boundary.md`: what is real in the repo, what is deterministic locally, and how to explain it.
 - `docs/state-machine.md`: workflow states and legal transitions.
 - `docs/image-analysis-contract.md`: model output contract, schema validation, and reviewer routing.
+- `docs/vision-evaluation.md`: image-analysis evaluation set, metrics, thresholds, and promotion command.
 - `docs/ai-governance.md`: prompt/version metadata, human review, and audit posture.
 - `docs/aws-deployment-plan.md`: AWS production shape and migration path.
 - `docs/security.md`, `docs/observability.md`, `docs/runbook.md`: operational hardening notes.
@@ -95,8 +96,8 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 | Area | Implemented in this repo | Production replacement |
 | --- | --- | --- |
 | Inspection workflow | Working React/TypeScript UI, role-aware actions, REST API, state machine, audit trail | Same workflow behind enterprise auth, object-level authorization, and operational SLAs |
-| Image analysis | Deterministic local provider plus deployed SQS -> Lambda -> Bedrock multimodal provider using the same strict schema contract | Model evaluation set, confidence calibration, and provider fallback policy |
-| Persistence | In-memory tests, local JSON snapshot, and deployed `PERSISTENCE_MODE=postgres` against Neon | Per-operation Postgres repository with narrower transactions, retention, backups, and audit durability |
+| Image analysis | Deterministic local provider plus deployed SQS -> Lambda -> Bedrock multimodal provider using the same strict schema contract and `npm run eval:vision` evaluation set | Larger labeled evaluation corpus, confidence calibration, and provider fallback policy |
+| Persistence | In-memory tests, local JSON snapshot, and deployed `PERSISTENCE_MODE=postgres` against Neon with row-level upsert/delete transactions | Direct DB-first repositories for the highest-concurrency production paths, retention, backups, and audit durability |
 | Image storage | Deployed presigned S3 upload intent, private S3 objects, object key metadata, MIME type, byte size, and checksum capture | EXIF stripping, image normalization, thumbnails, lifecycle, KMS key policy, and object-level auth |
 | Java grading | Optional Spring Boot service plus identical Node fallback for deterministic local reliability | Keep separate only when grading rules need independent ownership, versioning, or reuse |
 | Report generation | Async-shaped job model with deterministic local provider | Queue/Step Functions workflow with model retries, DLQ, provider telemetry, and reviewer approval |
@@ -153,6 +154,12 @@ Copy `.env.example` to `.env` if you want to customize:
 - `IMAGE_BUCKET`
 - `PG_POOL_SIZE`
 - `PG_IDLE_TIMEOUT_MS`
+- `AUTH_MODE=jwt`
+- `OIDC_ISSUER`
+- `OIDC_AUDIENCE`
+- `VITE_AUTH_MODE=oidc`
+- `VITE_COGNITO_DOMAIN`
+- `VITE_COGNITO_CLIENT_ID`
 
 Postgres mode:
 
@@ -163,6 +170,15 @@ npm run dev:api
 ```
 
 The API applies `apps/api/src/db/schema.sql` on startup, loads existing rows, and persists workflow mutations back to Postgres. Local file mode remains the default for reliable interview walkthroughs.
+
+Vision evaluation:
+
+```bash
+npm run eval:vision
+AWS_REGION=us-east-1 VISION_PROVIDER=bedrock BEDROCK_VISION_FALLBACK=fail npm run eval:vision
+```
+
+The evaluation command runs `evals/vision-eval-set.json` against the configured provider and reports angle accuracy, OCR accuracy, damage recall/type accuracy, damage false-positive rate, retake precision, and retake recall.
 
 ## API Examples
 
@@ -313,7 +329,7 @@ Production metrics include image analysis success rate, image retake rate, image
 
 ## Security
 
-Local review uses role-aware UI controls and API RBAC for Inspector, Reviewer, and Admin workflows. Production design should use Cognito or enterprise OIDC, JWT validation, object-level authorization, S3 presigned uploads, encrypted S3/RDS, Secrets Manager, least-privilege IAM, and CloudTrail.
+Local review uses role-aware UI controls and API RBAC for Inspector, Reviewer, and Admin workflows. The deployed path uses Cognito hosted OIDC, API Gateway JWT enforcement, Lambda-side JWT/JWKS validation, object-level authorization, S3 presigned uploads, encrypted S3/Postgres-adjacent storage, Secrets Manager, and least-privilege IAM.
 
 ## AWS Deployment Architecture
 
@@ -332,7 +348,7 @@ React
 -> audit trail
 ```
 
-The Terraform in `infra/terraform` deploys the AWS resources used by the live backend. Cognito resources are provisioned, but the API Gateway JWT authorizer is intentionally feature-flagged off for the public walkthrough until frontend sign-in is enabled.
+The Terraform in `infra/terraform` deploys the AWS resources used by the live backend. Cognito groups and the API Gateway JWT authorizer are enabled by default for the authenticated Pages walkthrough.
 
 ## Cost Awareness
 
@@ -361,12 +377,14 @@ Handled or documented:
 - Report job failure and retry path.
 - Finalization state guards.
 - Double-submit finalization idempotency.
+- JWT verification path and object-level inspection authorization tests.
+- Vision evaluation thresholds for angle, OCR, damage false positives, and retake quality.
 
 ## Production Tradeoffs
 
 I would discuss:
 
-- Replace the current whole-snapshot Postgres adapter with per-operation repository methods before multi-reviewer production use.
+- Keep the current row-level Postgres store bridge for the hosted walkthrough; move hot paths to direct DB-first repository methods before high-concurrency multi-reviewer production use.
 - Keep Java grading separate only if condition rules are independently owned, versioned, or reused outside the Node API.
 - Stay on Lambda for the current bursty image-analysis worker; consider containers only if native image tooling or runtime duration outgrows Lambda limits.
 - Treat Bedrock output as untrusted input: validate schemas, store raw and validated output, and require human confirmation before facts affect reports.
@@ -376,12 +394,10 @@ I would discuss:
 
 ## Future Improvements
 
-- Per-operation Postgres repository implementation behind the existing schema.
-- Frontend OIDC sign-in and API Gateway JWT authorizer enforcement.
-- Model evaluation set for angle accuracy, OCR accuracy, damage false positives, and retake precision.
+- Larger labeled model evaluation set with production-like auction photos and confidence calibration.
 - Reviewer queue with assignment and SLA filters.
 - Thumbnail generation and image metadata extraction.
-- More CloudWatch dashboards and alarm notification targets.
+- Alarm notification targets and dashboard promotion across dev/stage/prod.
 - Cross-browser frontend flow tests.
 
 ## Resume Bullets

@@ -114,6 +114,27 @@ resource "aws_cognito_user_pool_domain" "inspectiq" {
   user_pool_id = aws_cognito_user_pool.inspectiq.id
 }
 
+resource "aws_cognito_user_group" "inspector" {
+  name         = "inspector"
+  user_pool_id = aws_cognito_user_pool.inspectiq.id
+  description  = "Can create inspections, capture photos, and run image analysis."
+  precedence   = 30
+}
+
+resource "aws_cognito_user_group" "reviewer" {
+  name         = "reviewer"
+  user_pool_id = aws_cognito_user_pool.inspectiq.id
+  description  = "Can review AI findings, confirm damage, grade, draft, and finalize reports."
+  precedence   = 20
+}
+
+resource "aws_cognito_user_group" "admin" {
+  name         = "admin"
+  user_pool_id = aws_cognito_user_pool.inspectiq.id
+  description  = "Full InspectIQ workflow and exception-management access."
+  precedence   = 10
+}
+
 resource "aws_iam_role" "lambda" {
   name = "${var.project_name}-lambda-role"
   assume_role_policy = jsonencode({
@@ -210,6 +231,11 @@ resource "aws_lambda_function" "api" {
       VISION_PROVIDER                     = "bedrock"
       REPORT_PROVIDER                     = "bedrock"
       BEDROCK_MODEL_ID                    = var.bedrock_model_id
+      BEDROCK_VISION_FALLBACK             = "fail"
+      MIN_DAMAGE_CONFIDENCE               = "0.80"
+      AUTH_MODE                           = "jwt"
+      OIDC_ISSUER                         = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.inspectiq.id}"
+      OIDC_AUDIENCE                       = aws_cognito_user_pool_client.web.id
       WEB_ORIGIN                          = join(",", local.allowed_origins)
       PG_POOL_SIZE                        = "2"
     }
@@ -219,14 +245,14 @@ resource "aws_lambda_function" "api" {
 }
 
 resource "aws_lambda_function" "image_worker" {
-  function_name                  = local.worker_lambda_name
-  role                           = aws_iam_role.lambda.arn
-  runtime                        = "nodejs22.x"
-  handler                        = "imageWorker.handler"
-  filename                       = local.lambda_zip
-  source_code_hash               = filebase64sha256(local.lambda_zip)
-  timeout                        = 120
-  memory_size                    = 1536
+  function_name    = local.worker_lambda_name
+  role             = aws_iam_role.lambda.arn
+  runtime          = "nodejs22.x"
+  handler          = "imageWorker.handler"
+  filename         = local.lambda_zip
+  source_code_hash = filebase64sha256(local.lambda_zip)
+  timeout          = 120
+  memory_size      = 1536
 
   environment {
     variables = {
@@ -239,6 +265,8 @@ resource "aws_lambda_function" "image_worker" {
       IMAGE_UPLOAD_MODE                   = "presigned"
       VISION_PROVIDER                     = "bedrock"
       BEDROCK_MODEL_ID                    = var.bedrock_model_id
+      BEDROCK_VISION_FALLBACK             = "fail"
+      MIN_DAMAGE_CONFIDENCE               = "0.80"
       PG_POOL_SIZE                        = "2"
     }
   }
@@ -295,6 +323,34 @@ resource "aws_apigatewayv2_route" "default" {
   target             = "integrations/${aws_apigatewayv2_integration.api.id}"
   authorization_type = var.enable_cognito_authorizer ? "JWT" : "NONE"
   authorizer_id      = var.enable_cognito_authorizer ? aws_apigatewayv2_authorizer.jwt[0].id : null
+}
+
+resource "aws_apigatewayv2_route" "health" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /api/health"
+  target             = "integrations/${aws_apigatewayv2_integration.api.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "cors_preflight" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "OPTIONS /{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.api.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "sample_images" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /sample-images/{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.api.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "photo_image" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /api/photos/{photoId}/image"
+  target             = "integrations/${aws_apigatewayv2_integration.api.id}"
+  authorization_type = "NONE"
 }
 
 resource "aws_apigatewayv2_stage" "default" {
@@ -356,6 +412,37 @@ resource "aws_cloudwatch_metric_alarm" "image_dlq_visible" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "image_queue_age" {
+  alarm_name          = "${var.project_name}-image-queue-age"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 2
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  namespace           = "AWS/SQS"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 300
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    QueueName = aws_sqs_queue.image_analysis.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "api_p95_latency" {
+  alarm_name          = "${var.project_name}-api-p95-latency"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 3
+  metric_name         = "Latency"
+  namespace           = "AWS/ApiGateway"
+  period              = 60
+  extended_statistic  = "p95"
+  threshold           = 2000
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    ApiId = aws_apigatewayv2_api.http.id
+    Stage = aws_apigatewayv2_stage.default.name
+  }
+}
+
 resource "aws_cloudwatch_dashboard" "inspectiq" {
   dashboard_name = "${var.project_name}-ops"
   dashboard_body = jsonencode({
@@ -384,6 +471,23 @@ resource "aws_cloudwatch_dashboard" "inspectiq" {
         width  = 12
         height = 6
         properties = {
+          title  = "API Gateway latency and 5xx"
+          region = var.aws_region
+          metrics = [
+            ["AWS/ApiGateway", "Latency", "ApiId", aws_apigatewayv2_api.http.id, "Stage", aws_apigatewayv2_stage.default.name, { stat = "p95", label = "p95 latency" }],
+            [".", "5xx", ".", ".", ".", ".", { stat = "Sum", label = "5xx responses" }]
+          ]
+          period = 60
+          view   = "timeSeries"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 6
+        width  = 12
+        height = 6
+        properties = {
           title  = "Image analysis queue"
           region = var.aws_region
           metrics = [
@@ -393,6 +497,25 @@ resource "aws_cloudwatch_dashboard" "inspectiq" {
           ]
           stat   = "Maximum"
           period = 60
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 6
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Lambda duration and throttles"
+          region = var.aws_region
+          metrics = [
+            ["AWS/Lambda", "Duration", "FunctionName", aws_lambda_function.api.function_name, { stat = "p95", label = "API p95 duration" }],
+            [".", ".", ".", aws_lambda_function.image_worker.function_name, { stat = "p95", label = "Worker p95 duration" }],
+            [".", "Throttles", ".", aws_lambda_function.api.function_name, { stat = "Sum", label = "API throttles" }],
+            [".", ".", ".", aws_lambda_function.image_worker.function_name, { stat = "Sum", label = "Worker throttles" }]
+          ]
+          period = 60
+          view   = "timeSeries"
         }
       }
     ]
@@ -425,4 +548,8 @@ output "cognito_user_pool_client_id" {
 
 output "cognito_domain" {
   value = "https://${aws_cognito_user_pool_domain.inspectiq.domain}.auth.${var.aws_region}.amazoncognito.com"
+}
+
+output "cognito_issuer" {
+  value = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.inspectiq.id}"
 }

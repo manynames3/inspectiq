@@ -64,37 +64,102 @@ function uniqueNonEmpty(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
-function normalizeVisionOutput(output: VisionOutput): VisionOutput {
-  const credibleDamage = output.detectedDamageCandidates
+function damageConfidenceThreshold(): number {
+  const configured = Number(process.env.MIN_DAMAGE_CONFIDENCE ?? "0.80");
+  return Number.isFinite(configured) ? configured : 0.80;
+}
+
+function normalizeVisionOutput(output: VisionOutput, declaredAngle?: VisionOutput["photoAngle"] | null): VisionOutput {
+  const evidenceAngle = output.photoAngle === "odometer"
+    || output.photoAngle === "vin_plate"
+    || declaredAngle === "odometer"
+    || declaredAngle === "vin_plate";
+  const credibleDamage = evidenceAngle ? [] : output.detectedDamageCandidates
     .filter((candidate) =>
-      candidate.confidence >= 0.6
+      candidate.confidence >= damageConfidenceThreshold()
       && candidate.damageType !== "unknown"
       && candidate.severityEstimate !== "unknown"
     )
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, 1);
 
-  const qualityWarnings = output.imageQuality.retakeRequired || output.imageQuality.grade === "retake"
-    ? uniqueNonEmpty(output.qualityWarnings).slice(0, 1)
-    : [];
-
   const extractedText: VisionOutput["extractedText"] = {};
-  const odometer = output.extractedText.odometer?.trim();
+  const odometer = output.extractedText.odometer?.trim().replace(/[^\d]/g, "");
   const vin = output.extractedText.vin?.trim().toUpperCase();
   if (odometer && /^\d{1,6}$/.test(odometer)) extractedText.odometer = odometer;
   if (vin && /^[A-HJ-NPR-Z0-9]{11,17}$/.test(vin)) extractedText.vin = vin;
 
+  const imageQuality = {
+    ...output.imageQuality,
+    notes: uniqueNonEmpty(output.imageQuality.notes).slice(0, 2)
+  };
+  let qualityWarnings = output.imageQuality.retakeRequired || output.imageQuality.grade === "retake"
+    ? uniqueNonEmpty(output.qualityWarnings).slice(0, 1)
+    : [];
+  if (declaredAngle === "odometer" && !extractedText.odometer) {
+    imageQuality.grade = "retake";
+    imageQuality.retakeRequired = true;
+    qualityWarnings = ["Odometer digits are not legible enough for buyer-visible mileage evidence."];
+  }
+  if (declaredAngle === "vin_plate" && !extractedText.vin) {
+    imageQuality.grade = "retake";
+    imageQuality.retakeRequired = true;
+    qualityWarnings = ["VIN plate text is not legible enough for identity verification."];
+  }
+
   return {
     ...output,
-    imageQuality: {
-      ...output.imageQuality,
-      notes: uniqueNonEmpty(output.imageQuality.notes).slice(0, 2)
-    },
+    imageQuality,
     qualityWarnings,
     detectedDamageCandidates: credibleDamage,
     extractedText,
     humanReviewRequired: output.humanReviewRequired || qualityWarnings.length > 0 || credibleDamage.length > 0
   };
+}
+
+function boundedText(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.length > maxLength ? trimmed.slice(0, maxLength - 1).trimEnd() : trimmed;
+}
+
+function prepareBedrockOutput(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const output = JSON.parse(JSON.stringify(value)) as {
+    imageQuality?: { notes?: unknown };
+    qualityWarnings?: unknown;
+    detectedDamageCandidates?: Array<{
+      location?: unknown;
+      explanation?: unknown;
+      repairEstimateUsd?: { rationale?: unknown };
+    }>;
+  };
+
+  if (output.imageQuality && Array.isArray(output.imageQuality.notes)) {
+    output.imageQuality.notes = output.imageQuality.notes
+      .map((item) => boundedText(item, 160))
+      .filter(Boolean);
+  }
+  if (Array.isArray(output.qualityWarnings)) {
+    output.qualityWarnings = output.qualityWarnings
+      .map((item) => boundedText(item, 160))
+      .filter(Boolean);
+  }
+  if (Array.isArray(output.detectedDamageCandidates)) {
+    output.detectedDamageCandidates = output.detectedDamageCandidates.map((candidate) => ({
+      ...candidate,
+      location: boundedText(candidate.location, 120) ?? candidate.location,
+      explanation: boundedText(candidate.explanation, 500) ?? candidate.explanation,
+      repairEstimateUsd: candidate.repairEstimateUsd
+        ? {
+          ...candidate.repairEstimateUsd,
+          rationale: boundedText(candidate.repairEstimateUsd.rationale, 300) ?? candidate.repairEstimateUsd.rationale
+        }
+        : candidate.repairEstimateUsd
+    }));
+  }
+  return output;
 }
 
 export const localVisionProvider: VisionProvider = {
@@ -136,23 +201,13 @@ export const localVisionProvider: VisionProvider = {
           explanation: "Inspection photo indicates a visible linear scratch on the driver door."
         })]
       };
-    } else if (key.includes("interior-wear")) {
-      raw = {
-        ...cleanOutput("interior", 0.91, imageQuality({
-          grade: "review",
-          exposureScore: 0.86,
-          occlusionRisk: 0.12,
-          notes: ["Interior lighting is acceptable, but seat-bolster wear requires human confirmation."]
-        })),
-        detectedDamageCandidates: [damageCandidate({
-          location: "driver seat bolster",
-          damageType: "interior_wear",
-          severityEstimate: "moderate",
-          confidence: 0.8,
-          explanation: "Inspection photo indicates moderate wear on the driver seat bolster."
-        })],
-        humanReviewRequired: true
-      };
+    } else if (key.includes("interior-overview") || key.includes("interior-wear")) {
+      raw = cleanOutput("interior", 0.91, imageQuality({
+        grade: "review",
+        exposureScore: 0.86,
+        occlusionRisk: 0.12,
+        notes: ["Interior overview is usable; no clear trim or seat damage is visible."]
+      }));
     } else if (key.includes("odometer")) {
       raw = {
         ...cleanOutput("odometer", 0.98, imageQuality({
@@ -220,7 +275,7 @@ export const localVisionProvider: VisionProvider = {
 
     return {
       raw,
-      validated: normalizeVisionOutput(VisionOutputSchema.parse(raw))
+      validated: normalizeVisionOutput(VisionOutputSchema.parse(raw), input.declaredAngle)
     };
   }
 };
@@ -240,7 +295,9 @@ export const bedrockVisionProvider: VisionProvider = {
       "{ photoAngle: 'front'|'rear'|'driver_side'|'passenger_side'|'interior'|'engine_bay'|'odometer'|'vin_plate'|'unknown', confidence: number, imageQuality: { grade: 'pass'|'review'|'retake', blurScore: number, exposureScore: number, framingScore: number, resolutionScore: number, occlusionRisk: number, retakeRequired: boolean, notes: string[] }, qualityWarnings: string[], detectedDamageCandidates: Array<{ location: string, damageType: 'scratch'|'dent'|'paint_damage'|'crack'|'wheel_damage'|'glass_damage'|'interior_wear'|'unknown', severityEstimate: 'minor'|'moderate'|'severe'|'unknown', confidence: number, explanation: string, repairEstimateUsd: { min: number, max: number, rationale: string }, requiresHumanConfirmation: boolean }>, extractedText: { vin?: string, odometer?: string }, humanReviewRequired: boolean }.",
       "Use 0-1 confidence values. If unsure, use unknown angle, lower confidence, and humanReviewRequired true.",
       "Never invent VIN or odometer values unless legible. Mark retakeRequired true for blur, poor framing, low light, occlusion, or non-vehicle images.",
-      "Keep reviewer work bounded: return at most one qualityWarnings item and at most one detectedDamageCandidates item. Omit damage candidates below 0.60 confidence."
+      "For odometer or VIN-plate capture slots, do not return damage candidates; extract the text only if legible or request retake.",
+      "Keep reviewer work bounded: return at most one qualityWarnings item and at most one detectedDamageCandidates item. Omit damage candidates below 0.80 confidence.",
+      "Each note, warning, location, and rationale must be concise; keep each string under 120 characters."
     ].join("\n");
     const response = await client.send(new ConverseCommand({
       modelId: process.env.BEDROCK_MODEL_ID ?? "us.anthropic.claude-sonnet-4-6",
@@ -267,13 +324,17 @@ export const bedrockVisionProvider: VisionProvider = {
       .trim() ?? "";
     try {
       const parsed = parseJsonObject(rawText);
-      const parsedOutput = VisionOutputSchema.parse(parsed);
-      const validated = normalizeVisionOutput(parsedOutput);
+      const prepared = prepareBedrockOutput(parsed);
+      const parsedOutput = VisionOutputSchema.parse(prepared);
+      const validated = normalizeVisionOutput(parsedOutput, input.declaredAngle);
       return {
-        raw: { response, text: rawText, parsed },
+        raw: { response, text: rawText, parsed, prepared },
         validated
       };
     } catch (error) {
+      if (process.env.BEDROCK_VISION_FALLBACK === "fail") {
+        throw new Error(`Bedrock response failed VisionOutputSchema validation: ${error instanceof Error ? error.message : "Unknown validation failure."}`);
+      }
       const fallback = await localVisionProvider.analyze(input);
       return {
         raw: {

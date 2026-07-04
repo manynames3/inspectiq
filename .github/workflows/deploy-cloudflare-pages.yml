@@ -41,13 +41,24 @@ jobs:
         if: steps.cf.outputs.available == 'true'
       - run: npm test
         if: steps.cf.outputs.available == 'true'
+      - run: npm run eval:vision
+        if: steps.cf.outputs.available == 'true'
       - name: Build web app for AWS API
         if: steps.cf.outputs.available == 'true'
         env:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || secrets.VITE_API_BASE_URL }}
+          VITE_AUTH_MODE: oidc
+          VITE_COGNITO_DOMAIN: ${{ vars.VITE_COGNITO_DOMAIN || secrets.VITE_COGNITO_DOMAIN }}
+          VITE_COGNITO_CLIENT_ID: ${{ vars.VITE_COGNITO_CLIENT_ID || secrets.VITE_COGNITO_CLIENT_ID }}
+          VITE_COGNITO_REDIRECT_URI: ${{ vars.VITE_COGNITO_REDIRECT_URI || secrets.VITE_COGNITO_REDIRECT_URI }}
+          VITE_COGNITO_LOGOUT_URI: ${{ vars.VITE_COGNITO_LOGOUT_URI || secrets.VITE_COGNITO_LOGOUT_URI }}
         run: |
           if [ -z "$VITE_API_BASE_URL" ]; then
             echo "VITE_API_BASE_URL repository variable or secret is required for Pages deployment."
+            exit 1
+          fi
+          if [ -z "$VITE_COGNITO_DOMAIN" ] || [ -z "$VITE_COGNITO_CLIENT_ID" ] || [ -z "$VITE_COGNITO_REDIRECT_URI" ] || [ -z "$VITE_COGNITO_LOGOUT_URI" ]; then
+            echo "Cognito VITE_* repository variables or secrets are required for authenticated Pages deployment."
             exit 1
           fi
           npm run build -w @inspectiq/shared
@@ -56,7 +67,8 @@ jobs:
 
       - name: Deploy to Cloudflare Pages
         if: steps.cf.outputs.available == 'true'
-        run: npx wrangler pages deploy apps/web/dist --project-name=inspectiq --branch=main
+        working-directory: apps/web
+        run: npx wrangler pages deploy dist --project-name=inspectiq --branch=main
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

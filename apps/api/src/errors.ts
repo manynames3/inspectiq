@@ -24,6 +24,10 @@ export function forbidden(message: string, details?: unknown): ApiError {
   return new ApiError(403, "FORBIDDEN", message, details);
 }
 
+export function unauthorized(message: string, details?: unknown): ApiError {
+  return new ApiError(401, "UNAUTHORIZED", message, details);
+}
+
 export function validation(message: string, details?: unknown): ApiError {
   return new ApiError(400, "VALIDATION_FAILED", message, details);
 }

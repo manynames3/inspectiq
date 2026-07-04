@@ -1,4 +1,4 @@
-import { CheckCircle2, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Gauge, RefreshCw, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 
@@ -6,6 +6,18 @@ type Health = {
   scorecard: Array<{ pillar: string; status: string; evidence: string }>;
   metricsTracked: string[];
   operationalMetrics: Array<{ metric: string; label: string; value: string; status: string; evidence: string }>;
+  serviceLevelObjectives: Array<{ name: string; target: string; current: string; risk: string; evidence: string }>;
+  alerts: Array<{ name: string; signal: string; response: string }>;
+  failedJobRecovery: {
+    detection: string;
+    operatorWorkflow: string[];
+    safeguards: string[];
+  };
+  operationsDashboard: {
+    name: string;
+    region: string;
+    widgets: string[];
+  };
   aiContract: {
     provider: string;
     promptVersion: string;
@@ -82,6 +94,62 @@ export function PlatformHealthPage() {
           ))}
         </div>
       </div>
+      {health ? (
+        <div className="ops-readiness-grid">
+          <section className="ops-panel">
+            <h2><Gauge size={18} /> Service levels</h2>
+            <div className="ops-list">
+              {health.serviceLevelObjectives.map((slo) => (
+                <article key={slo.name}>
+                  <div>
+                    <strong>{slo.name}</strong>
+                    <span>{slo.current}</span>
+                  </div>
+                  <p>{slo.target}</p>
+                  <small>{slo.evidence}</small>
+                </article>
+              ))}
+            </div>
+          </section>
+          <section className="ops-panel">
+            <h2><AlertTriangle size={18} /> Alerts</h2>
+            <div className="ops-list compact">
+              {health.alerts.map((alert) => (
+                <article key={alert.name}>
+                  <div>
+                    <strong>{alert.name}</strong>
+                  </div>
+                  <p>{alert.signal}</p>
+                  <small>{alert.response}</small>
+                </article>
+              ))}
+            </div>
+          </section>
+          <section className="ops-panel recovery-panel">
+            <h2><RotateCcw size={18} /> Failed-job recovery</h2>
+            <p>{health.failedJobRecovery.detection}</p>
+            <div className="recovery-columns">
+              <div>
+                <h3>Operator path</h3>
+                <ol>
+                  {health.failedJobRecovery.operatorWorkflow.map((item) => <li key={item}>{item}</li>)}
+                </ol>
+              </div>
+              <div>
+                <h3>Safeguards</h3>
+                <ul>
+                  {health.failedJobRecovery.safeguards.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              </div>
+            </div>
+            <div className="dashboard-chip-row">
+              <span>{health.operationsDashboard.name}</span>
+              <span>{health.operationsDashboard.region}</span>
+              {health.operationsDashboard.widgets.map((widget) => <span key={widget}>{widget}</span>)}
+            </div>
+          </section>
+        </div>
+      ) : null}
       {health?.aiContract ? (
         <div className="ai-contract-panel">
           <div>

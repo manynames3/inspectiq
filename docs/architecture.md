@@ -85,7 +85,7 @@ React workbench
 -> reviewer workflow
 ```
 
-The local workflow uses deterministic providers so it works without model credentials. The deployed backend uses API Gateway, Lambda, Neon Postgres, S3, SQS, Bedrock, Secrets Manager, Cognito resources, CloudWatch logs, alarms, and a dashboard. The remaining production hardening is to replace the current whole-snapshot Postgres adapter with per-operation transactions, enable frontend OIDC, add model evaluation data, and add environment promotion/rollback automation.
+The local workflow uses deterministic providers so it works without model credentials. The deployed backend uses Cloudflare Pages, Cognito hosted OIDC, API Gateway JWT enforcement, Lambda-side JWT/JWKS validation, Neon Postgres, S3, SQS, Bedrock, Secrets Manager, CloudWatch logs, alarms, and a dashboard. The remaining production hardening is to expand the model evaluation corpus with labeled production-like images, move hot paths to DB-first repositories as concurrency grows, and add environment promotion/rollback automation.
 
 ## Failure Posture
 

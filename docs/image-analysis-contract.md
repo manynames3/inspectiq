@@ -6,9 +6,10 @@ Image analysis is advisory evidence triage. It helps reviewers find missing angl
 
 ## Provider Contract
 
-Current local provider:
+Providers:
 
 - Provider: `localVisionProvider`
+- Provider: `bedrockVisionProvider`
 - Prompt version: `photo-analysis-v2`
 - Schema: `VisionOutputSchema`
 
@@ -74,6 +75,7 @@ Required validated fields:
 - Raw model output and validated output are stored separately.
 - Invalid schema output is rejected and recorded as a failed analysis.
 - Image quality is evaluated separately from damage confidence.
+- Material damage candidates below the configured threshold, default `MIN_DAMAGE_CONFIDENCE=0.80`, are discarded before reviewer suggestions are created.
 - Retake-required photos create quality-warning suggestions and block buyer-visible release until resolved.
 - Every suggestion starts as pending.
 - Reviewers can accept, reject, or edit suggestions.
