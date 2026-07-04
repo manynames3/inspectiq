@@ -753,11 +753,7 @@ export function InspectionDetailPage() {
                 </label>
                 <button className="secondary-button" disabled={analysisDisabled} title={canAnalyzePhotos ? undefined : "Inspector or Admin access required"} onClick={() => void runAction("analyze", async () => {
                   const photosToAnalyze = bundle.photos.filter((photo) => photo.analysisStatus !== "completed");
-                  for (const photo of bundle.photos) {
-                    if (photo.analysisStatus !== "completed") {
-                      await api(`/api/photos/${photo.id}/analyze`, { method: "POST", body: JSON.stringify({}) }, actor);
-                    }
-                  }
+                  await api(`/api/inspections/${id}/photos/analyze`, { method: "POST", body: JSON.stringify({ idempotencyKeyPrefix: `analysis-${id}` }) }, actor);
                   await waitForPhotoAnalysisCompletion(id, photosToAnalyze.map((photo) => photo.id), actor);
                 })}>
                   <Play size={16} /> Analyze photos

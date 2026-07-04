@@ -219,6 +219,29 @@ describe("InspectIQ API", () => {
       .expect(200);
   });
 
+  it("analyzes outstanding photos for an inspection in one batch action", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+    const attached = await request(api)
+      .post(`/api/inspections/${inspectionId}/photos/sample`)
+      .set(inspectorHeaders)
+      .send({ sampleKey: "complete-clean-set" })
+      .expect(201);
+
+    const analyzed = await request(api)
+      .post(`/api/inspections/${inspectionId}/photos/analyze`)
+      .set(inspectorHeaders)
+      .send({ idempotencyKeyPrefix: "batch-test" })
+      .expect(200);
+
+    expect(analyzed.body.data.jobs).toHaveLength(attached.body.data.length);
+    expect(analyzed.body.data.jobs.every((job: { status: string }) => job.status === "completed")).toBe(true);
+    expect(analyzed.body.data.suggestions.length).toBeGreaterThanOrEqual(attached.body.data.length);
+
+    const bundle = await request(api).get(`/api/inspections/${inspectionId}`).expect(200);
+    expect(bundle.body.data.photos.every((photo: { analysisStatus: string }) => photo.analysisStatus === "completed")).toBe(true);
+  });
+
   it("runs a full backend create to finalization flow with audit trail", async () => {
     const { inspectionId, suggestions } = await createAnalyzedCompleteInspection();
 

@@ -248,6 +248,49 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     sendData(res, appStore.listPhotos(req.params.id));
   }));
 
+  app.post("/api/inspections/:id/photos/analyze", asyncRoute(async (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "photo:analyze");
+    appStore.getInspection(req.params.id);
+
+    const photos = appStore.listPhotos(req.params.id).filter((photo) => photo.analysisStatus !== "completed");
+    const idempotencyKeyPrefix = req.header("idempotency-key") ?? req.body?.idempotencyKeyPrefix ?? null;
+    const jobs = photos.map((photo) => appStore.enqueueImageAnalysis(
+      photo,
+      actor,
+      idempotencyKeyPrefix ? `${idempotencyKeyPrefix}:${photo.id}` : null
+    ));
+
+    if (process.env.IMAGE_ANALYSIS_MODE === "queue") {
+      await persistMutation(options);
+      await Promise.all(jobs
+        .filter((job) => job.status === "queued")
+        .map((job) => sendImageAnalysisMessage({
+          jobId: job.id,
+          inspectionId: job.inspectionId,
+          photoId: job.photoId,
+          actor
+        })));
+      sendData(res, {
+        jobs,
+        queued: jobs.filter((job) => job.status === "queued").length,
+        suggestions: appStore.listSuggestions(req.params.id)
+      }, 202);
+      return;
+    }
+
+    const results = [];
+    for (const job of jobs) {
+      results.push(await runImageAnalysisJob(appStore, job.id, actor));
+    }
+    await persistMutation(options);
+    sendData(res, {
+      jobs: jobs.map((job) => appStore.imageAnalysisJobs.get(job.id) ?? job),
+      results,
+      suggestions: appStore.listSuggestions(req.params.id)
+    });
+  }));
+
   app.post("/api/photos/:photoId/analyze", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:analyze");

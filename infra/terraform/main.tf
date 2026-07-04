@@ -219,14 +219,14 @@ resource "aws_lambda_function" "api" {
 }
 
 resource "aws_lambda_function" "image_worker" {
-  function_name    = local.worker_lambda_name
-  role             = aws_iam_role.lambda.arn
-  runtime          = "nodejs22.x"
-  handler          = "imageWorker.handler"
-  filename         = local.lambda_zip
-  source_code_hash = filebase64sha256(local.lambda_zip)
-  timeout          = 120
-  memory_size      = 1536
+  function_name                  = local.worker_lambda_name
+  role                           = aws_iam_role.lambda.arn
+  runtime                        = "nodejs22.x"
+  handler                        = "imageWorker.handler"
+  filename                       = local.lambda_zip
+  source_code_hash               = filebase64sha256(local.lambda_zip)
+  timeout                        = 120
+  memory_size                    = 1536
 
   environment {
     variables = {
