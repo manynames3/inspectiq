@@ -1,48 +1,62 @@
-# AWS Deployment Plan
+# AWS Deployment
 
-Target architecture:
+Current deployed architecture in `us-east-1`:
 
 ```txt
-React
--> API Gateway + Lambda or ECS/Fargate API
--> Neon Free Postgres for low-cost review environments or Aurora Postgres for AWS-native production
+React on Cloudflare Pages
+-> API Gateway HTTP API
+-> Node.js Lambda API
+-> Neon Postgres
 -> S3 image objects
--> SQS/EventBridge image-analysis jobs
--> Lambda or ECS image worker
--> Bedrock/Rekognition/custom model
+-> SQS image-analysis jobs
+-> Lambda image worker
+-> Bedrock multimodal model
 -> validated suggestion records
 -> audit trail
 ```
 
-Supporting services:
+Provisioned supporting services:
 
-- Java grading service on ECS/Fargate when independent scaling or ownership is justified.
-- Step Functions for report workflow retries and long-running status.
-- Secrets Manager for model and database credentials.
-- KMS for S3/RDS encryption.
+- Secrets Manager for the Neon pooled database URL.
+- Cognito user pool, app client, and hosted domain.
+- S3 server-side encryption and blocked public access.
 - CloudWatch logs, metrics, alarms, and dashboards.
-- Cognito or enterprise OIDC for role claims.
+- Least-privilege IAM for Lambda, S3, SQS, Secrets Manager, CloudWatch, and Bedrock.
 
-Deployment stages:
+Deployment commands:
 
-1. Package API and workers as containers.
-2. Configure VPC, subnets, security groups, and Aurora.
-3. Deploy S3 buckets with encryption and blocked public access.
-4. Add presigned upload endpoint.
-5. Wire queues and workers using the existing `image_analysis_jobs` status contract.
-6. Deploy Step Functions report workflow.
-7. Map the existing RBAC actions to Cognito/OIDC groups and JWT claims.
-8. Add CloudWatch dashboards for image analysis success, missing angle rate, human review rate, grade latency, finalization rate, and suggestion acceptance.
+```bash
+npm run build:lambda
+terraform -chdir=infra/terraform init
+terraform -chdir=infra/terraform plan -out=tfplan
+terraform -chdir=infra/terraform apply tfplan
+```
 
-Persistence migration:
+Store the Neon connection string in AWS Secrets Manager after the first apply. Do not commit or print the value.
+
+```bash
+SECRET_ARN="$(terraform -chdir=infra/terraform output -raw database_secret_arn)"
+aws secretsmanager put-secret-value \
+  --region us-east-1 \
+  --secret-id "$SECRET_ARN" \
+  --secret-string "$DATABASE_URL"
+```
+
+Current persistence:
+
+- The deployed API runs with `PERSISTENCE_MODE=postgres`.
+- Neon schema is applied from `apps/api/src/db/schema.sql`.
+- Workflow state is loaded from Postgres and persisted through the existing store facade.
+- `pg_advisory_xact_lock` serializes whole-snapshot writes to avoid concurrent overwrite races in the current bridge implementation.
+
+Production repository hardening:
 
 1. Keep `MemoryStore` behavior as a test fixture and local workflow facade.
-2. Use `PERSISTENCE_MODE=postgres` for relational local/staging persistence with the current schema.
-3. Replace whole-store snapshot writes with per-operation Postgres repository methods.
-4. Add migrations for `inspections`, `vehicle_photos`, `image_analysis_jobs`, `photo_analysis_results`, `vision_suggestions`, `damage_items`, `condition_grades`, `ai_report_jobs`, `ai_report_drafts`, `final_reports`, and `audit_events`.
-5. Wrap reviewer accept/edit/reject, damage confirmation, grading, and finalization in transactions.
-6. Store image bytes only in S3; keep Postgres to object keys, checksums, MIME metadata, provider outputs, and audit facts.
-7. Add backups, retention, append-only audit conventions, and data export policy before production use.
+2. Replace whole-store snapshot writes with per-operation Postgres repository methods.
+3. Add a formal migration runner and release rollback workflow.
+4. Wrap reviewer accept/edit/reject, damage confirmation, grading, and finalization in narrow transactions.
+5. Store image bytes only in S3; keep Postgres to object keys, checksums, MIME metadata, provider outputs, and audit facts.
+6. Add backups, retention, append-only audit conventions, and data export policy before production use.
 
 Image worker requirements:
 
@@ -53,3 +67,10 @@ Image worker requirements:
 - `VisionOutputSchema` validation before suggestions are created;
 - image-quality retake routing before buyer-visible release;
 - provider latency, failure, and schema-rejection metrics.
+
+Known open gaps:
+
+- Frontend OIDC is not wired yet, so API Gateway JWT enforcement is feature-flagged off for the public walkthrough.
+- The Java grading service remains optional; the deployed Lambda uses the equivalent Node fallback unless `GRADING_SERVICE_URL` points to a reachable service.
+- Report generation is async-shaped in the data model but not yet moved to SQS or Step Functions.
+- Model evaluation datasets and confidence calibration are still required before production claims about detection quality.

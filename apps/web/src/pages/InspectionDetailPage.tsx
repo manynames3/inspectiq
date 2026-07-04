@@ -185,6 +185,71 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+async function sha256Base64(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  const bytes = new Uint8Array(digest);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+type UploadIntent = {
+  objectBucket: string;
+  objectKey: string;
+  uploadUrl: string | null;
+  requiredHeaders: Record<string, string>;
+  expiresInSeconds: number;
+};
+
+function photoImageUrl(photo: VehiclePhoto): string {
+  if (photo.objectBucket && photo.objectKey && photo.objectBucket !== "inspectiq-sample-images") {
+    return `${apiBase}/api/photos/${photo.id}/image`;
+  }
+  return assetUrl(photo.storageKey);
+}
+
+async function uploadInspectionPhoto(inspectionId: string, file: File, actor: ReturnType<typeof useActor>["actor"]) {
+  if (!/^image\/(jpeg|png|webp|svg\+xml)$/.test(file.type)) {
+    throw new Error("Upload a JPEG, PNG, WebP, or SVG image.");
+  }
+  const checksumSha256 = await sha256Base64(file);
+  const intent = await api<UploadIntent>("/api/uploads/intent", {
+    method: "POST",
+    body: JSON.stringify({
+      inspectionId,
+      originalFilename: file.name,
+      mimeType: file.type || "image/jpeg",
+      byteSize: file.size,
+      checksumSha256
+    })
+  }, actor);
+  if (intent.uploadUrl) {
+    const putResponse = await fetch(intent.uploadUrl, {
+      method: "PUT",
+      headers: intent.requiredHeaders,
+      body: file
+    });
+    if (!putResponse.ok) throw new Error("Image upload to object storage failed.");
+    return api(`/api/inspections/${inspectionId}/photos/upload`, {
+      method: "POST",
+      body: JSON.stringify({
+        originalFilename: file.name,
+        mimeType: file.type || "image/jpeg",
+        objectBucket: intent.objectBucket,
+        objectKey: intent.objectKey,
+        storageKey: `/api/photos/object/${encodeURIComponent(intent.objectKey)}`,
+        byteSize: file.size,
+        checksumSha256
+      })
+    }, actor);
+  }
+  const storageKey = await readFileAsDataUrl(file);
+  return api(`/api/inspections/${inspectionId}/photos/upload`, {
+    method: "POST",
+    body: JSON.stringify({ originalFilename: file.name, mimeType: file.type || "image/jpeg", storageKey })
+  }, actor);
+}
+
 function editSuggestionPayload(suggestion: VisionSuggestion): { suggestedValue: unknown; explanation?: string } | null {
   const value = suggestionValueRecord(suggestion);
 
@@ -623,7 +688,7 @@ export function InspectionDetailPage() {
                       const job = imageJobByPhotoId.get(photo.id);
                       return (
                         <article className="photo-tile" key={photo.id}>
-                          <img src={assetUrl(photo.storageKey)} alt={photo.originalFilename} />
+                          <img src={photoImageUrl(photo)} alt={photo.originalFilename} />
                           <div>
                             <strong>{photoDisplayName(photo)}</strong>
                             <span className={`photo-confidence-badge ${confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={`Detected angle confidence ${confidenceLabel}`}>
@@ -656,11 +721,7 @@ export function InspectionDetailPage() {
                     const file = event.target.files?.[0];
                     if (!file) return;
                     void runAction("upload", async () => {
-                      const storageKey = await readFileAsDataUrl(file);
-                      return api(`/api/inspections/${id}/photos/upload`, {
-                        method: "POST",
-                        body: JSON.stringify({ originalFilename: file.name, mimeType: file.type || "image/jpeg", storageKey })
-                      }, actor);
+                      return uploadInspectionPhoto(id, file, actor);
                     });
                   }} />
                 </label>
@@ -867,7 +928,7 @@ function SuggestionCard({ suggestion, photo, disabled, onAccept, onReject, onEdi
       </div>
       {photo ? (
         <div className="suggestion-photo">
-          <img src={assetUrl(photo.storageKey)} alt={photo.originalFilename} />
+          <img src={photoImageUrl(photo)} alt={photo.originalFilename} />
         </div>
       ) : null}
       <dl className="suggestion-facts">

@@ -49,19 +49,19 @@ export function platformHealthPayload(store: MemoryStore, provider: PlatformHeal
         "humanReviewRequired"
       ],
       confidencePolicy: "Suggestions below reviewer confidence thresholds remain held for human review; no AI result finalizes a condition report.",
-      productionTarget: "S3/R2 image object storage -> queue worker -> Bedrock/Rekognition/custom model -> validated suggestion records -> audit trail.",
+      productionTarget: "S3 image object storage -> queue worker -> Bedrock multimodal model -> validated suggestion records -> audit trail.",
       imageQualityPolicy: "Image quality is scored separately from damage confidence. Retake-required photos block buyer-visible release until a reviewer resolves the quality warning."
     },
     persistence: {
       activeMode: env.PERSISTENCE_MODE ?? "file",
-      postgresReady: Boolean(env.DATABASE_URL),
+      postgresReady: Boolean(env.DATABASE_URL || env.DATABASE_SECRET_ARN),
       localMode: "File snapshot is retained for repeatable local walkthroughs and tests.",
-      productionMode: "Set PERSISTENCE_MODE=postgres and DATABASE_URL to persist normalized inspection, photo, suggestion, report, and audit records in Postgres."
+      productionMode: "Set PERSISTENCE_MODE=postgres and DATABASE_URL or DATABASE_SECRET_ARN to persist normalized inspection, photo, suggestion, report, and audit records in Postgres."
     },
     storageContract: {
       uploadIntentEndpoint: "/api/uploads/intent",
       localBehavior: "Browser previews can still post small data URLs for local inspection workflows.",
-      productionBehavior: "Upload intent returns object bucket/key metadata and the production path is presigned S3/R2 PUT with checksum and MIME validation."
+      productionBehavior: "Upload intent returns object bucket/key metadata and the production path is presigned S3 PUT with checksum and MIME validation."
     },
     asyncWorkerContract: {
       queueEvent: "image_analysis.queued",
@@ -73,15 +73,15 @@ export function platformHealthPayload(store: MemoryStore, provider: PlatformHeal
       local: [
         "Deterministic vision and report providers keep walkthroughs repeatable without model credentials.",
         "Express uses file snapshots locally by default; PERSISTENCE_MODE=postgres switches to normalized Postgres persistence.",
-        "Cloudflare Pages can use KV for hosted walkthrough state.",
+        "Cloudflare Pages can host the web client while API state lives in Postgres.",
         "Browser uploads store small preview data URLs instead of production object-storage writes.",
         "Role headers simulate authenticated role claims for local inspection/reviewer/admin flows."
       ],
       production: [
         "Postgres repository with schema migrations, indexed foreign keys, transaction boundaries, and retention policy.",
         "S3 presigned uploads with checksum, MIME validation, metadata, lifecycle, and KMS encryption.",
-        "SQS/EventBridge image-analysis jobs with idempotency keys, DLQ, retries, and worker observability.",
-        "Bedrock/Rekognition/custom model adapter storing raw output, validated output, prompt version, provider metadata, and rejected-output audit records.",
+        "SQS image-analysis jobs with idempotency keys, DLQ, retries, and worker observability.",
+        "Bedrock multimodal adapter storing raw output, validated output, prompt version, provider metadata, and rejected-output audit records.",
         "Cognito or enterprise OIDC with object-level authorization and least-privilege IAM."
       ],
       javaBoundary: "The Java grading service is intentionally small: keep it separate only when condition rules need independent ownership, versioning, testing, or reuse outside the Node API; collapse it into the API for a smaller early-stage team."

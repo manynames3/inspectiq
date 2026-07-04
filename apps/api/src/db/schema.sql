@@ -34,7 +34,7 @@ create table if not exists vehicle_photos (
   object_key text,
   thumbnail_storage_key text,
   byte_size integer check (byte_size is null or byte_size > 0),
-  checksum_sha256 text check (checksum_sha256 is null or checksum_sha256 ~* '^[a-f0-9]{64}$'),
+  checksum_sha256 text check (checksum_sha256 is null or checksum_sha256 ~* '^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$'),
   original_filename text not null,
   mime_type text not null,
   uploaded_by text references users(id),
@@ -53,6 +53,8 @@ alter table vehicle_photos add column if not exists thumbnail_storage_key text;
 alter table vehicle_photos add column if not exists byte_size integer;
 alter table vehicle_photos add column if not exists checksum_sha256 text;
 alter table vehicle_photos add column if not exists upload_status text not null default 'uploaded';
+alter table vehicle_photos drop constraint if exists vehicle_photos_checksum_sha256_check;
+alter table vehicle_photos add constraint vehicle_photos_checksum_sha256_check check (checksum_sha256 is null or checksum_sha256 ~* '^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$');
 
 create table if not exists image_analysis_jobs (
   id text primary key default gen_random_uuid()::text,

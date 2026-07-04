@@ -8,8 +8,36 @@ variable "aws_region" {
   default = "us-east-1"
 }
 
-variable "private_subnet_ids" {
-  type    = list(string)
-  default = []
+variable "allowed_web_origins" {
+  type = list(string)
+  default = [
+    "https://inspectiq.pages.dev",
+    "https://d2d7ad14.inspectiq.pages.dev"
+  ]
 }
 
+variable "bedrock_model_id" {
+  type    = string
+  default = "us.anthropic.claude-sonnet-4-6"
+}
+
+variable "enable_cognito_authorizer" {
+  type    = bool
+  default = false
+}
+
+variable "cognito_callback_urls" {
+  type = list(string)
+  default = [
+    "http://localhost:5173",
+    "https://inspectiq.pages.dev"
+  ]
+}
+
+variable "cognito_logout_urls" {
+  type = list(string)
+  default = [
+    "http://localhost:5173",
+    "https://inspectiq.pages.dev"
+  ]
+}

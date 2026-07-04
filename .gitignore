@@ -4,6 +4,12 @@ coverage/
 .env
 .DS_Store
 .wrangler/
+.neon
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
 .inspectiq/
 apps/api/uploads/
 apps/web/.vite/

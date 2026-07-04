@@ -25,29 +25,30 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 - React + TypeScript workbench for inspector/reviewer/admin roles.
 - Node + Express REST API with Zod request/output validation.
 - Java Spring Boot grading service boundary for deterministic business rules.
-- Postgres schema, Drizzle table definitions, and optional `PERSISTENCE_MODE=postgres` persistence using `pg`.
-- Upload intent and image-analysis job records shaped for S3 plus SQS/EventBridge worker processing.
-- Deterministic local providers shaped around Bedrock/Rekognition/custom-model interfaces.
-- Cloudflare Pages Functions and KV snapshot support for hosted walkthroughs.
-- AWS target: React -> API Gateway/Lambda or ECS -> Neon Free Postgres or Aurora -> S3 images -> SQS/EventBridge -> image worker -> Bedrock/Rekognition/custom model -> validated suggestions -> audit trail.
+- Postgres schema, Drizzle table definitions, and deployed `PERSISTENCE_MODE=postgres` persistence using Neon and `pg`.
+- S3 presigned upload intent, private object metadata, and photo image redirect flow.
+- SQS-backed image-analysis jobs processed by a Lambda worker.
+- Deterministic local providers plus deployed Bedrock multimodal provider behind the same schema contract.
+- Cloudflare Pages frontend and AWS API Gateway/Lambda backend.
+- Deployed shape: React -> Cloudflare Pages -> API Gateway/Lambda -> Neon Postgres -> S3 images -> SQS -> Lambda image worker -> Bedrock multimodal model -> validated suggestions -> audit trail.
 
 ## Intentional Local Tradeoffs
 
-- AI is deterministic locally so the walkthrough is reliable without paid model credentials.
-- Deterministic image analysis still uses the production-shaped contract: angle, image quality, damage, OCR, confidence, repair estimate, provider metadata, prompt version, raw output, validated output, and audit event.
-- Local server persists to a JSON snapshot by default, Cloudflare Pages can persist to KV, and `PERSISTENCE_MODE=postgres` provides a real relational path. A full production version should move from snapshot persistence to per-operation repository transactions.
-- Browser uploads use small data URLs for preview; upload intent and photo metadata show the intended S3/R2 presigned-object path.
+- AI is deterministic locally so tests and local walkthroughs are reliable without model credentials.
+- Deterministic image analysis and Bedrock image analysis use the same production-shaped contract: angle, image quality, damage, OCR, confidence, repair estimate, provider metadata, prompt version, raw output, validated output, and audit event.
+- Local server persists to a JSON snapshot by default; the deployed backend persists to Neon Postgres. A full production version should move from snapshot persistence to per-operation repository transactions.
+- Local browser uploads can use small data URLs for preview; deployed uploads use S3 presigned object URLs.
 - The Java grading service is optional locally; the API fallback keeps the workflow available while preserving the service boundary.
-- Auth is role-header based locally; production should use Cognito/OIDC claims mapped to RBAC actions.
+- Auth is role-header based in the public walkthrough; Cognito resources are provisioned and should be enforced after frontend OIDC is wired.
 
 ## What I Would Build Next In Production
 
 - Replace whole-store Postgres snapshot writes with per-operation repository methods and narrower transaction boundaries.
-- S3/R2 object storage with presigned uploads, EXIF stripping, image normalization, and retryable ingestion jobs.
-- Queue-backed image worker using the existing image-analysis job contract, idempotency keys, dead-letter handling, and model-provider metadata.
-- Bedrock/Rekognition/custom model adapter with confidence thresholds and rejected-output audit records.
+- Add EXIF stripping, image normalization, thumbnail generation, and object lifecycle policies.
+- Expand queue-backed worker recovery with richer retry classification and DLQ replay tooling.
+- Add model evaluation sets, confidence thresholds, calibration reporting, and rejected-output audit records.
 - Operational dashboards for image analysis success, missing angle rate, human review rate, grade latency, finalization rate, and suggestion acceptance.
-- Real authentication, object-level authorization, CloudWatch/X-Ray tracing, alarms, and runbooks.
+- Frontend OIDC, object-level authorization, X-Ray tracing, alarm notification targets, and runbooks.
 
 ## Five-Minute Walkthrough
 

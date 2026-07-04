@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "build": "npm run build -w @inspectiq/shared && npm run build -w @inspectiq/api && npm run build -w @inspectiq/web",
+    "build:lambda": "node scripts/build-lambda.mjs",
     "dev": "concurrently -n api,web -c cyan,green \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "npm run build -w @inspectiq/shared && npm run dev -w @inspectiq/api",
     "dev:web": "npm run dev -w @inspectiq/web",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
+    "esbuild": "^0.28.1",
     "playwright-core": "^1.61.1",
     "typescript": "^5.9.2"
   },

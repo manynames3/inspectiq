@@ -16,4 +16,4 @@
 
 - Built an end-to-end AI-assisted wholesale inspection workbench with React, TypeScript, Express, Zod, and Java Spring Boot, covering required photo evidence, schema-validated image analysis, reviewer confirmation, deterministic grading, CR/VDP readiness, report drafting, and finalization.
 - Designed governed AI workflow where suggestions remain advisory until human acceptance; accepted evidence updates completeness, damage candidates materialize as auditable facts with repair estimate ranges, and finalized inspections reject further material changes.
-- Produced a production architecture mapping React -> API Gateway/Lambda or ECS -> Postgres -> S3 -> SQS/EventBridge image workers -> Bedrock/Rekognition/custom model -> validated suggestions -> audit trail, with CloudWatch metrics and IAM/KMS/Secrets Manager controls.
+- Deployed a production-shaped cloud path mapping React on Cloudflare Pages -> API Gateway/Lambda -> Neon Postgres -> S3 -> SQS/Lambda image worker -> Bedrock multimodal model -> validated suggestions -> audit trail, with CloudWatch metrics, Cognito resources, IAM, and Secrets Manager controls.

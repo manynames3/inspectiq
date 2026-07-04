@@ -55,6 +55,14 @@ export function errorHandler(error: unknown, _req: Request, res: Response, _next
     return;
   }
 
+  console.error(JSON.stringify({
+    level: "error",
+    event: "inspectiq.unhandled_error",
+    requestId,
+    message: error instanceof Error ? error.message : "Unknown error",
+    stack: error instanceof Error ? error.stack : undefined
+  }));
+
   res.status(500).json({
     error: {
       code: "INTERNAL_ERROR",

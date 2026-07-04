@@ -89,7 +89,7 @@ export function seedStore(store: MemoryStore): void {
         originalFilename: sample.filename,
         mimeType: sample.mimeType,
         uploadedBy: inspector.id,
-        declaredAngle: null
+        declaredAngle: sample.angle
       }, actor);
     }
   }

@@ -1,6 +1,5 @@
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
-import path from "node:path";
 import { pinoHttp } from "pino-http";
 import {
   CreateDamageItemSchema,
@@ -19,15 +18,19 @@ import { errorHandler, validation, conflict } from "./errors.js";
 import { gradeCondition } from "./gradingClient.js";
 import { getReportProvider } from "./reportProvider.js";
 import { getVisionProvider } from "./visionProvider.js";
+import { createPresignedDownload, createPresignedUpload, s3ObjectUrl } from "./awsStorage.js";
+import { sendImageAnalysisMessage } from "./awsQueue.js";
+import { runImageAnalysisJob } from "./imageAnalysisRunner.js";
 import { platformHealthPayload } from "./platformHealth.js";
 import { requireAction } from "./rbac.js";
-import { findSampleImage, sampleBundles } from "./sampleImages.js";
+import { findSampleImage, sampleBundles, sampleImageDirectory } from "./sampleImages.js";
 import { seedStore } from "./seedData.js";
 import { MemoryStore, store as defaultStore } from "./store.js";
 import type { Actor } from "./domain.js";
 
 type AsyncRoute = (req: Request, res: Response, next: NextFunction) => Promise<void> | void;
 type AppOptions = {
+  beforeRequest?: () => void | Promise<void>;
   afterMutation?: () => void | Promise<void>;
 };
 
@@ -43,6 +46,10 @@ function sendData<T>(res: Response, data: T, status = 200): void {
     requestId: res.locals.requestId
   };
   res.status(status).json(body);
+}
+
+async function persistMutation(options: AppOptions): Promise<void> {
+  await options.afterMutation?.();
 }
 
 function actorFromRequest(req: Request, store: MemoryStore): Actor {
@@ -95,27 +102,21 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     quietReqLogger: true,
     customProps: (_req, res) => ({ requestId: res.locals.requestId })
   }));
-  app.use(cors({ origin: process.env.WEB_ORIGIN ?? true }));
+  const allowedOrigins = process.env.WEB_ORIGIN?.split(",").map((origin) => origin.trim()).filter(Boolean);
+  app.use(cors({
+    origin: allowedOrigins && allowedOrigins.length > 1 ? allowedOrigins : process.env.WEB_ORIGIN ?? true
+  }));
   app.use(express.json({ limit: "4mb" }));
-  app.use((req, res, next) => {
-    res.on("finish", () => {
-      if (!options.afterMutation || (req.method !== "POST" && req.method !== "PATCH" && req.method !== "DELETE") || res.statusCode >= 500) {
-        return;
-      }
-      Promise.resolve(options.afterMutation()).catch((error) => {
-        console.error(JSON.stringify({
-          level: "error",
-          event: "inspectiq.persistence.save_failed",
-          requestId: res.locals.requestId,
-          message: error instanceof Error ? error.message : "Unknown persistence error."
-        }));
-      });
-    });
-    next();
+  app.use("/api", (req, res, next) => {
+    if (!options.beforeRequest) {
+      next();
+      return;
+    }
+    Promise.resolve(options.beforeRequest())
+      .then(() => next())
+      .catch(next);
   });
-
-  const sampleImagePath = path.resolve(process.cwd(), "../../sample-data/images");
-  app.use("/sample-images", express.static(sampleImagePath));
+  app.use("/sample-images", express.static(sampleImageDirectory()));
 
   app.get("/api/health", (_req, res) => {
     sendData(res, {
@@ -143,7 +144,8 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const input = CreateInspectionSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "inspection:create");
-    sendData(res, appStore.createInspection(input, actor), 201);
+    const inspection = appStore.createInspection(input, actor);
+    return persistMutation(options).then(() => sendData(res, inspection, 201));
   }));
 
   app.get("/api/inspections/:id", asyncRoute((req, res) => {
@@ -154,10 +156,11 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const input = PatchInspectionSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "inspection:update");
-    sendData(res, appStore.patchInspection(req.params.id, input, actor));
+    const inspection = appStore.patchInspection(req.params.id, input, actor);
+    return persistMutation(options).then(() => sendData(res, inspection));
   }));
 
-  app.post("/api/inspections/:id/photos/upload", asyncRoute((req, res) => {
+  app.post("/api/inspections/:id/photos/upload", asyncRoute(async (req, res) => {
     const input = UploadPhotoSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:capture");
@@ -175,21 +178,38 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       uploadedBy: actor.id,
       declaredAngle: input.declaredAngle ?? null
     }, actor);
+    await persistMutation(options);
     sendData(res, photo, 201);
   }));
 
-  app.post("/api/uploads/intent", asyncRoute((req, res) => {
+  app.post("/api/uploads/intent", asyncRoute(async (req, res) => {
     const input = UploadIntentSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:capture");
     appStore.assertMutableInspection(input.inspectionId, "create upload intent");
     const objectKey = objectKeyForUpload(input.inspectionId, input.originalFilename);
+    const objectBucket = process.env.IMAGE_BUCKET ?? "inspectiq-local-uploads";
+    if (process.env.IMAGE_UPLOAD_MODE === "presigned") {
+      if (!process.env.IMAGE_BUCKET) throw validation("IMAGE_BUCKET is required for presigned uploads.");
+      const presigned = await createPresignedUpload({
+        bucket: objectBucket,
+        key: objectKey,
+        mimeType: input.mimeType,
+        checksumSha256: input.checksumSha256 ?? null
+      });
+      sendData(res, {
+        objectBucket,
+        objectKey,
+        uploadUrl: presigned.uploadUrl,
+        requiredHeaders: presigned.requiredHeaders,
+        expiresInSeconds: presigned.expiresInSeconds
+      }, 201);
+      return;
+    }
     sendData(res, {
-      objectBucket: process.env.IMAGE_BUCKET ?? "inspectiq-local-uploads",
+      objectBucket,
       objectKey,
-      uploadUrl: process.env.IMAGE_UPLOAD_MODE === "presigned"
-        ? `s3://placeholder-presigned-upload/${objectKey}`
-        : null,
+      uploadUrl: null,
       requiredHeaders: {
         "content-type": input.mimeType,
         ...(input.checksumSha256 ? { "x-amz-checksum-sha256": input.checksumSha256 } : {})
@@ -198,7 +218,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     }, 201);
   }));
 
-  app.post("/api/inspections/:id/photos/sample", asyncRoute((req, res) => {
+  app.post("/api/inspections/:id/photos/sample", asyncRoute(async (req, res) => {
     const input = SamplePhotoSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:capture");
@@ -217,9 +237,10 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
         originalFilename: sample.filename,
         mimeType: sample.mimeType,
         uploadedBy: actor.id,
-        declaredAngle: null
+        declaredAngle: sample.angle
       }, actor);
     });
+    await persistMutation(options);
     sendData(res, photos, 201);
   }));
 
@@ -240,66 +261,83 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       return;
     }
     const job = appStore.enqueueImageAnalysis(photo, actor, req.header("idempotency-key") ?? req.body?.idempotencyKey ?? null);
-    appStore.startImageAnalysisJob(job.id, actor);
-    const provider = getVisionProvider();
-    try {
-      const result = await provider.analyze({ filename: photo.originalFilename, storageKey: photo.storageKey });
-      const analysis = appStore.saveAnalysis(photo, {
-        provider: provider.name,
-        promptVersion: provider.promptVersion,
-        raw: result.raw,
-        validated: result.validated,
-        jobId: job.id
-      }, actor);
-      sendData(res, {
-        job: appStore.imageAnalysisJobs.get(job.id),
-        analysis,
-        suggestions: appStore.listSuggestions(photo.inspectionId).filter((suggestion) => suggestion.photoId === photo.id)
+    if (process.env.IMAGE_ANALYSIS_MODE === "queue") {
+      await persistMutation(options);
+      await sendImageAnalysisMessage({
+        jobId: job.id,
+        inspectionId: photo.inspectionId,
+        photoId: photo.id,
+        actor
       });
-    } catch (error) {
-      const analysis = appStore.failAnalysis(photo, provider.name, provider.promptVersion, error instanceof Error ? error.message : "Unknown analysis failure.", actor, job.id);
-      sendData(res, { job: appStore.imageAnalysisJobs.get(job.id), analysis }, 502);
+      sendData(res, {
+        job,
+        analysis: null,
+        suggestions: appStore.listSuggestions(photo.inspectionId).filter((suggestion) => suggestion.photoId === photo.id)
+      }, 202);
+      return;
     }
+    const result = await runImageAnalysisJob(appStore, job.id, actor);
+    await persistMutation(options);
+    sendData(res, result, result.analysis.status === "failed" ? 502 : 200);
   }));
 
   app.get("/api/photos/:photoId/analysis", asyncRoute((req, res) => {
     sendData(res, appStore.getPhotoAnalysis(req.params.photoId));
   }));
 
+  app.get("/api/photos/:photoId/image", asyncRoute(async (req, res) => {
+    const photo = appStore.getPhoto(req.params.photoId);
+    if (!photo.objectBucket || !photo.objectKey || photo.objectBucket === "inspectiq-sample-images") {
+      res.redirect(photo.storageKey);
+      return;
+    }
+    if (process.env.IMAGE_UPLOAD_MODE === "presigned") {
+      res.redirect(await createPresignedDownload({ bucket: photo.objectBucket, key: photo.objectKey }));
+      return;
+    }
+    res.redirect(photo.storageKey || s3ObjectUrl(photo.objectBucket, photo.objectKey));
+  }));
+
   app.get("/api/inspections/:id/vision-suggestions", asyncRoute((req, res) => {
     sendData(res, appStore.listSuggestions(req.params.id));
   }));
 
-  app.post("/api/vision-suggestions/:id/accept", asyncRoute((req, res) => {
+  app.post("/api/vision-suggestions/:id/accept", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "suggestion:review");
-    sendData(res, appStore.acceptSuggestion(req.params.id, actor));
+    const suggestion = appStore.acceptSuggestion(req.params.id, actor);
+    await persistMutation(options);
+    sendData(res, suggestion);
   }));
 
-  app.post("/api/vision-suggestions/:id/reject", asyncRoute((req, res) => {
+  app.post("/api/vision-suggestions/:id/reject", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "suggestion:review");
-    sendData(res, appStore.rejectSuggestion(req.params.id, actor));
+    const suggestion = appStore.rejectSuggestion(req.params.id, actor);
+    await persistMutation(options);
+    sendData(res, suggestion);
   }));
 
-  app.patch("/api/vision-suggestions/:id", asyncRoute((req, res) => {
+  app.patch("/api/vision-suggestions/:id", asyncRoute(async (req, res) => {
     const input = UpdateSuggestionSchema.parse(req.body);
     if (!Object.prototype.hasOwnProperty.call(input, "suggestedValue")) {
       throw validation("suggestedValue is required.");
     }
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "suggestion:review");
-    sendData(res, appStore.editSuggestion(req.params.id, {
+    const suggestion = appStore.editSuggestion(req.params.id, {
       suggestedValue: input.suggestedValue,
       explanation: input.explanation
-    }, actor));
+    }, actor);
+    await persistMutation(options);
+    sendData(res, suggestion);
   }));
 
-  app.post("/api/inspections/:id/damage", asyncRoute((req, res) => {
+  app.post("/api/inspections/:id/damage", asyncRoute(async (req, res) => {
     const input = CreateDamageItemSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "damage:create");
-    sendData(res, appStore.addDamage({
+    const damage = appStore.addDamage({
       inspectionId: req.params.id,
       photoId: input.photoId ?? null,
       location: input.location,
@@ -307,20 +345,25 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       severity: input.severity,
       notes: input.notes,
       source: input.source
-    }, actor), 201);
+    }, actor);
+    await persistMutation(options);
+    sendData(res, damage, 201);
   }));
 
-  app.patch("/api/damage/:id", asyncRoute((req, res) => {
+  app.patch("/api/damage/:id", asyncRoute(async (req, res) => {
     const input = PatchDamageItemSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "damage:update");
-    sendData(res, appStore.patchDamage(req.params.id, input, actor));
+    const damage = appStore.patchDamage(req.params.id, input, actor);
+    await persistMutation(options);
+    sendData(res, damage);
   }));
 
-  app.delete("/api/damage/:id", asyncRoute((req, res) => {
+  app.delete("/api/damage/:id", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "damage:delete");
     appStore.deleteDamage(req.params.id, actor);
+    await persistMutation(options);
     sendData(res, { deleted: true });
   }));
 
@@ -351,6 +394,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       explanationJson: output.explanation,
       gradingVersion: output.gradingVersion
     }, actor);
+    await persistMutation(options);
     sendData(res, saved);
   }));
 
@@ -388,6 +432,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
         humanReviewRequired: result.validated.humanReviewRequired,
         validationStatus: "valid"
       }, reportBodyFromDraft(result.validated), actor);
+      await persistMutation(options);
       sendData(res, {
         job: appStore.latestReportJob(inspection.id),
         draft,
@@ -395,6 +440,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       });
     } catch (error) {
       const failed = appStore.failReportJob(job.id, error instanceof Error ? error.message : "Unknown report provider failure.", actor);
+      await persistMutation(options);
       sendData(res, failed, 502);
     }
   }));
@@ -426,17 +472,21 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       .send(exported.body);
   }));
 
-  app.patch("/api/reports/:id", asyncRoute((req, res) => {
+  app.patch("/api/reports/:id", asyncRoute(async (req, res) => {
     const input = PatchReportSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "report:edit");
-    sendData(res, appStore.patchReport(req.params.id, input.reportBody, actor));
+    const report = appStore.patchReport(req.params.id, input.reportBody, actor);
+    await persistMutation(options);
+    sendData(res, report);
   }));
 
-  app.post("/api/reports/:id/finalize", asyncRoute((req, res) => {
+  app.post("/api/reports/:id/finalize", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "report:finalize");
-    sendData(res, appStore.finalizeReport(req.params.id, actor));
+    const report = appStore.finalizeReport(req.params.id, actor);
+    await persistMutation(options);
+    sendData(res, report);
   }));
 
   app.get("/api/inspections/:id/audit-events", asyncRoute((req, res) => {

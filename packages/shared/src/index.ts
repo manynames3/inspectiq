@@ -258,7 +258,7 @@ export const UploadPhotoSchema = z.object({
   objectKey: z.string().trim().min(1).max(500).optional(),
   thumbnailStorageKey: z.string().trim().max(500).optional(),
   byteSize: z.coerce.number().int().min(1).max(25_000_000).optional(),
-  checksumSha256: z.string().trim().regex(/^[a-f0-9]{64}$/i).optional()
+  checksumSha256: z.string().trim().regex(/^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$/i).optional()
 });
 
 export const UploadIntentSchema = z.object({
@@ -266,7 +266,7 @@ export const UploadIntentSchema = z.object({
   originalFilename: z.string().trim().min(1).max(180),
   mimeType: z.string().trim().regex(/^image\/(jpeg|png|webp)$/),
   byteSize: z.coerce.number().int().min(1).max(25_000_000),
-  checksumSha256: z.string().trim().regex(/^[a-f0-9]{64}$/i).optional()
+  checksumSha256: z.string().trim().regex(/^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$/i).optional()
 });
 
 export const SamplePhotoSchema = z.object({

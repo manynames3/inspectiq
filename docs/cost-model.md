@@ -6,8 +6,8 @@ Rough assumptions for 1,000 inspections:
 - 10,000 image objects stored in S3.
 - 10,000 image-analysis model calls.
 - 1,000 report-generation model calls.
-- API and worker requests through Lambda or containers.
-- Aurora/RDS and CloudWatch as the steady baseline.
+- API and worker requests through Lambda.
+- Neon Postgres and CloudWatch as the steady baseline.
 
 Main cost drivers:
 

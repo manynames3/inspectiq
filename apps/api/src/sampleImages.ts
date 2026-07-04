@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import type { PhotoAngle } from "@inspectiq/shared";
 
 export type SampleImage = {
@@ -35,4 +37,18 @@ export const sampleBundles: Record<string, string[]> = {
 
 export function findSampleImage(sampleKey: string): SampleImage | undefined {
   return sampleImages.find((sample) => sample.key === sampleKey);
+}
+
+export function sampleImageDirectory(): string {
+  const candidates = [
+    process.env.SAMPLE_IMAGE_DIR,
+    path.resolve(process.cwd(), "sample-images"),
+    path.resolve(process.cwd(), "sample-data/images"),
+    path.resolve(process.cwd(), "../../sample-data/images")
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[candidates.length - 1];
+}
+
+export function sampleImageFilePath(filename: string): string {
+  return path.join(sampleImageDirectory(), path.basename(filename));
 }

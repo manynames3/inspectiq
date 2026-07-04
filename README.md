@@ -15,7 +15,7 @@ It demonstrates:
 - domain understanding of wholesale/offsite inspection workflows, CR readiness, VDP readiness, buyer trust, seller disclosure, reconditioning estimates, and arbitration risk;
 - end-to-end product execution across React, TypeScript, Node, Java, Postgres schema design, REST APIs, RBAC, audit trails, and browser E2E tests;
 - responsible AI design where model output is validated, treated as advisory, reviewed by humans, and kept out of buyer-facing output until confirmed;
-- production architecture thinking around S3/R2 image storage, async image-analysis workers, Postgres persistence, metrics, runbooks, and AWS deployment shape.
+- production architecture thinking around S3 image storage, async image-analysis workers, Neon Postgres persistence, metrics, runbooks, and AWS Lambda deployment.
 
 It does not use Cox Automotive branding, proprietary data, or unlicensed assets. Vehicle records are synthetic, and bundled sample photos use license-safe public image sources documented in `sample-data/IMAGE_CREDITS.md`.
 
@@ -52,25 +52,30 @@ Wholesale condition reports need consistent photo evidence, clear damage facts, 
 
 ```mermaid
 flowchart TD
-  Web[React + TypeScript workbench] --> API[Node.js Express API]
+  Web[React + TypeScript workbench on Cloudflare Pages] --> API[API Gateway + Node.js Lambda]
   API --> Shared[Shared Zod schemas]
   API --> Store[MemoryStore facade]
   Store --> FileStore[Local file snapshot]
-  Store --> PostgresStore[Postgres persistence mode]
+  Store --> PostgresStore[Neon Postgres persistence mode]
+  API --> S3[S3 presigned uploads]
+  API --> SQS[SQS image-analysis queue]
+  SQS --> Worker[Lambda image worker]
   API --> Vision[Vision provider interface]
   Vision --> LocalVision[Deterministic local analysis]
-  Vision --> BedrockVision[Production Bedrock adapter seam]
+  Worker --> BedrockVision[Bedrock multimodal analysis]
   API --> Grade[Java Spring Boot grading service]
   API --> Report[Report provider interface]
   Report --> LocalReport[Deterministic local report provider]
-  Report --> BedrockReport[Production Claude adapter seam]
+  Report --> BedrockReport[Bedrock report provider]
   API --> Audit[Audit events]
-  Store --> PG[(Postgres production target)]
+  Store --> PG[(Neon Postgres)]
 ```
 
 ## Scope
 
-This is a production-shaped reference implementation, not a claimed production inspection platform. Local and Cloudflare Pages workflows use deterministic AI providers and lightweight persistence so the end-to-end flow is reliable without paid model credentials. The repo includes Postgres schema, Drizzle table definitions, provider interfaces, image job contracts, upload intent metadata, Terraform skeleton, and AWS design notes to show the production direction.
+This is a production-shaped reference implementation with a live hosted frontend and AWS backend. Local development still defaults to deterministic providers and file persistence for repeatable tests, while the deployed path uses Cloudflare Pages, API Gateway, Lambda, Neon Postgres, S3 presigned uploads, SQS, Bedrock multimodal analysis, Secrets Manager, Cognito resources, CloudWatch logs, alarms, and a dashboard.
+
+Remaining production hardening is called out directly: replace whole-snapshot persistence with per-operation repository writes, enable end-user OIDC in the frontend before turning on the API Gateway JWT authorizer, add model evaluation datasets, and add environment promotion/rollback automation.
 
 For the concise interview explanation, see `docs/implementation-boundary.md`.
 
@@ -90,9 +95,9 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 | Area | Implemented in this repo | Production replacement |
 | --- | --- | --- |
 | Inspection workflow | Working React/TypeScript UI, role-aware actions, REST API, state machine, audit trail | Same workflow behind enterprise auth, object-level authorization, and operational SLAs |
-| Image analysis | Deterministic provider returning angle, image-quality scores, damage candidates, OCR, confidence, repair estimate range, and strict schema validation | S3 object event -> SQS/EventBridge worker -> Bedrock/Rekognition/custom model -> same schema contract |
-| Persistence | In-memory tests, local JSON snapshot, Cloudflare KV snapshot for hosted walkthroughs, and optional `PERSISTENCE_MODE=postgres` normalized Postgres persistence | Per-operation Postgres repository with stronger transaction scoping, retention, backups, and audit durability |
-| Image storage | Upload intent endpoint, S3-style object metadata, and small local/browser preview payloads | Presigned S3 uploads with checksum, MIME validation, EXIF policy, lifecycle, and KMS encryption |
+| Image analysis | Deterministic local provider plus deployed SQS -> Lambda -> Bedrock multimodal provider using the same strict schema contract | Model evaluation set, confidence calibration, and provider fallback policy |
+| Persistence | In-memory tests, local JSON snapshot, and deployed `PERSISTENCE_MODE=postgres` against Neon | Per-operation Postgres repository with narrower transactions, retention, backups, and audit durability |
+| Image storage | Deployed presigned S3 upload intent, private S3 objects, object key metadata, MIME type, byte size, and checksum capture | EXIF stripping, image normalization, thumbnails, lifecycle, KMS key policy, and object-level auth |
 | Java grading | Optional Spring Boot service plus identical Node fallback for deterministic local reliability | Keep separate only when grading rules need independent ownership, versioning, or reuse |
 | Report generation | Async-shaped job model with deterministic local provider | Queue/Step Functions workflow with model retries, DLQ, provider telemetry, and reviewer approval |
 
@@ -104,12 +109,12 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 - Java Spring Boot grading service.
 - Postgres schema and Drizzle table definitions.
 - Optional Postgres persistence mode using the existing `pg` client.
-- Local file snapshot persistence plus Cloudflare KV snapshot support for hosted Pages.
+- Local file snapshot persistence plus Neon Postgres persistence for the deployed backend.
 - S3-style image storage interface.
 - Queue-shaped image analysis jobs and Step Functions-style report jobs.
-- Provider interfaces with deterministic local AI contract implementations.
+- Provider interfaces with deterministic local AI and Bedrock implementations.
 - Vitest, Supertest, React Testing Library, JUnit.
-- Terraform AWS skeleton.
+- Terraform-managed AWS Lambda, API Gateway, S3, SQS/DLQ, Secrets Manager, Cognito, CloudWatch alarms, and dashboard.
 
 ## Local Setup
 
@@ -235,10 +240,10 @@ Local:
 6. Create pending suggestions, including retake-required quality warnings.
 7. Human reviewer accepts, rejects, or edits.
 
-AWS target:
+Deployed AWS path:
 
 ```txt
-S3 upload -> EventBridge/SQS -> Image worker -> Bedrock multimodal model
+S3 upload -> SQS -> Lambda image worker -> Bedrock multimodal model
 -> schema validation -> Postgres suggestions -> audit event
 ```
 
@@ -312,21 +317,22 @@ Local review uses role-aware UI controls and API RBAC for Inspector, Reviewer, a
 
 ## AWS Deployment Architecture
 
-The simple production AWS shape is:
+The deployed backend shape in `us-east-1` is:
 
 ```txt
 React
--> API Gateway + Lambda or ECS
--> Neon Free Postgres or Aurora Postgres
+-> Cloudflare Pages
+-> API Gateway + Lambda
+-> Neon Postgres
 -> S3 image objects
--> SQS/EventBridge image jobs
--> image worker
--> Bedrock/Rekognition/custom model
+-> SQS image jobs
+-> Lambda image worker
+-> Bedrock multimodal model
 -> validated suggestions
 -> audit trail
 ```
 
-The `infra/terraform` skeleton covers the main resource categories, but it is not a one-command production deployment. A real deployment still needs account-specific networking, service packaging, IAM policies, alarms, Bedrock model access, and environment promotion.
+The Terraform in `infra/terraform` deploys the AWS resources used by the live backend. Cognito resources are provisioned, but the API Gateway JWT authorizer is intentionally feature-flagged off for the public walkthrough until frontend sign-in is enabled.
 
 ## Cost Awareness
 
@@ -336,10 +342,10 @@ Major drivers:
 - Multimodal image-analysis calls.
 - Report-generation tokens.
 - API/worker compute.
-- Aurora/RDS baseline.
+- Neon Postgres compute/storage.
 - CloudWatch logs.
 
-For 1,000 inspections with 10 images each, model calls dominate variable cost. The project uses local deterministic providers to avoid accidental spend and documents idempotency to prevent duplicate jobs.
+For 1,000 inspections with 10 images each, model calls dominate variable cost. Local deterministic providers avoid accidental spend during development; the deployed Bedrock path is reserved for explicit image-analysis actions and uses job records for idempotency.
 
 ## Failure Handling
 
@@ -360,9 +366,9 @@ Handled or documented:
 
 I would discuss:
 
-- Replace the local file/KV snapshot repository with Postgres before multiple reviewers, real uploads, or audit retention matter.
+- Replace the current whole-snapshot Postgres adapter with per-operation repository methods before multi-reviewer production use.
 - Keep Java grading separate only if condition rules are independently owned, versioned, or reused outside the Node API.
-- Use ECS/Fargate for long-running image/report workers when model calls, retries, or native image tooling outgrow Lambda limits.
+- Stay on Lambda for the current bursty image-analysis worker; consider containers only if native image tooling or runtime duration outgrows Lambda limits.
 - Treat Bedrock output as untrusted input: validate schemas, store raw and validated output, and require human confirmation before facts affect reports.
 - Use presigned S3 uploads with MIME validation, object-level authorization, checksum capture, and lifecycle policies.
 - Add reviewer queues and SLA metrics only after the core evidence-to-report workflow is stable.
@@ -370,12 +376,12 @@ I would discuss:
 
 ## Future Improvements
 
-- Full Postgres repository implementation behind the existing schema.
-- Real presigned S3 upload flow.
-- Bedrock Claude and multimodal provider implementation.
+- Per-operation Postgres repository implementation behind the existing schema.
+- Frontend OIDC sign-in and API Gateway JWT authorizer enforcement.
+- Model evaluation set for angle accuracy, OCR accuracy, damage false positives, and retake precision.
 - Reviewer queue with assignment and SLA filters.
 - Thumbnail generation and image metadata extraction.
-- CloudWatch dashboard templates.
+- More CloudWatch dashboards and alarm notification targets.
 - Cross-browser frontend flow tests.
 
 ## Resume Bullets

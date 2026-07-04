@@ -1,9 +1,20 @@
+import { ConverseCommand, BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
+import { readFile } from "node:fs/promises";
 import { estimateDamageRepairCost, VisionOutputSchema, type DamageSeverity, type DamageType, type VisionOutput } from "@inspectiq/shared";
+import { readS3ObjectBytes } from "./awsStorage.js";
+import { sampleImageFilePath } from "./sampleImages.js";
 
 export type VisionProvider = {
   name: string;
   promptVersion: string;
-  analyze(input: { filename: string; storageKey: string }): Promise<{ raw: unknown; validated: VisionOutput }>;
+  analyze(input: {
+    filename: string;
+    storageKey: string;
+    objectBucket?: string | null;
+    objectKey?: string | null;
+    mimeType?: string | null;
+    declaredAngle?: VisionOutput["photoAngle"] | null;
+  }): Promise<{ raw: unknown; validated: VisionOutput }>;
 };
 
 function imageQuality(overrides: Partial<VisionOutput["imageQuality"]> = {}): VisionOutput["imageQuality"] {
@@ -180,11 +191,95 @@ export const localVisionProvider: VisionProvider = {
 export const bedrockVisionProvider: VisionProvider = {
   name: "bedrockVisionProvider",
   promptVersion: "photo-analysis-v2",
-  async analyze() {
-    throw new Error("Bedrock vision provider is configured but not implemented for local credentials.");
+  async analyze(input) {
+    const image = await loadImageInput(input);
+    const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1" });
+    const prompt = [
+      "You are an automotive inspection image-analysis service.",
+      `Filename: ${input.filename}.`,
+      `Declared capture slot: ${input.declaredAngle ?? "unknown"}.`,
+      "When the declared capture slot is present and the visual evidence reasonably matches it, use that value as photoAngle. If the image contradicts the declared slot or quality is too poor, keep the visual classification and explain the mismatch in qualityWarnings.",
+      "Return only strict JSON matching this TypeScript shape:",
+      "{ photoAngle: 'front'|'rear'|'driver_side'|'passenger_side'|'interior'|'engine_bay'|'odometer'|'vin_plate'|'unknown', confidence: number, imageQuality: { grade: 'pass'|'review'|'retake', blurScore: number, exposureScore: number, framingScore: number, resolutionScore: number, occlusionRisk: number, retakeRequired: boolean, notes: string[] }, qualityWarnings: string[], detectedDamageCandidates: Array<{ location: string, damageType: 'scratch'|'dent'|'paint_damage'|'crack'|'wheel_damage'|'glass_damage'|'interior_wear'|'unknown', severityEstimate: 'minor'|'moderate'|'severe'|'unknown', confidence: number, explanation: string, repairEstimateUsd: { min: number, max: number, rationale: string }, requiresHumanConfirmation: boolean }>, extractedText: { vin?: string, odometer?: string }, humanReviewRequired: boolean }.",
+      "Use 0-1 confidence values. If unsure, use unknown angle, lower confidence, and humanReviewRequired true.",
+      "Never invent VIN or odometer values unless legible. Mark retakeRequired true for blur, poor framing, low light, occlusion, or non-vehicle images."
+    ].join("\n");
+    const response = await client.send(new ConverseCommand({
+      modelId: process.env.BEDROCK_MODEL_ID ?? "us.anthropic.claude-sonnet-4-6",
+      messages: [{
+        role: "user",
+        content: [
+          { text: prompt },
+          {
+            image: {
+              format: image.format,
+              source: { bytes: image.bytes }
+            }
+          }
+        ]
+      }],
+      inferenceConfig: {
+        maxTokens: 1400,
+        temperature: 0
+      }
+    }));
+    const rawText = response.output?.message?.content
+      ?.map((block) => "text" in block && typeof block.text === "string" ? block.text : "")
+      .join("\n")
+      .trim() ?? "";
+    const parsed = parseJsonObject(rawText);
+    return {
+      raw: { response, text: rawText, parsed },
+      validated: VisionOutputSchema.parse(parsed)
+    };
   }
 };
 
 export function getVisionProvider(): VisionProvider {
   return process.env.VISION_PROVIDER === "bedrock" ? bedrockVisionProvider : localVisionProvider;
+}
+
+function imageFormat(mimeType: string | null | undefined, filename: string): "jpeg" | "png" | "webp" | "gif" {
+  const source = `${mimeType ?? ""} ${filename}`.toLowerCase();
+  if (source.includes("png")) return "png";
+  if (source.includes("webp")) return "webp";
+  if (source.includes("gif")) return "gif";
+  return "jpeg";
+}
+
+async function loadImageInput(input: Parameters<VisionProvider["analyze"]>[0]): Promise<{ bytes: Uint8Array; format: "jpeg" | "png" | "webp" | "gif" }> {
+  if (input.objectBucket && input.objectKey && input.objectBucket !== "inspectiq-sample-images") {
+    return {
+      bytes: await readS3ObjectBytes(input.objectBucket, input.objectKey),
+      format: imageFormat(input.mimeType, input.filename)
+    };
+  }
+
+  if (input.storageKey.startsWith("data:")) {
+    const [meta, payload] = input.storageKey.split(",", 2);
+    if (!payload) throw new Error("Invalid data URL image payload.");
+    return {
+      bytes: Buffer.from(payload, meta.endsWith(";base64") || meta.includes(";base64") ? "base64" : "utf8"),
+      format: imageFormat(input.mimeType ?? meta, input.filename)
+    };
+  }
+
+  if (input.storageKey.startsWith("/sample-images/")) {
+    return {
+      bytes: await readFile(sampleImageFilePath(input.storageKey)),
+      format: imageFormat(input.mimeType, input.filename)
+    };
+  }
+
+  throw new Error("Bedrock vision provider requires an S3 object, sample image, or data URL payload.");
+}
+
+function parseJsonObject(text: string): unknown {
+  const withoutFence = text.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  const start = withoutFence.indexOf("{");
+  const end = withoutFence.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Bedrock response did not include a JSON object.");
+  }
+  return JSON.parse(withoutFence.slice(start, end + 1));
 }

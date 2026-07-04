@@ -1,6 +1,6 @@
 # Architecture
 
-InspectIQ is a production-shaped inspection workflow implemented as a monorepo with a React/Vite workbench, TypeScript Express API, shared Zod schemas, optional Postgres persistence, and a narrow Java grading service boundary.
+InspectIQ is a production-shaped inspection workflow implemented as a monorepo with a React/Vite workbench, TypeScript Express API, shared Zod schemas, Neon Postgres persistence for the deployed backend, and a narrow Java grading service boundary.
 
 The architecture is intentionally boring where reliability matters: explicit state transitions, schema-validated model output, append-style audit events, deterministic grading, role-aware actions, and backend-derived readiness blockers. The AI path is advisory by design; it accelerates review without silently becoming the source of truth.
 
@@ -8,20 +8,23 @@ The architecture is intentionally boring where reliability matters: explicit sta
 
 ```mermaid
 flowchart LR
-  UI[React inspection workbench] --> API[Node Express API]
+  UI[React inspection workbench on Cloudflare Pages] --> API[API Gateway + Node Lambda]
   API --> RBAC[Role/action checks]
   API --> Schemas[Shared Zod schemas]
   API --> Store[Workflow store facade]
-  Store --> FileKV[Local file or Cloudflare KV snapshot]
-  Store --> PG[Optional Postgres persistence mode]
+  Store --> FileStore[Local file snapshot for development]
+  Store --> PG[Neon Postgres persistence mode]
+  API --> S3[S3 presigned image uploads]
+  API --> Queue[SQS image-analysis queue]
+  Queue --> Worker[Lambda image worker]
   API --> Vision[Vision provider interface]
   Vision --> LocalVision[Deterministic local provider]
-  Vision --> BedrockVision[Production Bedrock adapter seam]
+  Worker --> BedrockVision[Bedrock multimodal provider]
   API --> Jobs[Image-analysis jobs]
   API --> Java[Java grading service]
   API --> Report[Report provider interface]
   Report --> LocalReport[Deterministic local report provider]
-  Report --> BedrockReport[Production Claude adapter seam]
+  Report --> BedrockReport[Bedrock report provider]
   API --> Audit[Audit trail]
 ```
 
@@ -47,7 +50,7 @@ Create inspection
 | Boundary | Why it exists |
 | --- | --- |
 | Shared schemas | Keep API, UI, provider output, and tests aligned around explicit contracts. |
-| Vision provider | Swap deterministic local analysis for Bedrock/Rekognition/custom models without changing reviewer workflow. |
+| Vision provider | Swap deterministic local analysis for the Bedrock multimodal provider without changing reviewer workflow. |
 | Image-analysis jobs | Model queue/retry/idempotency even when local analysis completes immediately. |
 | Java grading service | Show how deterministic condition rules can be versioned and owned separately when justified. |
 | Readiness blockers | Keep CR/VDP/buyer-visible release decisions backend-derived instead of UI-only. |
@@ -69,19 +72,20 @@ Postgres tables are shaped around operational facts rather than UI screens:
 
 ```txt
 React workbench
--> API Gateway + Lambda or ECS/Fargate API
--> Postgres repository with transaction-scoped writes
+-> Cloudflare Pages
+-> API Gateway + Lambda API
+-> Neon Postgres persistence
 -> presigned S3 uploads
--> S3/EventBridge or API-created image-analysis jobs
+-> API-created image-analysis jobs
 -> SQS queue
--> Lambda/ECS image worker
--> Bedrock/Rekognition/custom model
+-> Lambda image worker
+-> Bedrock multimodal model
 -> VisionOutputSchema validation
 -> suggestions + audit trail
 -> reviewer workflow
 ```
 
-The local workflow uses deterministic providers so it works without paid credentials. The data model, endpoints, and Terraform skeleton map to Postgres, S3, SQS/EventBridge, Step Functions, workers, and Bedrock/Rekognition/custom models in AWS. The local repository persists server state to `.inspectiq/local-store.json`; Cloudflare Pages can persist to KV; production should use per-operation Postgres transactions.
+The local workflow uses deterministic providers so it works without model credentials. The deployed backend uses API Gateway, Lambda, Neon Postgres, S3, SQS, Bedrock, Secrets Manager, Cognito resources, CloudWatch logs, alarms, and a dashboard. The remaining production hardening is to replace the current whole-snapshot Postgres adapter with per-operation transactions, enable frontend OIDC, add model evaluation data, and add environment promotion/rollback automation.
 
 ## Failure Posture
 

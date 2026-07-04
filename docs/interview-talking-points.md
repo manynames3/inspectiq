@@ -7,14 +7,14 @@
 5. Why Java service? It shows a service boundary for independently owned business rules; it could be collapsed early in a smaller system.
 6. Why async reports? Model calls can be slow, fail, or need retries without blocking the UI.
 7. Image processing? Provider interface, strict schema validation, raw and validated output, angle confidence, image-quality scores, retake policy, damage confidence, OCR, repair estimate range, pending suggestions.
-8. AWS scale? React -> API Gateway/Lambda or ECS -> Neon Free Postgres/Aurora -> S3 -> SQS/EventBridge -> image worker -> Bedrock/Rekognition/custom model -> validated suggestions -> audit trail.
+8. AWS scale? The live path is React on Cloudflare Pages -> API Gateway/Lambda -> Neon Postgres -> S3 -> SQS -> Lambda image worker -> Bedrock multimodal model -> validated suggestions -> audit trail.
 9. AI failure? Save failed jobs, preserve audit events, block finalization, retry safely.
 10. Prevent hallucinations? Constrain prompts to confirmed facts and validate schema.
 11. Audit trail value? It explains every AI suggestion, human decision, grade, report edit, and finalization.
 12. Role model? Inspector handles intake and image analysis, Reviewer confirms AI findings and finalizes reports, Admin owns corrections and exception handling.
-13. More time? Full Postgres repository, presigned uploads, real Bedrock/Rekognition/custom model integration, richer failed-image workflows.
+13. More time? Per-operation Postgres repository writes, frontend OIDC, model evaluation data, richer failed-image workflows, thumbnail generation, and environment promotion/rollback.
 14. AI coding tools? Use them to draft, then validate with tests, schemas, and manual review.
-15. MVP tradeoff? I kept AI deterministic locally so the walkthrough never fails, but shaped the interfaces around real async model workflows.
+15. MVP tradeoff? I kept AI deterministic locally so tests and local walkthroughs never depend on model credentials, then deployed the same contract through SQS, Lambda, and Bedrock for the cloud path.
 
 ## 5-Minute Walkthrough Script
 

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import type {
@@ -33,7 +34,16 @@ const deleteOrder = [
 ] as const;
 
 function schemaPath(): string {
-  return path.resolve(process.cwd(), "src/db/schema.sql");
+  const candidates = [
+    process.env.DB_SCHEMA_PATH,
+    path.resolve(process.cwd(), "src/db/schema.sql"),
+    path.resolve(process.cwd(), "apps/api/src/db/schema.sql"),
+    path.resolve(process.cwd(), "schema.sql"),
+    path.resolve(path.dirname(new URL(import.meta.url).pathname), "db/schema.sql")
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const found = candidates.find((candidate) => existsSync(candidate));
+  if (!found) throw new Error(`Could not locate schema.sql. Checked: ${candidates.join(", ")}`);
+  return found;
 }
 
 function iso(value: unknown): string {
@@ -276,6 +286,7 @@ export async function savePostgresSnapshot(store: MemoryStore, pool: Pool): Prom
   const client = await pool.connect();
   try {
     await client.query("begin");
+    await client.query("select pg_advisory_xact_lock(7803144587035695001)");
     for (const table of deleteOrder) {
       await client.query(`delete from ${table}`);
     }
