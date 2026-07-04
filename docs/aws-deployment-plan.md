@@ -5,7 +5,7 @@ Target architecture:
 ```txt
 React
 -> API Gateway + Lambda or ECS/Fargate API
--> Neon Free Postgres for low-cost portfolio deployment or Aurora Postgres for AWS-native production
+-> Neon Free Postgres for low-cost review environments or Aurora Postgres for AWS-native production
 -> S3 image objects
 -> SQS/EventBridge image-analysis jobs
 -> Lambda or ECS image worker

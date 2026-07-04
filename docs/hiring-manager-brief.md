@@ -1,5 +1,11 @@
 # Hiring Manager Brief
 
+## Executive Signal
+
+InspectIQ is not trying to impress with a flashy AI wrapper. It is built around the operational work that makes vehicle inspection software valuable: consistent evidence capture, trusted condition facts, human accountability, buyer-visible readiness, and recoverable failure handling.
+
+The strongest signal is the shape of the system. It treats image AI as an input to a workflow, not as the workflow. Model output is validated, routed to reviewer decisions, blocked from buyer-facing release until confirmed, and recorded with provider/prompt/audit metadata.
+
 ## Business Problem
 
 InspectIQ supports wholesale and offsite inspection workflows where buyers, sellers, lenders, and operations teams need trusted condition data before vehicle sale. The product problem is not "use AI on photos"; it is reducing dispute risk by making image evidence, damage facts, condition reports, seller disclosure, and reviewer approval consistent and auditable.
@@ -56,5 +62,14 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 ## Hiring Manager Signal
 
 This project is strongest when explained as a workflow reliability exercise, not an AI showcase. It shows that the engineer can ship a coherent vertical slice, keep AI constrained by schemas and human review, reason about operational metrics, and map a local implementation to enterprise production architecture without overclaiming.
+
+What I would expect the candidate to explain clearly:
+
+- why the highest-risk problem is buyer trust, not just damage detection;
+- why required angles and image quality matter before any model score matters;
+- why accepted AI suggestions become facts only through reviewer action;
+- why grading is deterministic and reports are generated from confirmed facts;
+- why local deterministic providers are a reliability choice for review, not a substitute for production CV;
+- how the same contract moves to S3, SQS/EventBridge, Postgres, and Bedrock/Rekognition/custom models.
 
 See `docs/implementation-boundary.md` for the crisp "real vs deterministic local" explanation.

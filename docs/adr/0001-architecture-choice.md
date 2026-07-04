@@ -2,4 +2,4 @@
 
 Decision: Use a monorepo with React/Vite, TypeScript Express API, shared schemas, Java grading service, docs, prompts, and Terraform skeleton.
 
-Reason: The portfolio goal is to show full-stack workflow thinking without hiding critical boundaries.
+Reason: The project goal is to show full-stack workflow thinking without hiding critical boundaries.

@@ -19,9 +19,8 @@ Main cost drivers:
 
 Cost controls:
 
-- Mock providers for local development and tests.
+- Deterministic local providers for development and tests.
 - Retake detection before expensive model calls where possible.
 - Store thumbnails and lifecycle older originals.
 - Use idempotency to avoid duplicate jobs.
 - Apply log sampling and retention policies.
-

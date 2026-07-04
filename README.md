@@ -1,12 +1,21 @@
 # InspectIQ
 
-AI-assisted vehicle inspection and condition report platform.
+AI-assisted wholesale vehicle inspection workbench for condition-report readiness.
 
-InspectIQ models a wholesale/offsite vehicle inspection workflow: capture required vehicle photos, run advisory image analysis, require human confirmation, calculate a deterministic condition grade, draft a condition report, prepare buyer-visible disclosure, and preserve an audit trail.
+InspectIQ is a production-shaped vertical slice of an automotive inspection system: required photo evidence, advisory image analysis, human confirmation, deterministic grading, buyer-visible readiness, condition-report generation, and an auditable decision trail.
 
-## Why I Built It
+Live walkthrough: https://inspectiq.pages.dev
 
-I built this to show practical understanding of inspection/imaging systems: image ingestion, evidence completeness, damage documentation, deterministic condition grading, AI-assisted drafting, human review, auditability, and AWS-ready workflow design.
+## What This Demonstrates
+
+This repo is designed to answer a hiring manager's core question: can this engineer turn an ambiguous operational workflow into a reliable system with clear boundaries, credible tradeoffs, and a path to production?
+
+It demonstrates:
+
+- domain understanding of wholesale/offsite inspection workflows, CR readiness, VDP readiness, buyer trust, seller disclosure, reconditioning estimates, and arbitration risk;
+- end-to-end product execution across React, TypeScript, Node, Java, Postgres schema design, REST APIs, RBAC, audit trails, and browser E2E tests;
+- responsible AI design where model output is validated, treated as advisory, reviewed by humans, and kept out of buyer-facing output until confirmed;
+- production architecture thinking around S3/R2 image storage, async image-analysis workers, Postgres persistence, metrics, runbooks, and AWS deployment shape.
 
 It does not use Cox Automotive branding, proprietary data, or unlicensed assets. Vehicle records are synthetic, and bundled sample photos use license-safe public image sources documented in `sample-data/IMAGE_CREDITS.md`.
 
@@ -30,6 +39,15 @@ Wholesale condition reports need consistent photo evidence, clear damage facts, 
 12. Edit and finalize the report as a reviewer.
 13. Review the audit trail and Platform Health scorecard.
 
+## What To Review First
+
+| If you have... | Review this |
+| --- | --- |
+| 2 minutes | Live app, dashboard, one finalized inspection, and `docs/hiring-manager-brief.md` |
+| 5 minutes | `docs/interview-talking-points.md` and the create -> analyze -> review -> finalize flow |
+| 15 minutes | `docs/architecture.md`, `docs/implementation-boundary.md`, and `docs/aws-deployment-plan.md` |
+| Code review time | `apps/api/src/store.ts`, `apps/api/src/app.ts`, `packages/shared/src/index.ts`, and `apps/web/scripts/e2e-inspection-flow.mjs` |
+
 ## Architecture
 
 ```mermaid
@@ -40,11 +58,11 @@ flowchart TD
   Store --> FileStore[Local file snapshot]
   Store --> PostgresStore[Postgres persistence mode]
   API --> Vision[Vision provider interface]
-  Vision --> MockVision[Mock deterministic analysis]
+  Vision --> LocalVision[Deterministic local analysis]
   Vision --> BedrockVision[Production Bedrock adapter seam]
   API --> Grade[Java Spring Boot grading service]
   API --> Report[Report provider interface]
-  Report --> MockReport[Mock report provider]
+  Report --> LocalReport[Deterministic local report provider]
   Report --> BedrockReport[Production Claude adapter seam]
   API --> Audit[Audit events]
   Store --> PG[(Postgres production target)]
@@ -52,9 +70,20 @@ flowchart TD
 
 ## Scope
 
-This is a working portfolio application, not a claimed production inspection platform. Local and Cloudflare Pages workflows use deterministic AI providers and lightweight persistence so the end-to-end flow is reliable without paid model credentials. The repo includes Postgres schema, Drizzle table definitions, Terraform skeleton, provider interfaces, and AWS design notes to show the production direction.
+This is a production-shaped reference implementation, not a claimed production inspection platform. Local and Cloudflare Pages workflows use deterministic AI providers and lightweight persistence so the end-to-end flow is reliable without paid model credentials. The repo includes Postgres schema, Drizzle table definitions, provider interfaces, image job contracts, upload intent metadata, Terraform skeleton, and AWS design notes to show the production direction.
 
 For the concise interview explanation, see `docs/implementation-boundary.md`.
+
+## Documentation Map
+
+- `docs/hiring-manager-brief.md`: business framing, stack mapping, walkthrough, and production next steps.
+- `docs/architecture.md`: component boundaries, runtime flow, data ownership, and failure handling.
+- `docs/implementation-boundary.md`: what is real in the repo, what is deterministic locally, and how to explain it.
+- `docs/state-machine.md`: workflow states and legal transitions.
+- `docs/image-analysis-contract.md`: model output contract, schema validation, and reviewer routing.
+- `docs/ai-governance.md`: prompt/version metadata, human review, and audit posture.
+- `docs/aws-deployment-plan.md`: AWS production shape and migration path.
+- `docs/security.md`, `docs/observability.md`, `docs/runbook.md`: operational hardening notes.
 
 ## Real Vs Deterministic Local
 
@@ -101,7 +130,7 @@ cd services/grading-java
 mvn spring-boot:run
 ```
 
-The API falls back to equivalent local grading rules when the Java service is not running so the portfolio workflow remains usable.
+The API falls back to equivalent local grading rules when the Java service is not running so the inspection workflow remains usable.
 
 ## Environment Variables
 

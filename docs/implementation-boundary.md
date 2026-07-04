@@ -20,7 +20,7 @@ This project is strongest when presented as a production-shaped inspection workf
 ## Deterministic Local By Design
 
 - Vision and report providers are deterministic so tests and walkthroughs do not fail because of missing model credentials, model latency, cost, or nondeterministic output.
-- Local file/KV persistence exists for portfolio reliability. Postgres mode exists for a real relational path, but the next production step is a per-operation repository rather than whole-store snapshot writes.
+- Local file/KV persistence exists for reliable walkthroughs and repeatable tests. Postgres mode exists for a real relational path, but the next production step is a per-operation repository rather than whole-store snapshot writes.
 - Browser image uploads use small preview payloads; production should write image objects through presigned S3 upload URLs.
 - Role headers simulate authenticated claims; production should use Cognito or enterprise OIDC.
 
