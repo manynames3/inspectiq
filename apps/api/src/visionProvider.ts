@@ -227,11 +227,24 @@ export const bedrockVisionProvider: VisionProvider = {
       ?.map((block) => "text" in block && typeof block.text === "string" ? block.text : "")
       .join("\n")
       .trim() ?? "";
-    const parsed = parseJsonObject(rawText);
-    return {
-      raw: { response, text: rawText, parsed },
-      validated: VisionOutputSchema.parse(parsed)
-    };
+    try {
+      const parsed = parseJsonObject(rawText);
+      return {
+        raw: { response, text: rawText, parsed },
+        validated: VisionOutputSchema.parse(parsed)
+      };
+    } catch (error) {
+      const fallback = await localVisionProvider.analyze(input);
+      return {
+        raw: {
+          response,
+          text: rawText,
+          fallbackReason: error instanceof Error ? error.message : "Bedrock response failed schema validation.",
+          fallback: fallback.raw
+        },
+        validated: fallback.validated
+      };
+    }
   }
 };
 

@@ -263,17 +263,18 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
 
     if (process.env.IMAGE_ANALYSIS_MODE === "queue") {
       await persistMutation(options);
-      await Promise.all(jobs
-        .filter((job) => job.status === "queued")
-        .map((job) => sendImageAnalysisMessage({
-          jobId: job.id,
-          inspectionId: job.inspectionId,
-          photoId: job.photoId,
+      const queuedJobs = jobs.filter((job) => job.status === "queued");
+      if (queuedJobs.length > 0) {
+        await sendImageAnalysisMessage({
+          jobIds: queuedJobs.map((job) => job.id),
+          inspectionId: req.params.id,
+          photoId: queuedJobs[0].photoId,
           actor
-        })));
+        });
+      }
       sendData(res, {
         jobs,
-        queued: jobs.filter((job) => job.status === "queued").length,
+        queued: queuedJobs.length,
         suggestions: appStore.listSuggestions(req.params.id)
       }, 202);
       return;

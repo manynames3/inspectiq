@@ -5,7 +5,8 @@ const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-e
 const sqs = new SQSClient({ region });
 
 export type ImageAnalysisMessage = {
-  jobId: string;
+  jobId?: string;
+  jobIds?: string[];
   photoId: string;
   inspectionId: string;
   actor: Actor;
@@ -19,7 +20,7 @@ export async function sendImageAnalysisMessage(message: ImageAnalysisMessage): P
     QueueUrl: process.env.IMAGE_ANALYSIS_QUEUE_URL,
     MessageBody: JSON.stringify(message),
     MessageAttributes: {
-      jobId: { DataType: "String", StringValue: message.jobId },
+      jobId: { DataType: "String", StringValue: message.jobId ?? message.jobIds?.join(",") ?? "batch" },
       inspectionId: { DataType: "String", StringValue: message.inspectionId }
     }
   }));

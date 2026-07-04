@@ -33,18 +33,23 @@ export async function handler(event: SqsEvent): Promise<{ batchItemFailures: Arr
   for (const [index, record] of (event.Records ?? []).entries()) {
     try {
       const message = JSON.parse(record.body) as {
-        jobId: string;
+        jobId?: string;
+        jobIds?: string[];
         actor?: Actor;
       };
+      const jobIds = message.jobIds?.length ? message.jobIds : message.jobId ? [message.jobId] : [];
+      if (jobIds.length === 0) throw new Error("Image analysis message did not include jobId or jobIds.");
       const lockClient = await activePool.connect();
       try {
         await lockClient.query("select pg_advisory_lock($1::bigint)", [workerSnapshotLockKey]);
         await loadPostgresSnapshot(store, activePool);
-        await runImageAnalysisJob(store, message.jobId, message.actor ?? {
-          id: "image-worker",
-          name: "Image Analysis Worker",
-          role: "admin"
-        });
+        await Promise.all(jobIds.map((jobId) =>
+          runImageAnalysisJob(store, jobId, message.actor ?? {
+            id: "image-worker",
+            name: "Image Analysis Worker",
+            role: "admin"
+          })
+        ));
         await savePostgresSnapshot(store, activePool);
       } finally {
         await lockClient.query("select pg_advisory_unlock($1::bigint)", [workerSnapshotLockKey]).catch(() => undefined);
