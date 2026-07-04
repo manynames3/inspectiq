@@ -60,6 +60,43 @@ function damageCandidate(input: {
   };
 }
 
+function uniqueNonEmpty(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function normalizeVisionOutput(output: VisionOutput): VisionOutput {
+  const credibleDamage = output.detectedDamageCandidates
+    .filter((candidate) =>
+      candidate.confidence >= 0.6
+      && candidate.damageType !== "unknown"
+      && candidate.severityEstimate !== "unknown"
+    )
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 1);
+
+  const qualityWarnings = output.imageQuality.retakeRequired || output.imageQuality.grade === "retake"
+    ? uniqueNonEmpty(output.qualityWarnings).slice(0, 1)
+    : [];
+
+  const extractedText: VisionOutput["extractedText"] = {};
+  const odometer = output.extractedText.odometer?.trim();
+  const vin = output.extractedText.vin?.trim().toUpperCase();
+  if (odometer && /^\d{1,6}$/.test(odometer)) extractedText.odometer = odometer;
+  if (vin && /^[A-HJ-NPR-Z0-9]{11,17}$/.test(vin)) extractedText.vin = vin;
+
+  return {
+    ...output,
+    imageQuality: {
+      ...output.imageQuality,
+      notes: uniqueNonEmpty(output.imageQuality.notes).slice(0, 2)
+    },
+    qualityWarnings,
+    detectedDamageCandidates: credibleDamage,
+    extractedText,
+    humanReviewRequired: output.humanReviewRequired || qualityWarnings.length > 0 || credibleDamage.length > 0
+  };
+}
+
 export const localVisionProvider: VisionProvider = {
   name: "localVisionProvider",
   promptVersion: "photo-analysis-v2",
@@ -183,7 +220,7 @@ export const localVisionProvider: VisionProvider = {
 
     return {
       raw,
-      validated: VisionOutputSchema.parse(raw)
+      validated: normalizeVisionOutput(VisionOutputSchema.parse(raw))
     };
   }
 };
@@ -202,7 +239,8 @@ export const bedrockVisionProvider: VisionProvider = {
       "Return only strict JSON matching this TypeScript shape:",
       "{ photoAngle: 'front'|'rear'|'driver_side'|'passenger_side'|'interior'|'engine_bay'|'odometer'|'vin_plate'|'unknown', confidence: number, imageQuality: { grade: 'pass'|'review'|'retake', blurScore: number, exposureScore: number, framingScore: number, resolutionScore: number, occlusionRisk: number, retakeRequired: boolean, notes: string[] }, qualityWarnings: string[], detectedDamageCandidates: Array<{ location: string, damageType: 'scratch'|'dent'|'paint_damage'|'crack'|'wheel_damage'|'glass_damage'|'interior_wear'|'unknown', severityEstimate: 'minor'|'moderate'|'severe'|'unknown', confidence: number, explanation: string, repairEstimateUsd: { min: number, max: number, rationale: string }, requiresHumanConfirmation: boolean }>, extractedText: { vin?: string, odometer?: string }, humanReviewRequired: boolean }.",
       "Use 0-1 confidence values. If unsure, use unknown angle, lower confidence, and humanReviewRequired true.",
-      "Never invent VIN or odometer values unless legible. Mark retakeRequired true for blur, poor framing, low light, occlusion, or non-vehicle images."
+      "Never invent VIN or odometer values unless legible. Mark retakeRequired true for blur, poor framing, low light, occlusion, or non-vehicle images.",
+      "Keep reviewer work bounded: return at most one qualityWarnings item and at most one detectedDamageCandidates item. Omit damage candidates below 0.60 confidence."
     ].join("\n");
     const response = await client.send(new ConverseCommand({
       modelId: process.env.BEDROCK_MODEL_ID ?? "us.anthropic.claude-sonnet-4-6",
@@ -229,9 +267,11 @@ export const bedrockVisionProvider: VisionProvider = {
       .trim() ?? "";
     try {
       const parsed = parseJsonObject(rawText);
+      const parsedOutput = VisionOutputSchema.parse(parsed);
+      const validated = normalizeVisionOutput(parsedOutput);
       return {
         raw: { response, text: rawText, parsed },
-        validated: VisionOutputSchema.parse(parsed)
+        validated
       };
     } catch (error) {
       const fallback = await localVisionProvider.analyze(input);

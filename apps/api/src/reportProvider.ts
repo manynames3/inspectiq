@@ -42,6 +42,19 @@ export const localReportProvider: ReportProvider = {
   }
 };
 
+function normalizeReportOutput(candidate: unknown): AiReportOutput {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return AiReportOutputSchema.parse(candidate);
+  }
+
+  const output = { ...candidate } as Record<string, unknown>;
+  if (typeof output.confidence === "number" && output.confidence > 1 && output.confidence <= 100) {
+    output.confidence = output.confidence / 100;
+  }
+
+  return AiReportOutputSchema.parse(output);
+}
+
 export const bedrockClaudeReportProvider: ReportProvider = {
   name: "bedrockClaudeReportProvider",
   promptVersion: "inspection-report-v2",
@@ -53,6 +66,7 @@ export const bedrockClaudeReportProvider: ReportProvider = {
       "{ summary: string, notableDefects: string[], missingEvidence: string[], recommendedDisclosure: string, confidence: number, humanReviewRequired: boolean, reasoningSummary: string }",
       "Do not invent damage, odometer, VIN, mechanical facts, seller claims, or inspection findings.",
       "Use buyer-ready wording. Do not mention schema, model, prompt, AI, JSON, or internal validation.",
+      "Confidence must be a 0-1 decimal such as 0.84, never a percentage such as 84.",
       "",
       `Vehicle: ${input.inspection.year} ${input.inspection.make} ${input.inspection.model} ${input.inspection.trim}`,
       `VIN: ${input.inspection.vin}`,
@@ -73,11 +87,24 @@ export const bedrockClaudeReportProvider: ReportProvider = {
       ?.map((block) => "text" in block && typeof block.text === "string" ? block.text : "")
       .join("\n")
       .trim() ?? "";
-    const parsed = parseJsonObject(rawText);
-    return {
-      raw: { response, text: rawText, parsed },
-      validated: AiReportOutputSchema.parse(parsed)
-    };
+    try {
+      const parsed = parseJsonObject(rawText);
+      return {
+        raw: { response, text: rawText, parsed },
+        validated: normalizeReportOutput(parsed)
+      };
+    } catch (error) {
+      const fallback = await localReportProvider.generate(input);
+      return {
+        raw: {
+          response,
+          text: rawText,
+          fallbackReason: error instanceof Error ? error.message : "Bedrock response failed report validation.",
+          fallback: fallback.raw
+        },
+        validated: fallback.validated
+      };
+    }
   }
 };
 

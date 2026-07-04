@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { runImageAnalysisJob } from "./imageAnalysisRunner.js";
-import { loadPostgresSnapshot, savePostgresSnapshot } from "./postgresPersistence.js";
+import { mutatePostgresSnapshot } from "./postgresPersistence.js";
 import { createPostgresPool } from "./postgresPool.js";
 import { resolveDatabaseUrl } from "./runtimeConfig.js";
 import { store } from "./store.js";
@@ -16,7 +16,6 @@ type SqsEvent = {
 };
 
 let pool: Pool | null = null;
-const workerSnapshotLockKey = "7803144587035695002";
 
 async function getPool(): Promise<Pool> {
   if (pool) return pool;
@@ -39,10 +38,7 @@ export async function handler(event: SqsEvent): Promise<{ batchItemFailures: Arr
       };
       const jobIds = message.jobIds?.length ? message.jobIds : message.jobId ? [message.jobId] : [];
       if (jobIds.length === 0) throw new Error("Image analysis message did not include jobId or jobIds.");
-      const lockClient = await activePool.connect();
-      try {
-        await lockClient.query("select pg_advisory_lock($1::bigint)", [workerSnapshotLockKey]);
-        await loadPostgresSnapshot(store, activePool);
+      await mutatePostgresSnapshot(store, activePool, async () => {
         await Promise.all(jobIds.map((jobId) =>
           runImageAnalysisJob(store, jobId, message.actor ?? {
             id: "image-worker",
@@ -50,11 +46,7 @@ export async function handler(event: SqsEvent): Promise<{ batchItemFailures: Arr
             role: "admin"
           })
         ));
-        await savePostgresSnapshot(store, activePool);
-      } finally {
-        await lockClient.query("select pg_advisory_unlock($1::bigint)", [workerSnapshotLockKey]).catch(() => undefined);
-        lockClient.release();
-      }
+      });
     } catch (error) {
       console.error(JSON.stringify({
         level: "error",

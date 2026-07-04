@@ -33,6 +33,8 @@ const deleteOrder = [
   "users"
 ] as const;
 
+const SNAPSHOT_MUTATION_LOCK_KEY = "7803144587035695001";
+
 function schemaPath(): string {
   const candidates = [
     process.env.DB_SCHEMA_PATH,
@@ -76,10 +78,7 @@ export async function migratePostgres(pool: Pool, filePath = schemaPath()): Prom
   await pool.query(schema);
 }
 
-export async function loadPostgresSnapshot(store: MemoryStore, pool: Pool): Promise<boolean> {
-  await migratePostgres(pool);
-  const client = await pool.connect();
-  try {
+async function loadPostgresSnapshotFromClient(store: MemoryStore, client: PoolClient): Promise<boolean> {
     const { rowCount } = await client.query("select 1 from inspections limit 1");
     if (rowCount === 0) return false;
 
@@ -276,17 +275,19 @@ export async function loadPostgresSnapshot(store: MemoryStore, pool: Pool): Prom
     }
 
     return true;
+}
+
+export async function loadPostgresSnapshot(store: MemoryStore, pool: Pool): Promise<boolean> {
+  await migratePostgres(pool);
+  const client = await pool.connect();
+  try {
+    return await loadPostgresSnapshotFromClient(store, client);
   } finally {
     client.release();
   }
 }
 
-export async function savePostgresSnapshot(store: MemoryStore, pool: Pool): Promise<void> {
-  await migratePostgres(pool);
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await client.query("select pg_advisory_xact_lock(7803144587035695001)");
+async function writePostgresSnapshotToClient(store: MemoryStore, client: PoolClient): Promise<void> {
     for (const table of deleteOrder) {
       await client.query(`delete from ${table}`);
     }
@@ -444,8 +445,39 @@ export async function savePostgresSnapshot(store: MemoryStore, pool: Pool): Prom
       record.detailsJson,
       record.createdAt
     ]));
+}
 
+export async function savePostgresSnapshot(store: MemoryStore, pool: Pool): Promise<void> {
+  await migratePostgres(pool);
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock($1::bigint)", [SNAPSHOT_MUTATION_LOCK_KEY]);
+    await writePostgresSnapshotToClient(store, client);
     await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function mutatePostgresSnapshot(
+  store: MemoryStore,
+  pool: Pool,
+  mutation: () => Promise<void>
+): Promise<boolean> {
+  await migratePostgres(pool);
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock($1::bigint)", [SNAPSHOT_MUTATION_LOCK_KEY]);
+    const loaded = await loadPostgresSnapshotFromClient(store, client);
+    await mutation();
+    await writePostgresSnapshotToClient(store, client);
+    await client.query("commit");
+    return loaded;
   } catch (error) {
     await client.query("rollback");
     throw error;
