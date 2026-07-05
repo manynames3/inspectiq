@@ -86,8 +86,21 @@ try {
   await waitForBodyText(page, "Uploaded images (8)");
   await page.getByRole("button", { name: /analyze photos/i }).click();
   await page.locator(".suggestion-card").first().waitFor({ timeout: 120_000 });
+  await page.locator(".field-capture-panel").waitFor({ timeout: 15_000 });
 
   await page.locator(".role-select select").selectOption("reviewer");
+  const inspectionUrl = page.url();
+  await page.goto(`${baseUrl}/suggestions`, { waitUntil: "networkidle" });
+  await waitForBodyText(page, "Suggestions");
+  await waitForBodyText(page, "SLA");
+  await waitForBodyText(page, "Inspector QA");
+  await waitForBodyText(page, uniqueVin);
+  await page.locator(".queue-search-field input").fill(uniqueVin);
+  await waitForBodyText(page, "findings");
+  await waitForBodyText(page, "Due in");
+  await page.goto(inspectionUrl, { waitUntil: "networkidle" });
+  await page.locator(".role-select select").selectOption("reviewer");
+  await page.waitForFunction(() => document.querySelector(".role-select select")?.value === "reviewer");
   await page.locator(".suggestion-card .accept-button:not([disabled])").first().waitFor({ timeout: 120_000 });
   await acceptVisibleSuggestions(page);
   await waitForBodyText(page, "Ready for grading");

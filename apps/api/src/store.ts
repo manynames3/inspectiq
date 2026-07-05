@@ -10,6 +10,7 @@ import {
   type InspectionStatus,
   type PhotoAngle,
   type ReadinessIssue,
+  type UserRole,
   type VisionOutput
 } from "@inspectiq/shared";
 import { z } from "zod";
@@ -34,6 +35,11 @@ import { conflict, notFound } from "./errors.js";
 import { assertTransition, canTransition } from "./stateMachine.js";
 
 type CreateInspectionInput = z.infer<typeof CreateInspectionSchema>;
+type SuggestionAssignmentRole = Extract<UserRole, "inspector" | "reviewer">;
+type CreateVisionSuggestionInput = Omit<
+  VisionSuggestion,
+  "id" | "status" | "reviewedBy" | "reviewedAt" | "resolvedAt" | "createdAt" | "assignedToRole" | "assignedToUserId" | "dueAt"
+> & Partial<Pick<VisionSuggestion, "assignedToRole" | "assignedToUserId" | "dueAt">>;
 
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
@@ -57,6 +63,23 @@ const ExtractedTextSuggestionSchema = z.object({
   odometer: z.string().nullable().optional(),
   vin: z.string().nullable().optional()
 }).strict();
+const suggestionSlaMinutes: Record<VisionSuggestion["suggestionType"], number> = {
+  damage_candidate: 60,
+  quality_warning: 120,
+  extracted_text: 180,
+  photo_angle: 240
+};
+
+function suggestionAssignmentRole(suggestionType: VisionSuggestion["suggestionType"]): SuggestionAssignmentRole {
+  if (suggestionType === "quality_warning" || suggestionType === "photo_angle") return "inspector";
+  return "reviewer";
+}
+
+function suggestionDueAt(suggestionType: VisionSuggestion["suggestionType"], createdAt: string): string {
+  const createdTime = new Date(createdAt).getTime();
+  const baseTime = Number.isFinite(createdTime) ? createdTime : Date.now();
+  return new Date(baseTime + suggestionSlaMinutes[suggestionType] * 60_000).toISOString();
+}
 
 function percentLabel(numerator: number, denominator: number, fallback = 0): string {
   if (denominator === 0) return `${fallback}%`;
@@ -495,14 +518,20 @@ export class MemoryStore {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
   }
 
-  createSuggestion(input: Omit<VisionSuggestion, "id" | "status" | "reviewedBy" | "reviewedAt" | "createdAt">): VisionSuggestion {
+  createSuggestion(input: CreateVisionSuggestionInput): VisionSuggestion {
+    const createdAt = now();
+    const { assignedToRole, assignedToUserId, dueAt, ...suggestionInput } = input;
     const suggestion: VisionSuggestion = {
       id: id(),
       status: "pending",
+      assignedToRole: assignedToRole ?? suggestionAssignmentRole(input.suggestionType),
+      assignedToUserId: assignedToUserId ?? null,
+      dueAt: dueAt ?? suggestionDueAt(input.suggestionType, createdAt),
       reviewedBy: null,
       reviewedAt: null,
-      createdAt: now(),
-      ...input
+      resolvedAt: null,
+      createdAt,
+      ...suggestionInput
     };
     this.suggestions.set(suggestion.id, suggestion);
     return suggestion;
@@ -551,6 +580,7 @@ export class MemoryStore {
     suggestion.status = "accepted";
     suggestion.reviewedBy = actor.id;
     suggestion.reviewedAt = now();
+    suggestion.resolvedAt = suggestion.reviewedAt;
 
     if (suggestion.suggestionType === "photo_angle") {
       const angleValue = value as { photoAngle: PhotoAngle };
@@ -595,6 +625,7 @@ export class MemoryStore {
     suggestion.status = "rejected";
     suggestion.reviewedBy = actor.id;
     suggestion.reviewedAt = now();
+    suggestion.resolvedAt = suggestion.reviewedAt;
     this.addAudit(suggestion.inspectionId, actor, "suggestion.rejected", {
       suggestionId: suggestion.id,
       suggestionType: suggestion.suggestionType

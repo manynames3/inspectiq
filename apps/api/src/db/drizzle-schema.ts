@@ -90,8 +90,12 @@ export const visionSuggestions = pgTable("vision_suggestions", {
   confidence: numeric("confidence").notNull(),
   explanation: text("explanation").notNull(),
   status: text("status").notNull(),
+  assignedToRole: text("assigned_to_role").notNull(),
+  assignedToUserId: text("assigned_to_user_id").references(() => users.id),
+  dueAt: timestamp("due_at", { withTimezone: true }).notNull().defaultNow(),
   reviewedBy: text("reviewed_by").references(() => users.id),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });
 

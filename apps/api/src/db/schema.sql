@@ -91,10 +91,21 @@ create table if not exists vision_suggestions (
   confidence numeric not null,
   explanation text not null,
   status text not null default 'pending' check (status in ('pending', 'accepted', 'rejected', 'edited')),
+  assigned_to_role text not null default 'reviewer' check (assigned_to_role in ('inspector', 'reviewer')),
+  assigned_to_user_id text references users(id),
+  due_at timestamptz not null default now(),
   reviewed_by text references users(id),
   reviewed_at timestamptz,
+  resolved_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+alter table vision_suggestions add column if not exists assigned_to_role text not null default 'reviewer';
+alter table vision_suggestions add column if not exists assigned_to_user_id text references users(id);
+alter table vision_suggestions add column if not exists due_at timestamptz not null default now();
+alter table vision_suggestions add column if not exists resolved_at timestamptz;
+alter table vision_suggestions drop constraint if exists vision_suggestions_assigned_to_role_check;
+alter table vision_suggestions add constraint vision_suggestions_assigned_to_role_check check (assigned_to_role in ('inspector', 'reviewer'));
 
 create table if not exists damage_items (
   id text primary key default gen_random_uuid()::text,
@@ -175,6 +186,7 @@ create index if not exists idx_image_analysis_jobs_status_updated on image_analy
 create index if not exists idx_photo_analysis_photo_id on photo_analysis_results(photo_id);
 create index if not exists idx_suggestions_inspection_status on vision_suggestions(inspection_id, status);
 create index if not exists idx_suggestions_photo_id on vision_suggestions(photo_id);
+create index if not exists idx_suggestions_assigned_due on vision_suggestions(assigned_to_role, due_at);
 create index if not exists idx_suggestions_reviewed_by on vision_suggestions(reviewed_by);
 create index if not exists idx_damage_inspection_id on damage_items(inspection_id);
 create index if not exists idx_damage_photo_id on damage_items(photo_id);

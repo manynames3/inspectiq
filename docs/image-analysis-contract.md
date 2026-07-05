@@ -78,6 +78,9 @@ Required validated fields:
 - Material damage candidates below the configured threshold, default `MIN_DAMAGE_CONFIDENCE=0.80`, are discarded before reviewer suggestions are created.
 - Retake-required photos create quality-warning suggestions and block buyer-visible release until resolved.
 - Every suggestion starts as pending.
+- Photo-angle and image-quality suggestions are assigned to Inspector QA; damage and OCR suggestions are assigned to Reviewer.
+- Suggestions carry an operational due time: damage within 60 minutes, image quality within 120 minutes, OCR within 180 minutes, and angle confirmation within 240 minutes.
+- Accepted or rejected suggestions record reviewer identity, review timestamp, and resolved timestamp.
 - Reviewers can accept, reject, or edit suggestions.
 - Accepted photo-angle suggestions update required evidence completeness.
 - Accepted damage candidates materialize as confirmed damage items.

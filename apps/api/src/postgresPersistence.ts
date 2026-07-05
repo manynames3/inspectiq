@@ -183,8 +183,12 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         confidence: num(record.confidence),
         explanation: record.explanation,
         status: record.status,
+        assignedToRole: record.assigned_to_role ?? "reviewer",
+        assignedToUserId: record.assigned_to_user_id,
+        dueAt: record.due_at ? iso(record.due_at) : iso(record.created_at),
         reviewedBy: record.reviewed_by,
         reviewedAt: record.reviewed_at ? iso(record.reviewed_at) : null,
+        resolvedAt: record.resolved_at ? iso(record.resolved_at) : null,
         createdAt: iso(record.created_at)
       } satisfies VisionSuggestion);
     }
@@ -374,7 +378,7 @@ async function writePostgresRowsFromStore(store: MemoryStore, client: PoolClient
       record.createdAt
     ]));
 
-    await upsertRows(client, "vision_suggestions", ["id", "inspection_id", "photo_id", "suggestion_type", "suggested_value_json", "confidence", "explanation", "status", "reviewed_by", "reviewed_at", "created_at"], [...store.suggestions.values()].map((record) => [
+    await upsertRows(client, "vision_suggestions", ["id", "inspection_id", "photo_id", "suggestion_type", "suggested_value_json", "confidence", "explanation", "status", "assigned_to_role", "assigned_to_user_id", "due_at", "reviewed_by", "reviewed_at", "resolved_at", "created_at"], [...store.suggestions.values()].map((record) => [
       record.id,
       record.inspectionId,
       record.photoId,
@@ -383,8 +387,12 @@ async function writePostgresRowsFromStore(store: MemoryStore, client: PoolClient
       record.confidence,
       record.explanation,
       record.status,
+      record.assignedToRole,
+      record.assignedToUserId,
+      record.dueAt,
       record.reviewedBy,
       record.reviewedAt,
+      record.resolvedAt,
       record.createdAt
     ]));
 

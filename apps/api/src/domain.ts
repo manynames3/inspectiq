@@ -98,8 +98,12 @@ export type VisionSuggestion = {
   confidence: number;
   explanation: string;
   status: SuggestionStatus;
+  assignedToRole: Extract<UserRole, "inspector" | "reviewer">;
+  assignedToUserId: string | null;
+  dueAt: string;
   reviewedBy: string | null;
   reviewedAt: string | null;
+  resolvedAt: string | null;
   createdAt: string;
 };
 

@@ -68,6 +68,13 @@ export type VisionSuggestion = {
   confidence: number;
   explanation: string;
   status: string;
+  assignedToRole?: Extract<UserRole, "inspector" | "reviewer"> | null;
+  assignedToUserId?: string | null;
+  dueAt?: string | null;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  resolvedAt?: string | null;
+  createdAt?: string;
 };
 
 export type DamageItem = {

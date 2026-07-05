@@ -36,6 +36,13 @@ function isInReviewInspection(inspection: Inspection) {
   return inspection.status === "HUMAN_REVIEW_REQUIRED" || inspection.status === "AI_DRAFTED" || inspection.status === "AI_DRAFT_PENDING";
 }
 
+function inspectionNeedsWork(inspection: Inspection) {
+  return inspection.status !== "FINALIZED"
+    || Boolean(inspection.humanReviewFlag)
+    || inspection.buyerVisibleReady === false
+    || (inspection.readinessIssueCount ?? 0) > 0;
+}
+
 function formatAngleLabel(value: string | null | undefined) {
   if (!value) return "Angle pending";
   return value
@@ -350,6 +357,79 @@ function formatJobStatus(value: string | null | undefined) {
   return value.replaceAll("_", " ");
 }
 
+type PhotoQualityStatus = "ready" | "retake" | "review" | "pending" | "failed";
+
+function photoQualityScores(value: Record<string, unknown>) {
+  return [
+    typeof value.blurScore === "number" ? `Blur ${formatQualityScore(value.blurScore)}` : null,
+    typeof value.exposureScore === "number" ? `Exposure ${formatQualityScore(value.exposureScore)}` : null,
+    typeof value.framingScore === "number" ? `Framing ${formatQualityScore(value.framingScore)}` : null
+  ].filter((item): item is string => Boolean(item));
+}
+
+function photoQualityView(
+  photo: VehiclePhoto,
+  qualitySuggestion: VisionSuggestion | undefined,
+  jobStatus: string | null | undefined
+): { status: PhotoQualityStatus; label: string; detail: string; scores: string[] } {
+  const suggestionValue = qualitySuggestion ? suggestionValueRecord(qualitySuggestion) : {};
+  const quality = qualityValueRecord(suggestionValue.imageQuality);
+  const scores = photoQualityScores(quality);
+  const terminalStatus = jobStatus ?? photo.analysisStatus;
+
+  if (terminalStatus === "failed" || terminalStatus === "dead_letter") {
+    return {
+      status: "failed",
+      label: "Retry analysis",
+      detail: "Analysis failed before the photo could be trusted for release.",
+      scores
+    };
+  }
+
+  if (quality.retakeRequired === true) {
+    return {
+      status: "retake",
+      label: "Retake",
+      detail: formatTitleValue(suggestionValue.warning ?? "Image quality retake required"),
+      scores
+    };
+  }
+
+  if (qualitySuggestion && (qualitySuggestion.status === "pending" || qualitySuggestion.status === "edited")) {
+    return {
+      status: "review",
+      label: "QA review",
+      detail: formatTitleValue(suggestionValue.warning ?? "Reviewer should confirm image usability"),
+      scores
+    };
+  }
+
+  if (typeof photo.detectedAngleConfidence === "number" && photo.detectedAngleConfidence < 0.9) {
+    return {
+      status: "review",
+      label: "Confirm angle",
+      detail: `Detected angle confidence is ${Math.round(photo.detectedAngleConfidence * 100)}%.`,
+      scores
+    };
+  }
+
+  if (terminalStatus !== "completed") {
+    return {
+      status: "pending",
+      label: "Analyze",
+      detail: "Run image analysis to validate angle, quality, and extracted evidence.",
+      scores
+    };
+  }
+
+  return {
+    status: "ready",
+    label: "Usable",
+    detail: "Image has usable analysis signals for reviewer release.",
+    scores
+  };
+}
+
 function ProtectedPhotoImage({ photo }: { photo: VehiclePhoto }) {
   const { actor } = useActor();
   const directUrl = photoImageUrl(photo);
@@ -452,6 +532,8 @@ export function InspectionDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [queueTab, setQueueTab] = useState<QueueTab>("my");
+  const [queueSearch, setQueueSearch] = useState("");
+  const [queueNeedsWorkOnly, setQueueNeedsWorkOnly] = useState(false);
   const [queuePage, setQueuePage] = useState(1);
   const [conditionDockTab, setConditionDockTab] = useState<ConditionDockTab>("grading");
   const [reportDockTab, setReportDockTab] = useState<ReportDockTab>("draft");
@@ -527,9 +609,23 @@ export function InspectionDetailPage() {
     { id: "all", label: "All", count: inspections.length }
   ], [inspections.length, inReviewInspections.length]);
   const queuedInspections = useMemo(() => {
-    if (queueTab === "review") return inReviewInspections;
-    return inspections;
-  }, [inReviewInspections, inspections, queueTab]);
+    const base = queueTab === "review" ? inReviewInspections : inspections;
+    const normalizedQuery = queueSearch.trim().toLowerCase();
+    return base.filter((inspection) => {
+      if (queueNeedsWorkOnly && !inspectionNeedsWork(inspection)) return false;
+      if (!normalizedQuery) return true;
+      const searchable = [
+        queueCodeByInspectionId.get(inspection.id) ?? "",
+        inspection.vin,
+        inspection.year,
+        inspection.make,
+        inspection.model,
+        inspection.trim,
+        inspection.status
+      ].join(" ").toLowerCase();
+      return searchable.includes(normalizedQuery);
+    });
+  }, [inReviewInspections, inspections, queueCodeByInspectionId, queueNeedsWorkOnly, queueSearch, queueTab]);
   const queueTotalPages = Math.max(1, Math.ceil(queuedInspections.length / queuePageSize));
   const visibleQueuedInspections = useMemo(() => {
     const start = (queuePage - 1) * queuePageSize;
@@ -545,7 +641,7 @@ export function InspectionDetailPage() {
 
   useEffect(() => {
     setQueuePage(1);
-  }, [queueTab]);
+  }, [queueNeedsWorkOnly, queueSearch, queueTab]);
 
   useEffect(() => {
     setQueuePage((current) => Math.min(Math.max(current, 1), queueTotalPages));
@@ -559,6 +655,7 @@ export function InspectionDetailPage() {
     .sort((left, right) => suggestionPriority(left) - suggestionPriority(right));
   const workflowStep = bundle.inspection.status === "FINALIZED" ? 4 : bundle.inspection.status === "HUMAN_REVIEW_REQUIRED" || bundle.inspection.status === "AI_DRAFTED" ? 3 : bundle.conditionGrade ? 2 : 1;
   const capturedEvidencePercent = Math.round((requiredAngles.filter((angle) => capturedAngles.has(angle)).length / requiredAngles.length) * 100);
+  const missingAngles = requiredAngles.filter((angle) => !capturedAngles.has(angle));
   const marketplaceReadiness = deriveMarketplaceReadiness(bundle);
   const blockerIssues = (bundle.readinessIssues ?? []).filter((issue) => issue.severity === "blocker");
   const watchIssues = (bundle.readinessIssues ?? []).filter((issue) => issue.severity === "watch");
@@ -588,6 +685,62 @@ export function InspectionDetailPage() {
   const captureDisabled = busy !== null || !canCaptureEvidence;
   const analysisDisabled = busy !== null || !canAnalyzePhotos;
   const reviewDisabled = busy !== null || !canReviewSuggestions;
+  const qualitySuggestionsByPhotoId = new Map(
+    bundle.suggestions
+      .filter((suggestion) => suggestion.suggestionType === "quality_warning")
+      .map((suggestion) => [suggestion.photoId, suggestion])
+  );
+  const photoQualityRows = bundle.photos.map((photo) => {
+    const job = imageJobByPhotoId.get(photo.id);
+    return {
+      photo,
+      view: photoQualityView(photo, qualitySuggestionsByPhotoId.get(photo.id), job?.status)
+    };
+  });
+  const retakePhotoRows = photoQualityRows.filter((row) => row.view.status === "retake");
+  const analysisIssueRows = photoQualityRows.filter((row) => row.view.status === "failed");
+  const reviewPhotoRows = photoQualityRows.filter((row) => row.view.status === "review");
+  const readyPhotoRows = photoQualityRows.filter((row) => row.view.status === "ready");
+  const pendingAnalysisRows = photoQualityRows.filter((row) => row.view.status === "pending");
+  const guidanceIssues = [
+    ...retakePhotoRows,
+    ...analysisIssueRows,
+    ...reviewPhotoRows,
+    ...missingAngles.map((angle) => ({
+      photo: null,
+      view: {
+        status: "missing" as const,
+        label: "Capture required angle",
+        detail: `${formatAngleLabel(angle)} photo is still needed for the checklist.`,
+        scores: []
+      }
+    }))
+  ].slice(0, 4);
+  const fieldGuidanceTone = retakePhotoRows.length > 0 || analysisIssueRows.length > 0
+    ? "retake"
+    : missingAngles.length > 0 || reviewPhotoRows.length > 0 || pendingAnalysisRows.length > 0
+      ? "review"
+      : "ready";
+  const fieldGuidanceTitle = retakePhotoRows.length > 0
+    ? `${retakePhotoRows.length} retake${retakePhotoRows.length === 1 ? "" : "s"} recommended`
+    : analysisIssueRows.length > 0
+      ? `${analysisIssueRows.length} image analysis issue${analysisIssueRows.length === 1 ? "" : "s"}`
+      : missingAngles.length > 0
+        ? `${missingAngles.length} required angle${missingAngles.length === 1 ? "" : "s"} missing`
+        : reviewPhotoRows.length > 0
+          ? `${reviewPhotoRows.length} photo${reviewPhotoRows.length === 1 ? "" : "s"} need QA review`
+          : pendingAnalysisRows.length > 0
+            ? `${pendingAnalysisRows.length} photo${pendingAnalysisRows.length === 1 ? "" : "s"} awaiting analysis`
+            : "Evidence ready for review";
+  const fieldGuidanceDetail = retakePhotoRows.length > 0
+    ? "Retake guidance is based on image quality scores and reviewer-visible model findings."
+    : missingAngles.length > 0
+      ? "Capture missing checklist angles before buyer-visible condition release."
+      : reviewPhotoRows.length > 0
+        ? "Review lower-confidence images before final CR and VDP publication."
+        : pendingAnalysisRows.length > 0
+          ? "Run image analysis to verify angle, damage, OCR, and quality signals."
+          : "Required photos have usable analysis signals and no open retake blocker.";
 
   return (
     <section className="inspection-workspace">
@@ -596,14 +749,37 @@ export function InspectionDetailPage() {
         <aside className="inspection-list-panel">
           <div className="inspection-list-header">
             <h2>Inspections</h2>
-            <button className="icon-button" aria-label="Filter inspections"><Filter size={16} /></button>
+            <button
+              className={`icon-button ${queueNeedsWorkOnly ? "active" : ""}`}
+              aria-label="Show inspections needing work"
+              aria-pressed={queueNeedsWorkOnly}
+              onClick={() => setQueueNeedsWorkOnly((current) => !current)}
+              title="Show inspections needing work"
+            >
+              <Filter size={16} />
+            </button>
           </div>
           <div className="inspection-list-tools">
             <label className="inspection-search-field">
               <Search size={14} aria-hidden="true" />
-              <input placeholder="Search inspections..." readOnly />
+              <input
+                placeholder="Search inspections..."
+                value={queueSearch}
+                onChange={(event) => setQueueSearch(event.target.value)}
+              />
             </label>
-            <button className="queue-options-button" aria-label="Inspection queue options"><SlidersHorizontal size={15} /></button>
+            <button
+              className="queue-options-button"
+              aria-label="Reset inspection filters"
+              disabled={!queueSearch && !queueNeedsWorkOnly}
+              onClick={() => {
+                setQueueSearch("");
+                setQueueNeedsWorkOnly(false);
+              }}
+              title="Reset inspection filters"
+            >
+              <SlidersHorizontal size={15} />
+            </button>
           </div>
           <div className="inspection-tabs">
             {queueTabs.map((tab) => (
@@ -738,6 +914,30 @@ export function InspectionDetailPage() {
                 </div>
               </div>
 
+              <div className={`field-capture-panel field-${fieldGuidanceTone}`}>
+                <div className="field-capture-summary">
+                  <span>Field capture guidance</span>
+                  <strong>{fieldGuidanceTitle}</strong>
+                  <small>{fieldGuidanceDetail}</small>
+                </div>
+                <div className="field-capture-metrics" aria-label="Image quality status">
+                  <span><strong>{readyPhotoRows.length}</strong><small>Usable</small></span>
+                  <span><strong>{retakePhotoRows.length}</strong><small>Retake</small></span>
+                  <span><strong>{reviewPhotoRows.length}</strong><small>QA review</small></span>
+                  <span><strong>{missingAngles.length}</strong><small>Missing</small></span>
+                </div>
+                {guidanceIssues.length > 0 ? (
+                  <div className="field-capture-issues">
+                    {guidanceIssues.map((row, index) => (
+                      <span key={row.photo?.id ?? `${row.view.label}-${index}`} className={`quality-${row.view.status}`}>
+                        <strong>{row.photo ? photoDisplayName(row.photo) : row.view.label}</strong>
+                        <small>{row.view.detail}{row.view.scores.length > 0 ? ` · ${row.view.scores.join(" · ")}` : ""}</small>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
               <div className="evidence-board">
                 <div>
                   <div className="panel-header">
@@ -774,8 +974,9 @@ export function InspectionDetailPage() {
                     ) : bundle.photos.map((photo) => {
                       const confidenceLabel = typeof photo.detectedAngleConfidence === "number" ? `${Math.round(photo.detectedAngleConfidence * 100)}%` : "Pending";
                       const job = imageJobByPhotoId.get(photo.id);
+                      const quality = photoQualityView(photo, qualitySuggestionsByPhotoId.get(photo.id), job?.status);
                       return (
-                        <article className="photo-tile" key={photo.id}>
+                        <article className={`photo-tile quality-${quality.status}`} key={photo.id}>
                           <ProtectedPhotoImage photo={photo} />
                           <div>
                             <strong>{photoDisplayName(photo)}</strong>
@@ -787,7 +988,11 @@ export function InspectionDetailPage() {
                             <span className={`analysis-job-chip job-${job?.status ?? photo.analysisStatus}`}>
                               Analysis {formatJobStatus(job?.status ?? photo.analysisStatus)}
                             </span>
-                            {photo.qualityStatus === "warning" ? <em><AlertTriangle size={13} /> quality review</em> : null}
+                            <span className={`photo-quality-chip quality-${quality.status}`}>
+                              {quality.status === "ready" ? <Check size={12} /> : <AlertTriangle size={12} />}
+                              {quality.label}
+                            </span>
+                            {quality.scores.length > 0 ? <em>{quality.scores.join(" · ")}</em> : null}
                           </div>
                         </article>
                       );

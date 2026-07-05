@@ -238,6 +238,10 @@ describe("InspectIQ API", () => {
       .expect(200);
     const angleSuggestion = suggestions.body.data.find((item: { suggestionType: string }) => item.suggestionType === "photo_angle");
     expect(angleSuggestion).toBeTruthy();
+    expect(angleSuggestion.assignedToRole).toBe("inspector");
+    expect(angleSuggestion.assignedToUserId).toBeNull();
+    expect(Date.parse(angleSuggestion.dueAt)).toBeGreaterThan(Date.parse(angleSuggestion.createdAt));
+    expect(angleSuggestion.resolvedAt).toBeNull();
 
     await request(api)
       .post(`/api/vision-suggestions/${angleSuggestion.id}/accept`)
@@ -245,11 +249,13 @@ describe("InspectIQ API", () => {
       .send({})
       .expect(403);
 
-    await request(api)
+    const acceptedSuggestion = await request(api)
       .post(`/api/vision-suggestions/${angleSuggestion.id}/accept`)
       .set(reviewerHeaders)
       .send({})
       .expect(200);
+    expect(acceptedSuggestion.body.data.reviewedBy).toBe("test-reviewer");
+    expect(acceptedSuggestion.body.data.resolvedAt).toBe(acceptedSuggestion.body.data.reviewedAt);
 
     const damage = await request(api)
       .post(`/api/inspections/${inspectionId}/damage`)
@@ -467,6 +473,9 @@ describe("InspectIQ API", () => {
 
     const qualitySuggestion = analyzed.body.data.suggestions.find((item: { suggestionType: string }) => item.suggestionType === "quality_warning");
     expect(qualitySuggestion).toBeTruthy();
+    expect(qualitySuggestion.assignedToRole).toBe("inspector");
+    expect(Date.parse(qualitySuggestion.dueAt)).toBeGreaterThan(Date.parse(qualitySuggestion.createdAt));
+    expect(qualitySuggestion.resolvedAt).toBeNull();
     expect(qualitySuggestion.suggestedValueJson.imageQuality.blurScore).toBeLessThan(0.6);
 
     const audit = await request(api).get(`/api/inspections/${inspectionId}/audit-events`).set(inspectorHeaders).expect(200);

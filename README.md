@@ -316,13 +316,19 @@ AI never finalizes reports.
 
 ```bash
 npm test
-npm run test:e2e
 npm run typecheck
 npm run lint
 npm run build
 ```
 
-The API tests cover the full create-to-finalize flow, upload intent metadata, image-analysis job records, readiness blockers, schema validation failures, evidence completeness gates, AI suggestion review, audit trail events, buyer-ready report export, and post-finalization immutability guards. The browser E2E script covers role-specific dashboard context, create -> attach photos -> analyze -> reviewer acceptance -> grade -> draft report -> finalize -> export buyer report -> audit verification through the rendered React app.
+Run the browser E2E flow against a clean memory-backed dev stack:
+
+```bash
+PERSISTENCE_MODE=memory npm run dev
+npm run test:e2e
+```
+
+The API tests cover the full create-to-finalize flow, upload intent metadata, image-analysis job records, readiness blockers, schema validation failures, evidence completeness gates, AI suggestion review, SLA assignment metadata, audit trail events, buyer-ready report export, and post-finalization immutability guards. The browser E2E script covers role-specific dashboard context, create -> attach photos -> analyze -> reviewer SLA queue -> reviewer acceptance -> grade -> draft report -> finalize -> export buyer report -> audit verification through the rendered React app.
 
 The live hosted flow has also been verified against Cognito sign-in, presigned S3 upload, protected preview intent, rendered object-storage image, Bedrock-backed image-analysis completion, and desktop/tablet/mobile overflow checks.
 
