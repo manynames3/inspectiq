@@ -135,6 +135,38 @@ export function platformHealthPayload(store: MemoryStore, provider: PlatformHeal
       productionTarget: "S3 image object storage -> queue worker -> Bedrock multimodal model -> validated suggestion records -> audit trail.",
       imageQualityPolicy: "Image quality is scored separately from damage confidence. Retake-required photos block buyer-visible release until a reviewer resolves the quality warning."
     },
+    productionReadinessProof: [
+      {
+        area: "Image AI and ML",
+        status: "partially proven",
+        current: "Bedrock multimodal analysis is wired through SQS/Lambda and stores schema-validated advisory suggestions.",
+        productionGate: "Launch requires a larger labeled inspection-photo corpus, calibrated angle/OCR/damage metrics, and a dedicated damage-detection model for buyer-dispute-grade claims."
+      },
+      {
+        area: "Image intake",
+        status: env.IMAGE_UPLOAD_MODE === "presigned" ? "implemented" : "local fallback",
+        current: "JPEG, PNG, and WebP upload schemas enforce MIME and size limits; presigned mode requires private object metadata, byte size, and SHA-256 checksum.",
+        productionGate: "Add image normalization, EXIF stripping, thumbnail generation, malware/content checks, lifecycle rules, and KMS key policy review."
+      },
+      {
+        area: "Auth and authorization",
+        status: env.AUTH_MODE === "jwt" ? "implemented" : "local fallback",
+        current: "JWT/JWKS validation, role claims, RBAC, object-level inspection access, and read-only evaluation mode are enforced in the API.",
+        productionGate: "Use enterprise OIDC groups/custom claims, remove role switching from production users, add session timeout policy, and audit sensitive reads."
+      },
+      {
+        area: "Persistence",
+        status: env.PERSISTENCE_MODE === "postgres" ? "partially proven" : "local fallback",
+        current: "Neon Postgres mode persists normalized tables; tests still use in-memory/file paths for deterministic speed.",
+        productionGate: "Move the highest-concurrency mutation paths to DB-first repositories with targeted transactions, migrations, backups, retention, and restore drills."
+      },
+      {
+        area: "Operations",
+        status: "partially proven",
+        current: "Platform Health exposes SLOs, CloudWatch alert names, queue/DLQ recovery steps, and workflow blockers.",
+        productionGate: "Run a staged failure-recovery drill, wire alert notifications, add trace correlation, and document rollback for frontend, Lambda, Terraform, and DB migrations."
+      }
+    ],
     persistence: {
       activeMode: env.PERSISTENCE_MODE ?? "file",
       postgresReady: Boolean(env.DATABASE_URL || env.DATABASE_SECRET_ARN),

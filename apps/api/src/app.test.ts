@@ -23,12 +23,20 @@ const adminHeaders = {
   "x-actor-role": "admin"
 };
 
-const authEnvKeys = ["AUTH_MODE", "OIDC_ISSUER", "OIDC_AUDIENCE", "OIDC_JWKS_JSON"] as const;
-const originalAuthEnv = Object.fromEntries(authEnvKeys.map((key) => [key, process.env[key]]));
+const mutableEnvKeys = [
+  "AUTH_MODE",
+  "OIDC_ISSUER",
+  "OIDC_AUDIENCE",
+  "OIDC_JWKS_JSON",
+  "ENABLE_EVALUATION_MODE",
+  "IMAGE_UPLOAD_MODE",
+  "IMAGE_BUCKET"
+] as const;
+const originalEnv = Object.fromEntries(mutableEnvKeys.map((key) => [key, process.env[key]]));
 
 function restoreAuthEnv(): void {
-  for (const key of authEnvKeys) {
-    const original = originalAuthEnv[key];
+  for (const key of mutableEnvKeys) {
+    const original = originalEnv[key];
     if (original === undefined) delete process.env[key];
     else process.env[key] = original;
   }
@@ -375,6 +383,37 @@ describe("InspectIQ API", () => {
     });
   });
 
+  it("allows read-only evaluation preview without allowing mutations", async () => {
+    process.env.AUTH_MODE = "jwt";
+    process.env.ENABLE_EVALUATION_MODE = "true";
+    api = createApp(store);
+
+    const inspections = await request(api)
+      .get("/api/inspections")
+      .set("x-inspectiq-evaluation-mode", "readonly")
+      .expect(200);
+    expect(inspections.body.data.length).toBeGreaterThan(0);
+
+    const mutation = await request(api)
+      .post("/api/inspections")
+      .set("x-inspectiq-evaluation-mode", "readonly")
+      .send({
+        vin: "5NMS2DAJ5RH654321",
+        year: 2024,
+        make: "Hyundai",
+        model: "Tucson",
+        trim: "SEL",
+        mileage: 14250,
+        exteriorColor: "Gray",
+        sellerSource: "Dealer trade",
+        inspectorName: "Evaluation Reviewer"
+      })
+      .expect(403);
+    expect(mutation.body.error.details.mode).toBe("evaluation-readonly");
+
+    await request(api).get("/api/inspections").expect(401);
+  });
+
   it("analyzes outstanding photos for an inspection in one batch action", async () => {
     const created = await createInspection();
     const inspectionId = created.body.data.id as string;
@@ -508,6 +547,89 @@ describe("InspectIQ API", () => {
     expect(intent.body.data.objectBucket).toBeTruthy();
     expect(intent.body.data.objectKey).toContain(`inspections/${inspectionId}/photos/`);
     expect(intent.body.data.requiredHeaders["x-amz-checksum-sha256"]).toBe("a".repeat(64));
+  });
+
+  it("rejects unsafe production upload metadata", async () => {
+    process.env.IMAGE_UPLOAD_MODE = "presigned";
+    process.env.IMAGE_BUCKET = "inspectiq-test-bucket";
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+
+    await request(api)
+      .post(`/api/inspections/${inspectionId}/photos/upload`)
+      .set(inspectorHeaders)
+      .send({
+        originalFilename: "diagram.svg",
+        mimeType: "image/svg+xml",
+        objectBucket: "inspectiq-test-bucket",
+        objectKey: `inspections/${inspectionId}/photos/front.svg`,
+        byteSize: 120000,
+        checksumSha256: "a".repeat(64)
+      })
+      .expect(400);
+
+    await request(api)
+      .post(`/api/inspections/${inspectionId}/photos/upload`)
+      .set(inspectorHeaders)
+      .send({
+        originalFilename: "front.jpg",
+        mimeType: "image/jpeg",
+        objectBucket: "inspectiq-test-bucket",
+        objectKey: `other-inspection/photos/front.jpg`,
+        byteSize: 120000,
+        checksumSha256: "a".repeat(64)
+      })
+      .expect(400);
+
+    await request(api)
+      .post(`/api/inspections/${inspectionId}/photos/upload`)
+      .set(inspectorHeaders)
+      .send({
+        originalFilename: "front.jpg",
+        mimeType: "image/jpeg",
+        objectBucket: "wrong-bucket",
+        objectKey: `inspections/${inspectionId}/photos/front.jpg`,
+        byteSize: 120000,
+        checksumSha256: "a".repeat(64)
+      })
+      .expect(400);
+
+    await request(api)
+      .post(`/api/inspections/${inspectionId}/photos/upload`)
+      .set(inspectorHeaders)
+      .send({
+        originalFilename: "front.jpg",
+        mimeType: "image/jpeg",
+        objectBucket: "inspectiq-test-bucket",
+        objectKey: `inspections/${inspectionId}/photos/front.jpg`,
+        byteSize: 120000
+      })
+      .expect(400);
+  });
+
+  it("force reanalysis stores a fresh result instead of reusing stale completed output", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+    await analyzeSamplePhoto(inspectionId, "front-clean");
+
+    const firstBundle = await request(api)
+      .get(`/api/inspections/${inspectionId}`)
+      .set(reviewerHeaders)
+      .expect(200);
+    expect(firstBundle.body.data.photoAnalysisResults).toHaveLength(1);
+
+    await request(api)
+      .post(`/api/inspections/${inspectionId}/photos/analyze`)
+      .set(inspectorHeaders)
+      .send({ force: true, idempotencyKeyPrefix: "force-test" })
+      .expect(200);
+
+    const secondBundle = await request(api)
+      .get(`/api/inspections/${inspectionId}`)
+      .set(reviewerHeaders)
+      .expect(200);
+    expect(secondBundle.body.data.photoAnalysisResults).toHaveLength(2);
+    expect(secondBundle.body.data.photoAnalysisResults[0].createdAt >= secondBundle.body.data.photoAnalysisResults[1].createdAt).toBe(true);
   });
 
   it("returns backend readiness blockers before buyer-visible release", async () => {

@@ -134,6 +134,35 @@ function objectKeyForUpload(inspectionId: string, filename: string): string {
   return `inspections/${inspectionId}/photos/${crypto.randomUUID()}-${cleanName}`;
 }
 
+function assertUploadObjectScope(inspectionId: string, input: {
+  objectBucket?: string;
+  objectKey?: string;
+  storageKey?: string;
+  byteSize?: number;
+  checksumSha256?: string;
+}): void {
+  const configuredBucket = process.env.IMAGE_BUCKET;
+  const expectedPrefix = `inspections/${inspectionId}/photos/`;
+  if (input.objectKey && !input.objectKey.startsWith(expectedPrefix)) {
+    throw validation("Uploaded image object key must stay under this inspection's photo prefix.", {
+      expectedPrefix
+    });
+  }
+  if (configuredBucket && input.objectBucket && input.objectBucket !== configuredBucket) {
+    throw validation("Uploaded image object bucket does not match the configured image bucket.");
+  }
+  if (process.env.IMAGE_UPLOAD_MODE !== "presigned") return;
+  if (!input.objectBucket || !input.objectKey) {
+    throw validation("Presigned upload metadata must include object bucket and object key.");
+  }
+  if (!input.byteSize || !input.checksumSha256) {
+    throw validation("Presigned upload metadata must include byte size and SHA-256 checksum.");
+  }
+  if (input.storageKey?.startsWith("data:")) {
+    throw validation("Presigned upload metadata cannot use browser data URLs.");
+  }
+}
+
 export function createApp(appStore = defaultStore, options: AppOptions = {}): express.Express {
   if (appStore.inspections.size === 0) seedStore(appStore);
 
@@ -230,6 +259,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:capture");
     inspectionForRequest(appStore, req.params.id, actor, "upload photos to this inspection");
+    assertUploadObjectScope(req.params.id, input);
     const objectKey = input.objectKey ?? objectKeyForUpload(req.params.id, input.originalFilename);
     const photo = appStore.addPhoto({
       inspectionId: req.params.id,

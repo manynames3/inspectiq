@@ -27,6 +27,12 @@ type Health = {
     productionTarget: string;
     imageQualityPolicy: string;
   };
+  productionReadinessProof: Array<{
+    area: string;
+    status: string;
+    current: string;
+    productionGate: string;
+  }>;
   persistence: {
     activeMode: string;
     postgresReady: boolean;
@@ -165,6 +171,26 @@ export function PlatformHealthPage() {
           </dl>
           <div className="contract-fields">
             {health.aiContract.validatedFields.map((field) => <span key={field}>{field}</span>)}
+          </div>
+        </div>
+      ) : null}
+      {health?.productionReadinessProof ? (
+        <div className="production-proof-panel">
+          <div>
+            <h2>Production readiness proof</h2>
+            <p>Current implementation evidence separated from the gate that would be required before buyer-visible production launch.</p>
+          </div>
+          <div className="proof-card-grid">
+            {health.productionReadinessProof.map((item) => (
+              <article key={item.area}>
+                <div>
+                  <strong>{item.area}</strong>
+                  <span>{item.status}</span>
+                </div>
+                <p>{item.current}</p>
+                <small>{item.productionGate}</small>
+              </article>
+            ))}
           </div>
         </div>
       ) : null}

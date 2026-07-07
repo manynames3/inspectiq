@@ -1,5 +1,5 @@
 import { AlertTriangle, ArrowDown, Bot, Check, ChevronLeft, ChevronRight, Download, FileText, Filter, Flag, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X } from "lucide-react";
-import { estimateDamageRepairCost, requiredPhotoAngles } from "@inspectiq/shared";
+import { estimateDamageRepairCost, maxImageUploadBytes, maxLocalPreviewUploadBytes, requiredPhotoAngles, supportedImageUploadMimeTypes } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, apiBase, assetUrl, requestHeaders } from "../api.js";
@@ -10,7 +10,7 @@ import type { Inspection, InspectionBundle, SampleImage, VehiclePhoto, VisionSug
 
 const requiredAngles = [...requiredPhotoAngles];
 const editablePhotoAngles = [...requiredAngles, "unknown"];
-const maxUploadBytes = 2_000_000;
+const supportedUploadMimeTypeSet = new Set<string>(supportedImageUploadMimeTypes);
 const queuePageSize = 10;
 
 type QueueTab = "my" | "review" | "all";
@@ -183,10 +183,10 @@ function normalizePhotoAngleInput(value: string) {
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
-  if (!/^image\/(jpeg|png|webp|svg\+xml)$/.test(file.type)) {
-    return Promise.reject(new Error("Upload a JPEG, PNG, WebP, or SVG image."));
+  if (!supportedUploadMimeTypeSet.has(file.type)) {
+    return Promise.reject(new Error("Upload a JPEG, PNG, or WebP image."));
   }
-  if (file.size > maxUploadBytes) {
+  if (file.size > maxLocalPreviewUploadBytes) {
     return Promise.reject(new Error("Upload an image under 2 MB for browser preview."));
   }
   return new Promise((resolve, reject) => {
@@ -228,8 +228,11 @@ function needsAuthenticatedImageFetch(photo: VehiclePhoto): boolean {
 }
 
 async function uploadInspectionPhoto(inspectionId: string, file: File, actor: ReturnType<typeof useActor>["actor"]) {
-  if (!/^image\/(jpeg|png|webp|svg\+xml)$/.test(file.type)) {
-    throw new Error("Upload a JPEG, PNG, WebP, or SVG image.");
+  if (!supportedUploadMimeTypeSet.has(file.type)) {
+    throw new Error("Upload a JPEG, PNG, or WebP image.");
+  }
+  if (file.size > maxImageUploadBytes) {
+    throw new Error("Upload an image under 25 MB.");
   }
   const checksumSha256 = await sha256Base64(file);
   const intent = await api<UploadIntent>("/api/uploads/intent", {

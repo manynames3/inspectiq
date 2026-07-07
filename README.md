@@ -99,7 +99,7 @@ flowchart TD
 
 This is a production-shaped reference implementation with a live hosted frontend and AWS backend. Local development still defaults to deterministic providers and file persistence for repeatable tests, while the deployed path uses Cloudflare Pages, API Gateway, Lambda, Neon Postgres, S3 presigned uploads, SQS, Bedrock multimodal analysis, Secrets Manager, Cognito resources, CloudWatch logs, alarms, and a dashboard.
 
-Remaining production hardening is called out directly: expand the model evaluation set with labeled production images, move the highest-concurrency persistence paths to DB-first repositories, and add environment promotion/rollback automation.
+Remaining production hardening is called out directly in `docs/production-readiness.md`: expand the model evaluation set with labeled production images, mature the image pipeline, move the highest-concurrency persistence paths to DB-first repositories, prove queue/DLQ recovery, and add environment promotion/rollback automation.
 
 For the concise interview explanation, see `docs/implementation-boundary.md`.
 
@@ -108,6 +108,7 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 - `docs/hiring-manager-brief.md`: business framing, stack mapping, walkthrough, and production next steps.
 - `docs/architecture.md`: component boundaries, runtime flow, data ownership, and failure handling.
 - `docs/implementation-boundary.md`: what is real in the repo, what is deterministic locally, and how to explain it.
+- `docs/production-readiness.md`: implemented proof, remaining production gates, and the honest interview framing.
 - `docs/state-machine.md`: workflow states and legal transitions.
 - `docs/image-analysis-contract.md`: model output contract, schema validation, and reviewer routing.
 - `docs/vision-evaluation.md`: image-analysis evaluation set, metrics, thresholds, and promotion command.

@@ -3036,6 +3036,76 @@ pre {
   font-weight: 700;
 }
 
+.production-proof-panel {
+  margin-top: 18px;
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+  padding: 16px;
+}
+
+.production-proof-panel h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.production-proof-panel p {
+  margin: 6px 0 0;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.proof-card-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.proof-card-grid article {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dbe3ed;
+  border-radius: 4px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.proof-card-grid article > div {
+  display: grid;
+  gap: 6px;
+}
+
+.proof-card-grid strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.proof-card-grid span {
+  width: fit-content;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #075985;
+  padding: 4px 7px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.proof-card-grid p,
+.proof-card-grid small {
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.proof-card-grid small {
+  color: var(--muted);
+}
+
 .implementation-boundary-panel {
   margin-top: 18px;
   display: grid;
@@ -3298,6 +3368,7 @@ pre {
   .summary-grid,
   .metric-card-grid,
   .ops-readiness-grid,
+  .proof-card-grid,
   .production-readiness-grid,
   .readiness-issue-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3415,6 +3486,7 @@ pre {
   .ai-contract-panel dl,
   .boundary-grid,
   .recovery-columns,
+  .proof-card-grid,
   .production-readiness-grid,
   .readiness-issue-grid,
   .damage-form {

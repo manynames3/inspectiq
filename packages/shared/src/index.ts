@@ -41,6 +41,9 @@ export const suggestionStatuses = ["pending", "accepted", "rejected", "edited"] 
 export const userRoles = ["inspector", "reviewer", "admin"] as const;
 export const imageUploadStatuses = ["pending", "uploaded", "failed"] as const;
 export const imageAnalysisJobStatuses = ["queued", "running", "completed", "failed", "dead_letter"] as const;
+export const supportedImageUploadMimeTypes = ["image/jpeg", "image/png", "image/webp"] as const;
+export const maxImageUploadBytes = 25_000_000;
+export const maxLocalPreviewUploadBytes = 2_000_000;
 export const readinessIssueTypes = [
   "missing_required_angle",
   "image_quality_retake",
@@ -76,6 +79,7 @@ export const SuggestionStatusSchema = z.enum(suggestionStatuses);
 export const UserRoleSchema = z.enum(userRoles);
 export const ImageUploadStatusSchema = z.enum(imageUploadStatuses);
 export const ImageAnalysisJobStatusSchema = z.enum(imageAnalysisJobStatuses);
+export const SupportedImageUploadMimeTypeSchema = z.enum(supportedImageUploadMimeTypes);
 export const ReadinessIssueTypeSchema = z.enum(readinessIssueTypes);
 
 export type InspectionStatus = z.infer<typeof InspectionStatusSchema>;
@@ -87,6 +91,7 @@ export type SuggestionStatus = z.infer<typeof SuggestionStatusSchema>;
 export type UserRole = z.infer<typeof UserRoleSchema>;
 export type ImageUploadStatus = z.infer<typeof ImageUploadStatusSchema>;
 export type ImageAnalysisJobStatus = z.infer<typeof ImageAnalysisJobStatusSchema>;
+export type SupportedImageUploadMimeType = z.infer<typeof SupportedImageUploadMimeTypeSchema>;
 export type ReadinessIssueType = z.infer<typeof ReadinessIssueTypeSchema>;
 export type RoleAction = typeof roleActions[number];
 
@@ -251,21 +256,21 @@ export const PatchInspectionSchema = CreateInspectionSchema.partial().extend({
 
 export const UploadPhotoSchema = z.object({
   originalFilename: z.string().trim().min(1).max(180),
-  mimeType: z.string().trim().regex(/^image\/(jpeg|png|webp|svg\+xml)$/),
+  mimeType: SupportedImageUploadMimeTypeSchema,
   declaredAngle: PhotoAngleSchema.optional().nullable(),
   storageKey: z.string().trim().max(3_000_000).optional(),
   objectBucket: z.string().trim().min(1).max(120).optional(),
   objectKey: z.string().trim().min(1).max(500).optional(),
   thumbnailStorageKey: z.string().trim().max(500).optional(),
-  byteSize: z.coerce.number().int().min(1).max(25_000_000).optional(),
+  byteSize: z.coerce.number().int().min(1).max(maxImageUploadBytes).optional(),
   checksumSha256: z.string().trim().regex(/^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$/i).optional()
 });
 
 export const UploadIntentSchema = z.object({
   inspectionId: z.string().uuid(),
   originalFilename: z.string().trim().min(1).max(180),
-  mimeType: z.string().trim().regex(/^image\/(jpeg|png|webp)$/),
-  byteSize: z.coerce.number().int().min(1).max(25_000_000),
+  mimeType: SupportedImageUploadMimeTypeSchema,
+  byteSize: z.coerce.number().int().min(1).max(maxImageUploadBytes),
   checksumSha256: z.string().trim().regex(/^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$/i).optional()
 });
 
