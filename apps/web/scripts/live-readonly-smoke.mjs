@@ -56,12 +56,12 @@ page.on("pageerror", (error) => {
 
 try {
   await page.goto(baseUrl, { waitUntil: "networkidle" });
-  await expectBodyText(page, "InspectIQ Workspace");
-  const previewButton = page.getByRole("button", { name: "Preview as Reviewer" });
-  if (await previewButton.count() !== 1) fail("Preview as Reviewer button was not available.");
+  await expectBodyText(page, "VEHICLE INSPECTION WORKSPACE");
+  const previewButton = page.getByRole("button", { name: "Enter read-only workspace" });
+  if (await previewButton.count() !== 1) fail("Enter read-only workspace button was not available.");
   await previewButton.click();
   await expectBodyText(page, "Dashboard");
-  await expectBodyText(page, "Review queue");
+  await expectBodyText(page, "Operations control");
   await expectNoPublicErrors(page, "Dashboard");
 
   await page.goto(`${baseUrl}/inspections`, { waitUntil: "networkidle" });
@@ -87,8 +87,8 @@ try {
 
   await page.goto(`${baseUrl}/platform-health`, { waitUntil: "networkidle" });
   await expectBodyText(page, "Platform Health");
-  await expectBodyText(page, "Production readiness proof");
-  await expectBodyText(page, "Image AI and ML");
+  await expectBodyText(page, "Live stack proof");
+  await expectBodyText(page, "AI validation contract");
   await page.waitForFunction(() => /bedrock/i.test(document.body.innerText), null, { timeout: 15_000 });
   await expectNoPublicErrors(page, "Platform Health");
 
