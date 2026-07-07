@@ -394,6 +394,16 @@ describe("InspectIQ API", () => {
       .expect(200);
     expect(inspections.body.data.length).toBeGreaterThan(0);
 
+    const bundle = await request(api)
+      .get(`/api/inspections/${inspections.body.data[0].id}?evaluation=readonly`)
+      .expect(200);
+    expect(bundle.body.data.photos.length).toBeGreaterThan(0);
+
+    const imagePreview = await request(api)
+      .get(`/api/photos/${bundle.body.data.photos[0].id}/image?intent=preview&evaluation=readonly`)
+      .expect(200);
+    expect(imagePreview.body.data.imageUrl).toBeTruthy();
+
     const mutation = await request(api)
       .post("/api/inspections")
       .set("x-inspectiq-evaluation-mode", "readonly")

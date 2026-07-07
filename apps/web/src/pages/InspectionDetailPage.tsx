@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, apiBase, assetUrl, requestHeaders } from "../api.js";
 import { useActor } from "../App.js";
+import { isEvaluationSession } from "../auth.js";
 import { StatusPill } from "../components/StatusPill.js";
 import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
 import type { Inspection, InspectionBundle, SampleImage, VehiclePhoto, VisionSuggestion } from "../types.js";
@@ -447,10 +448,14 @@ function ProtectedPhotoImage({ photo }: { photo: VehiclePhoto }) {
     let cancelled = false;
     setSrc("");
 
-    const headers = requestHeaders(actor);
-    delete headers["content-type"];
+    const evaluationPreview = isEvaluationSession();
+    const headers = evaluationPreview ? undefined : requestHeaders(actor);
+    if (headers) delete headers["content-type"];
+    const previewUrl = evaluationPreview
+      ? `${directUrl}?intent=preview&evaluation=readonly`
+      : `${directUrl}?intent=preview`;
 
-    fetch(`${directUrl}?intent=preview`, { headers })
+    fetch(previewUrl, { headers })
       .then(async (response) => {
         if (!response.ok) throw new Error("Image preview unavailable.");
         const body = await response.json() as { data?: { imageUrl?: string } };

@@ -3060,12 +3060,14 @@ pre {
 
 .proof-card-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  align-items: stretch;
+  gap: 12px;
 }
 
 .proof-card-grid article {
   display: grid;
+  align-content: start;
   gap: 8px;
   border: 1px solid #dbe3ed;
   border-radius: 4px;
@@ -3086,12 +3088,31 @@ pre {
 .proof-card-grid span {
   width: fit-content;
   border-radius: 999px;
+  border: 1px solid #bae6fd;
   background: #e0f2fe;
   color: #075985;
   padding: 4px 7px;
   font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.proof-card-grid span.proof-status-ready {
+  border-color: #bbf7d0;
+  background: #dcfce7;
+  color: #047857;
+}
+
+.proof-card-grid span.proof-status-watch {
+  border-color: #fed7aa;
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.proof-card-grid span.proof-status-blocked {
+  border-color: #fecaca;
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .proof-card-grid p,

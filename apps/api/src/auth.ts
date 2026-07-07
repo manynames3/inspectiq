@@ -127,7 +127,10 @@ export function authMode(): "headers" | "jwt" {
 
 export function isEvaluationRequest(req: Request): boolean {
   return process.env.ENABLE_EVALUATION_MODE === "true"
-    && req.header("x-inspectiq-evaluation-mode") === "readonly";
+    && (
+      req.header("x-inspectiq-evaluation-mode") === "readonly"
+      || (["GET", "HEAD", "OPTIONS"].includes(req.method) && req.query.evaluation === "readonly")
+    );
 }
 
 export async function authenticateRequest(req: Request): Promise<Actor | null> {

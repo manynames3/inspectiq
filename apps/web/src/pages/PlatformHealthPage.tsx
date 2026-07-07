@@ -57,6 +57,13 @@ type Health = {
   };
 };
 
+function proofStatusClass(status: string): string {
+  const normalized = status.toLowerCase();
+  if (normalized.includes("implemented") || normalized.includes("ready")) return "proof-status-ready";
+  if (normalized.includes("partial") || normalized.includes("watch")) return "proof-status-watch";
+  return "proof-status-blocked";
+}
+
 export function PlatformHealthPage() {
   const [health, setHealth] = useState<Health | null>(null);
 
@@ -185,7 +192,7 @@ export function PlatformHealthPage() {
               <article key={item.area}>
                 <div>
                   <strong>{item.area}</strong>
-                  <span>{item.status}</span>
+                  <span className={proofStatusClass(item.status)}>{item.status}</span>
                 </div>
                 <p>{item.current}</p>
                 <small>{item.productionGate}</small>

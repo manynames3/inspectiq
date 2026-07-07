@@ -19,6 +19,7 @@
     "seed": "npm run seed -w @inspectiq/api",
     "test": "npm run build -w @inspectiq/shared && npm run test -w @inspectiq/api && npm run test -w @inspectiq/web",
     "test:e2e": "node apps/web/scripts/e2e-inspection-flow.mjs",
+    "test:live": "node apps/web/scripts/live-readonly-smoke.mjs",
     "typecheck": "npm run build -w @inspectiq/shared && npm run typecheck -w @inspectiq/api && npm run typecheck -w @inspectiq/web"
   },
   "devDependencies": {

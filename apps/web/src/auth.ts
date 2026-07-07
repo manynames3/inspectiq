@@ -150,6 +150,10 @@ export function storedAuthSession(): AuthSession | null {
   }
 }
 
+export function isEvaluationSession(): boolean {
+  return storedAuthSession()?.mode === "evaluation";
+}
+
 export async function beginLogin(): Promise<void> {
   const verifier = randomVerifier();
   const state = randomVerifier();
