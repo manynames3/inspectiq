@@ -647,6 +647,14 @@ export function InspectionDetailPage() {
     setQueuePage((current) => Math.min(Math.max(current, 1), queueTotalPages));
   }, [queueTotalPages]);
 
+  const analysisResultByPhotoId = useMemo(() => {
+    const latest = new Map<string, NonNullable<InspectionBundle["photoAnalysisResults"]>[number]>();
+    for (const analysis of bundle?.photoAnalysisResults ?? []) {
+      if (!latest.has(analysis.photoId)) latest.set(analysis.photoId, analysis);
+    }
+    return latest;
+  }, [bundle?.photoAnalysisResults]);
+
   if (!bundle || !id) return <section className="page"><div className="loading">Loading inspection...</div></section>;
 
   const pendingSuggestions = bundle.suggestions
@@ -963,7 +971,7 @@ export function InspectionDetailPage() {
                 <div>
                   <div className="panel-header">
                     <h2>Uploaded images ({bundle.photos.length})</h2>
-                    <span>Detected angle confidence</span>
+                    <span>Required-angle match</span>
                   </div>
                   <section className="photo-grid evidence-photos">
                     {bundle.photos.length === 0 ? (
@@ -973,21 +981,33 @@ export function InspectionDetailPage() {
                       </div>
                     ) : bundle.photos.map((photo) => {
                       const confidenceLabel = typeof photo.detectedAngleConfidence === "number" ? `${Math.round(photo.detectedAngleConfidence * 100)}%` : "Pending";
+                      const angleConfidenceLabel = confidenceLabel === "Pending" ? "Angle pending" : `Angle ${confidenceLabel}`;
                       const job = imageJobByPhotoId.get(photo.id);
+                      const analysis = analysisResultByPhotoId.get(photo.id);
+                      const providerLabel = analysis?.provider === "bedrockVisionProvider"
+                        ? "Bedrock"
+                        : analysis?.provider === "seededImportProvider"
+                          ? "Imported"
+                          : analysis?.provider ? "AI" : null;
                       const quality = photoQualityView(photo, qualitySuggestionsByPhotoId.get(photo.id), job?.status);
                       return (
                         <article className={`photo-tile quality-${quality.status}`} key={photo.id}>
                           <ProtectedPhotoImage photo={photo} />
                           <div>
                             <strong>{photoDisplayName(photo)}</strong>
-                            <span className={`photo-confidence-badge ${confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={`Detected angle confidence ${confidenceLabel}`}>
-                              {confidenceLabel}
+                            <span className={`photo-confidence-badge ${confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={`Required-angle match confidence ${confidenceLabel}`}>
+                              {angleConfidenceLabel}
                             </span>
                             <span className="photo-file-name">{photo.originalFilename.replace(/\.[^.]+$/, "")}</span>
                             <span className="photo-source-chip">{photoSourceLabel(photo)}</span>
                             <span className={`analysis-job-chip job-${job?.status ?? photo.analysisStatus}`}>
                               Analysis {formatJobStatus(job?.status ?? photo.analysisStatus)}
                             </span>
+                            {providerLabel ? (
+                              <span className={`analysis-provider-chip ${providerLabel === "Bedrock" ? "provider-bedrock" : "provider-imported"}`}>
+                                {providerLabel}
+                              </span>
+                            ) : null}
                             <span className={`photo-quality-chip quality-${quality.status}`}>
                               {quality.status === "ready" ? <Check size={12} /> : <AlertTriangle size={12} />}
                               {quality.label}
@@ -1021,8 +1041,10 @@ export function InspectionDetailPage() {
                 </label>
                 <button className="secondary-button" disabled={analysisDisabled} title={canAnalyzePhotos ? undefined : "Inspector or Admin access required"} onClick={() => void runAction("analyze", async () => {
                   const photosToAnalyze = bundle.photos.filter((photo) => photo.analysisStatus !== "completed");
-                  await api(`/api/inspections/${id}/photos/analyze`, { method: "POST", body: JSON.stringify({ idempotencyKeyPrefix: `analysis-${id}` }) }, actor);
-                  await waitForPhotoAnalysisCompletion(id, photosToAnalyze.map((photo) => photo.id), actor);
+                  const forceCompletedEvidence = photosToAnalyze.length === 0 && bundle.photos.length > 0;
+                  const targetPhotos = forceCompletedEvidence ? bundle.photos : photosToAnalyze;
+                  await api(`/api/inspections/${id}/photos/analyze`, { method: "POST", body: JSON.stringify({ idempotencyKeyPrefix: `analysis-${id}`, force: forceCompletedEvidence }) }, actor);
+                  await waitForPhotoAnalysisCompletion(id, targetPhotos.map((photo) => photo.id), actor);
                 })}>
                   <Play size={16} /> Analyze photos
                 </button>

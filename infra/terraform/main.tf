@@ -383,6 +383,10 @@ resource "aws_lambda_event_source_mapping" "image_worker" {
   batch_size              = 1
   function_response_types = ["ReportBatchItemFailures"]
 
+  scaling_config {
+    maximum_concurrency = 2
+  }
+
   depends_on = [aws_iam_role_policy.lambda_app]
 }
 
@@ -392,7 +396,7 @@ resource "aws_apigatewayv2_api" "http" {
 
   cors_configuration {
     allow_credentials = false
-    allow_headers     = ["authorization", "content-type", "x-actor-id", "x-actor-name", "x-actor-role", "x-request-id", "idempotency-key"]
+    allow_headers     = ["authorization", "content-type", "x-actor-id", "x-actor-name", "x-actor-role", "x-request-id", "idempotency-key", "x-inspectiq-evaluation-mode"]
     allow_methods     = ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
     allow_origins     = local.allowed_origins
     expose_headers    = ["content-disposition", "x-request-id"]
@@ -424,8 +428,7 @@ resource "aws_apigatewayv2_route" "default" {
   api_id             = aws_apigatewayv2_api.http.id
   route_key          = "$default"
   target             = "integrations/${aws_apigatewayv2_integration.api.id}"
-  authorization_type = var.enable_cognito_authorizer ? "JWT" : "NONE"
-  authorizer_id      = var.enable_cognito_authorizer ? aws_apigatewayv2_authorizer.jwt[0].id : null
+  authorization_type = "NONE"
 }
 
 resource "aws_apigatewayv2_route" "health" {

@@ -12,13 +12,15 @@ type JwtClaims = {
 };
 
 export type AuthSession = {
-  idToken: string;
+  idToken: string | null;
   accessToken: string | null;
   expiresAt: number;
   actor: Actor;
+  mode: "oidc" | "evaluation";
 };
 
 const storageKey = "inspectiq.auth.session";
+const evaluationStorageKey = "inspectiq.auth.evaluation";
 const verifierKey = "inspectiq.auth.pkce.verifier";
 const stateKey = "inspectiq.auth.pkce.state";
 const roles = ["admin", "reviewer", "inspector"] as const;
@@ -95,11 +97,43 @@ function sessionFromTokens(tokens: { id_token?: string; access_token?: string; e
       id: claims.sub ?? "authenticated-user",
       name: claims.name ?? claims.email ?? claims.username ?? "Authenticated user",
       role: roleFromClaims(claims)
-    }
+    },
+    mode: "oidc"
   };
 }
 
+export function evaluationEnabled(): boolean {
+  return import.meta.env.VITE_ENABLE_EVALUATION_MODE !== "false";
+}
+
+export function beginEvaluationPreview(): AuthSession {
+  const session: AuthSession = {
+    idToken: null,
+    accessToken: null,
+    expiresAt: Date.now() + 4 * 60 * 60 * 1000,
+    actor: {
+      id: "evaluation-reviewer",
+      name: "Evaluation Reviewer",
+      role: "reviewer"
+    },
+    mode: "evaluation"
+  };
+  localStorage.setItem(evaluationStorageKey, JSON.stringify(session));
+  localStorage.removeItem(storageKey);
+  return session;
+}
+
 export function storedAuthSession(): AuthSession | null {
+  const evaluationRaw = localStorage.getItem(evaluationStorageKey);
+  if (evaluationRaw && evaluationEnabled()) {
+    try {
+      const session = JSON.parse(evaluationRaw) as AuthSession;
+      if (session.expiresAt > Date.now() + 60_000 && session.mode === "evaluation") return session;
+    } catch {
+      // Clear malformed evaluation state below.
+    }
+    localStorage.removeItem(evaluationStorageKey);
+  }
   if (!oidcEnabled()) return null;
   const raw = localStorage.getItem(storageKey);
   if (!raw) return null;
@@ -173,6 +207,7 @@ export async function completeLoginFromCallback(): Promise<AuthSession | null> {
 
 export function signOut(): void {
   localStorage.removeItem(storageKey);
+  localStorage.removeItem(evaluationStorageKey);
   if (!oidcEnabled()) return;
   const params = new URLSearchParams({
     client_id: clientId(),
@@ -183,5 +218,7 @@ export function signOut(): void {
 
 export function authHeaders(): Record<string, string> {
   const session = storedAuthSession();
-  return session ? { authorization: `Bearer ${session.idToken}` } : {};
+  if (!session) return {};
+  if (session.mode === "evaluation") return { "x-inspectiq-evaluation-mode": "readonly" };
+  return session.idToken ? { authorization: `Bearer ${session.idToken}` } : {};
 }

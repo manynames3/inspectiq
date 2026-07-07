@@ -125,10 +125,22 @@ export function authMode(): "headers" | "jwt" {
   return process.env.AUTH_MODE === "jwt" ? "jwt" : "headers";
 }
 
+export function isEvaluationRequest(req: Request): boolean {
+  return process.env.ENABLE_EVALUATION_MODE === "true"
+    && req.header("x-inspectiq-evaluation-mode") === "readonly";
+}
+
 export async function authenticateRequest(req: Request): Promise<Actor | null> {
   if (authMode() !== "jwt") return null;
   const header = req.header("authorization") ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(header);
+  if (!match && isEvaluationRequest(req)) {
+    return {
+      id: "evaluation-reviewer",
+      name: "Evaluation Reviewer",
+      role: "reviewer"
+    };
+  }
   if (!match) throw unauthorized("Bearer token is required.");
 
   const payload = await verifyJwt(match[1]);

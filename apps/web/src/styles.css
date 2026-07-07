@@ -1921,7 +1921,7 @@ td small {
 
 .photo-grid.evidence-photos .photo-confidence-badge {
   justify-self: end;
-  min-width: 34px;
+  min-width: 58px;
   height: 17px;
   display: inline-grid;
   place-items: center;
@@ -1929,7 +1929,7 @@ td small {
   background: #0f766e;
   color: #ffffff;
   padding: 0 5px;
-  font-size: 9px;
+  font-size: 8.5px;
   font-weight: 800;
   line-height: 1;
 }
@@ -1971,6 +1971,25 @@ td small {
 .analysis-job-chip.job-dead_letter {
   background: #fee2e2;
   color: #b91c1c;
+}
+
+.analysis-provider-chip {
+  grid-column: 1 / -1;
+  width: fit-content;
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.analysis-provider-chip.provider-bedrock {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.analysis-provider-chip.provider-imported {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .photo-quality-chip {

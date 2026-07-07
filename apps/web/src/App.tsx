@@ -2,7 +2,7 @@ import { Activity, Check, CircleHelp, ClipboardCheck, Clock3, FileText, LayoutDa
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { canRole, type RoleAction } from "@inspectiq/shared";
-import { beginLogin, completeLoginFromCallback, oidcEnabled, signOut, storedAuthSession, type AuthSession } from "./auth.js";
+import { beginEvaluationPreview, beginLogin, completeLoginFromCallback, evaluationEnabled, oidcEnabled, signOut, storedAuthSession, type AuthSession } from "./auth.js";
 import type { Actor } from "./types.js";
 
 type ActorContextValue = {
@@ -80,6 +80,12 @@ export function App() {
   const logOut = useCallback(() => {
     setAuthSession(null);
     signOut();
+  }, []);
+
+  const previewAsReviewer = useCallback(() => {
+    setAuthSession(beginEvaluationPreview());
+    setAuthReady(true);
+    setAuthError(null);
   }, []);
 
   const isActive = (label: string, to: string): boolean => {
@@ -160,6 +166,9 @@ export function App() {
               {authError ? <div className="form-error">{authError}</div> : null}
               <div className="auth-actions">
                 <button className="primary-button" onClick={() => void beginLogin()}>Sign in with Cognito</button>
+                {evaluationEnabled() ? (
+                  <button className="secondary-button" onClick={previewAsReviewer}>Preview as Reviewer</button>
+                ) : null}
               </div>
             </section>
           ) : (

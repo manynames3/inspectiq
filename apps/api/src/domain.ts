@@ -177,6 +177,7 @@ export type AuditEvent = {
 export type InspectionBundle = {
   inspection: Inspection;
   photos: VehiclePhoto[];
+  photoAnalysisResults: PhotoAnalysisResult[];
   imageAnalysisJobs: ImageAnalysisJob[];
   suggestions: VisionSuggestion[];
   damageItems: DamageItem[];

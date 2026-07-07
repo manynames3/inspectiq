@@ -32,7 +32,8 @@ export async function runImageAnalysisJob(store: MemoryStore, jobId: string, act
       promptVersion: provider.promptVersion,
       raw: result.raw,
       validated: result.validated,
-      jobId: job.id
+      jobId: job.id,
+      force: job.idempotencyKey?.startsWith("force:") ?? false
     }, actor);
     return {
       job: store.imageAnalysisJobs.get(job.id),

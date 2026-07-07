@@ -14,7 +14,7 @@ import {
   UploadPhotoSchema,
   type ApiEnvelope
 } from "@inspectiq/shared";
-import { errorHandler, validation, conflict } from "./errors.js";
+import { errorHandler, validation, conflict, forbidden } from "./errors.js";
 import { gradeCondition } from "./gradingClient.js";
 import { getReportProvider } from "./reportProvider.js";
 import { getVisionProvider } from "./visionProvider.js";
@@ -22,7 +22,7 @@ import { createPresignedDownload, createPresignedUpload, s3ObjectUrl } from "./a
 import { sendImageAnalysisMessage } from "./awsQueue.js";
 import { runImageAnalysisJob } from "./imageAnalysisRunner.js";
 import { platformHealthPayload } from "./platformHealth.js";
-import { authenticateRequest } from "./auth.js";
+import { authenticateRequest, isEvaluationRequest } from "./auth.js";
 import { canAccessInspection, requireAction, requireInspectionAccess } from "./rbac.js";
 import { findSampleImage, sampleBundles, sampleImageDirectory } from "./sampleImages.js";
 import { seedStore } from "./seedData.js";
@@ -169,6 +169,11 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     if (actor) {
       appStore.ensureUser(actor);
       (req as AuthenticatedRequest).actor = actor;
+    }
+    if (isEvaluationRequest(req) && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+      throw forbidden("Evaluation workspace is read-only. Sign in with Cognito to make workflow changes.", {
+        mode: "evaluation-readonly"
+      });
     }
     next();
   }));
@@ -318,12 +323,15 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     requireAction(actor, "photo:analyze");
     inspectionForRequest(appStore, req.params.id, actor, "analyze photos for this inspection");
 
-    const photos = appStore.listPhotos(req.params.id).filter((photo) => photo.analysisStatus !== "completed");
+    const force = req.body?.force === true || req.query.force === "true";
+    const photos = appStore.listPhotos(req.params.id).filter((photo) => force || photo.analysisStatus !== "completed");
     const idempotencyKeyPrefix = req.header("idempotency-key") ?? req.body?.idempotencyKeyPrefix ?? null;
     const jobs = photos.map((photo) => appStore.enqueueImageAnalysis(
       photo,
       actor,
-      idempotencyKeyPrefix ? `${idempotencyKeyPrefix}:${photo.id}` : null
+      force
+        ? `force:${idempotencyKeyPrefix ?? req.params.id}:${photo.id}:${crypto.randomUUID()}`
+        : idempotencyKeyPrefix ? `${idempotencyKeyPrefix}:${photo.id}` : null
     ));
 
     if (process.env.IMAGE_ANALYSIS_MODE === "queue") {
@@ -361,7 +369,8 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:analyze");
     const photo = photoForRequest(appStore, req.params.photoId, actor, "analyze this photo");
-    if (photo.analysisStatus === "completed" && !req.body?.force) {
+    const force = req.body?.force === true || req.query.force === "true";
+    if (photo.analysisStatus === "completed" && !force) {
       sendData(res, {
         analysis: appStore.getPhotoAnalysis(photo.id),
         job: appStore.imageAnalysisJobsForInspection(photo.inspectionId).find((job) => job.photoId === photo.id) ?? null,
@@ -369,7 +378,12 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       });
       return;
     }
-    const job = appStore.enqueueImageAnalysis(photo, actor, req.header("idempotency-key") ?? req.body?.idempotencyKey ?? null);
+    const requestedIdempotencyKey = req.header("idempotency-key") ?? req.body?.idempotencyKey ?? null;
+    const job = appStore.enqueueImageAnalysis(
+      photo,
+      actor,
+      force ? `force:${photo.id}:${crypto.randomUUID()}` : requestedIdempotencyKey
+    );
     if (process.env.IMAGE_ANALYSIS_MODE === "queue") {
       await persistMutation(options);
       await sendImageAnalysisMessage({

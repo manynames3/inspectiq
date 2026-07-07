@@ -59,6 +59,17 @@ export type ImageAnalysisJob = {
   completedAt: string | null;
 };
 
+export type PhotoAnalysisResult = {
+  id: string;
+  photoId: string;
+  provider: string;
+  promptVersion: string;
+  confidence: number;
+  status: string;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
 export type VisionSuggestion = {
   id: string;
   inspectionId: string;
@@ -115,6 +126,7 @@ export type AuditEvent = {
 export type InspectionBundle = {
   inspection: Inspection;
   photos: VehiclePhoto[];
+  photoAnalysisResults?: PhotoAnalysisResult[];
   imageAnalysisJobs: ImageAnalysisJob[];
   suggestions: VisionSuggestion[];
   damageItems: DamageItem[];

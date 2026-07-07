@@ -383,10 +383,16 @@ export class MemoryStore {
     raw: unknown;
     validated: VisionOutput;
     jobId?: string | null;
+    force?: boolean;
   }, actor: Actor): PhotoAnalysisResult {
     this.assertMutableInspection(photo.inspectionId, "analyze photos");
-    const duplicate = [...this.analyses.values()].find((analysis) => analysis.photoId === photo.id && analysis.status === "completed");
-    if (duplicate) {
+    const duplicate = [...this.analyses.values()].find((analysis) =>
+      analysis.photoId === photo.id
+      && analysis.status === "completed"
+      && analysis.provider === input.provider
+      && analysis.promptVersion === input.promptVersion
+    );
+    if (duplicate && !input.force) {
       if (input.jobId) {
         const job = this.imageAnalysisJobs.get(input.jobId);
         if (job) {
@@ -1061,9 +1067,14 @@ export class MemoryStore {
   }
 
   bundle(inspectionId: string): InspectionBundle {
+    const photos = this.listPhotos(inspectionId);
+    const photoIds = new Set(photos.map((photo) => photo.id));
     return {
       inspection: this.getInspection(inspectionId),
-      photos: this.listPhotos(inspectionId),
+      photos,
+      photoAnalysisResults: [...this.analyses.values()]
+        .filter((analysis) => photoIds.has(analysis.photoId))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       imageAnalysisJobs: this.imageAnalysisJobsForInspection(inspectionId),
       suggestions: this.listSuggestions(inspectionId),
       damageItems: this.listDamage(inspectionId),
@@ -1134,7 +1145,7 @@ export class MemoryStore {
         severity: "blocker",
         label: "Condition grade missing",
         detail: "The condition report does not have a deterministic grade.",
-        action: "Run the Java grading service after evidence is complete."
+        action: "Run condition grading after evidence is complete."
       });
     }
     const estimateMissing = damageItems.some((item) => {
