@@ -39,6 +39,14 @@ It does not use Cox Automotive branding, proprietary data, or unlicensed assets.
 
 Wholesale condition reports need consistent photo evidence, clear damage facts, explainable grading, buyer trust, seller disclosure, and accountable review. AI can speed up inspection workflows, but it should not silently become the source of truth. InspectIQ keeps AI advisory and makes reviewers confirm facts before they affect grade, CR readiness, VDP visibility, reconditioning estimates, or report output.
 
+## AI/ML Boundary
+
+InspectIQ uses Bedrock multimodal analysis as an advisory review layer, not as an unchecked damage authority. A multimodal model can classify photo angle, summarize visible damage, extract readable VIN/odometer text, and return schema-validated suggestions for a reviewer. The UI treats those outputs as evidence requiring human confirmation before they affect buyer-visible reports.
+
+The `angle` or `evidence` confidence shown on photo cards means the image appears usable for the required checklist angle. It is not a guarantee that the vehicle has no damage. Damage confidence is tracked separately in reviewer suggestions and only becomes a confirmed condition item after reviewer accept/edit.
+
+A production-grade inspection platform would use a hybrid AI/ML approach: image-quality checks for blur/glare/framing, a dedicated angle classifier, OCR tuned for VIN and odometer capture, a trained damage-detection model with measured precision/recall, and Bedrock multimodal reasoning for structured summaries, exception handling, and report language. InspectIQ keeps this boundary explicit so the demo shows responsible AI workflow design without overstating model certainty.
+
 ## Product Walkthrough
 
 1. Open the dashboard and choose an inspection.
@@ -112,7 +120,7 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 | Area | Implemented in this repo | Production replacement |
 | --- | --- | --- |
 | Inspection workflow | Working React/TypeScript UI, role-aware actions, REST API, state machine, audit trail | Same workflow behind enterprise auth, object-level authorization, and operational SLAs |
-| Image analysis | Deterministic local provider plus deployed SQS -> Lambda -> Bedrock multimodal provider using the same strict schema contract and `npm run eval:vision` evaluation set | Larger labeled evaluation corpus, confidence calibration, and provider fallback policy |
+| Image analysis | Deterministic local provider plus deployed SQS -> Lambda -> Bedrock multimodal provider using the same strict schema contract and `npm run eval:vision` evaluation set; outputs remain advisory until reviewer confirmation | Larger labeled evaluation corpus, calibrated angle/OCR/damage metrics, dedicated image-quality and damage-detection models, and provider fallback policy |
 | Persistence | In-memory tests, local JSON snapshot, and deployed `PERSISTENCE_MODE=postgres` against Neon with row-level upsert/delete transactions | Direct DB-first repositories for the highest-concurrency production paths, retention, backups, and audit durability |
 | Image storage | Deployed presigned S3 upload intent, private S3 objects, protected preview intent, object key metadata, MIME type, byte size, and checksum capture | EXIF stripping, image normalization, thumbnails, lifecycle, KMS key policy, and CDN/object access policy hardening |
 | Java grading | Optional Spring Boot service plus identical Node fallback for deterministic local reliability | Keep separate only when grading rules need independent ownership, versioning, or reuse |
