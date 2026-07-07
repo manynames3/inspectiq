@@ -18,9 +18,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Fast verification
+        run: make verify-fast
       - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
       - run: npm run eval:vision
       - run: npm run build
       - run: npm run build:lambda
@@ -37,47 +37,24 @@ jobs:
       - uses: browser-actions/setup-chrome@v1
         id: setup-chrome
       - run: npm ci
-      - name: Start local app
-        run: |
-          npm run dev > /tmp/inspectiq-dev.log 2>&1 &
-          echo "$!" > /tmp/inspectiq-dev.pid
-      - name: Wait for local API and web
-        run: |
-          for i in {1..90}; do
-            if curl -fsS http://localhost:4000/api/health >/dev/null && curl -fsS http://localhost:5173 >/dev/null; then
-              exit 0
-            fi
-            sleep 2
-          done
-          cat /tmp/inspectiq-dev.log
-          exit 1
       - name: Run browser E2E
-        run: npm run test:e2e
+        run: make e2e-local
         env:
           PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
-      - name: Stop local app
-        if: always()
-        run: |
-          if [ -f /tmp/inspectiq-dev.pid ]; then
-            kill "$(cat /tmp/inspectiq-dev.pid)" 2>/dev/null || true
-          fi
       - name: Print local app logs on failure
         if: failure()
         run: cat /tmp/inspectiq-dev.log
 
   grading-python:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: services/grading-python
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -r requirements.txt
-      - run: python -m pytest
+          cache-dependency-path: services/grading-python/requirements.txt
+      - run: make verify-grading
 
   terraform:
     runs-on: ubuntu-latest
@@ -91,5 +68,4 @@ jobs:
       - run: npm ci
       - run: npm run build -w @inspectiq/shared
       - run: npm run build:lambda
-      - run: terraform -chdir=infra/terraform init -backend=false
-      - run: terraform -chdir=infra/terraform validate
+      - run: make terraform-validate

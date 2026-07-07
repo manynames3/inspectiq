@@ -26,6 +26,19 @@ The hosted walkthrough offers a read-only Evaluation Workspace for public review
 | Operations proof | Platform Health shows live runtime status and has Admin-only local failure simulation/recovery. |
 | Visual regression | `npm run test:screenshots` captures dashboard, workbench, suggestions, damage, reports, audit, platform health, and mobile capture. |
 
+## Repo Health And Developer Workflow
+
+| Signal | Proof |
+| --- | --- |
+| CI | [InspectIQ CI](https://github.com/manynames3/inspectiq/actions/workflows/ci.yml) runs Node checks, Python grading tests, Terraform validation, and local browser E2E. |
+| Live deploy | [Deploy Cloudflare Pages](https://github.com/manynames3/inspectiq/actions/workflows/deploy-cloudflare-pages.yml) builds the frontend against the AWS API URL and deploys to Pages. |
+| Public live smoke | `make live-smoke` verifies the read-only dashboard, inspection detail evidence, and Platform Health on `inspectiq.pages.dev`. |
+| Fast local confidence | `make verify-fast` runs full TypeScript checks and unit tests. |
+| Full local confidence | `make verify-full` runs lint, typecheck, tests, vision eval, builds, Python grading, Terraform validate, and local E2E. |
+| Workspace cleanup | `make clean-generated` removes generated caches without deleting `node_modules`. |
+
+See `docs/developer-workflow.md` for when to use each command and which generated folders to avoid during agent-assisted development.
+
 ## 90-Second Demo
 
 | Dashboard | Inspection Workbench |
@@ -169,6 +182,7 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 ## Documentation Map
 
 - `docs/hiring-manager-brief.md`: business framing, stack mapping, walkthrough, and production next steps.
+- `docs/developer-workflow.md`: verification ladder, CI alignment, generated-folder guidance, and live proof commands.
 - `docs/architecture.md`: component boundaries, runtime flow, data ownership, and failure handling.
 - `docs/implementation-boundary.md`: what is real in the repo, what is deterministic locally, and how to explain it.
 - `docs/production-readiness.md`: implemented proof, remaining production gates, and the honest interview framing.

@@ -260,11 +260,13 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   if (appStore.inspections.size === 0) seedStore(appStore);
 
   const app = express();
+  const autoLogHttpRequests = process.env.NODE_ENV !== "test" && process.env.VITEST !== "true";
   app.use((req, res, next) => {
     res.locals.requestId = req.header("x-request-id") ?? crypto.randomUUID();
     next();
   });
   app.use(pinoHttp({
+    autoLogging: autoLogHttpRequests,
     quietReqLogger: true,
     customProps: (_req, res) => ({ requestId: res.locals.requestId })
   }));

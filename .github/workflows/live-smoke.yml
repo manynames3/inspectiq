@@ -24,7 +24,7 @@ jobs:
         id: setup-chrome
       - run: npm ci
       - name: Run deployed read-only browser smoke flow
-        run: npm run test:live
+        run: make live-smoke
         env:
           E2E_BASE_URL: ${{ inputs.base_url }}
           PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}

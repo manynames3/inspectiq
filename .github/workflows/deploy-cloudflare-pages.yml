@@ -35,11 +35,9 @@ jobs:
 
       - run: npm ci
         if: steps.cf.outputs.available == 'true'
+      - run: make verify-fast
+        if: steps.cf.outputs.available == 'true'
       - run: npm run lint
-        if: steps.cf.outputs.available == 'true'
-      - run: npm run typecheck
-        if: steps.cf.outputs.available == 'true'
-      - run: npm test
         if: steps.cf.outputs.available == 'true'
       - run: npm run eval:vision
         if: steps.cf.outputs.available == 'true'
