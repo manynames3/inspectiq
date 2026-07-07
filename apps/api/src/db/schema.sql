@@ -37,6 +37,9 @@ create table if not exists vehicle_photos (
   checksum_sha256 text check (checksum_sha256 is null or checksum_sha256 ~* '^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$'),
   original_filename text not null,
   mime_type text not null,
+  source_name text,
+  source_url text,
+  source_license text,
   uploaded_by text references users(id),
   uploaded_at timestamptz not null default now(),
   upload_status text not null default 'uploaded' check (upload_status in ('pending', 'uploaded', 'failed')),
@@ -52,6 +55,9 @@ alter table vehicle_photos add column if not exists object_key text;
 alter table vehicle_photos add column if not exists thumbnail_storage_key text;
 alter table vehicle_photos add column if not exists byte_size integer;
 alter table vehicle_photos add column if not exists checksum_sha256 text;
+alter table vehicle_photos add column if not exists source_name text;
+alter table vehicle_photos add column if not exists source_url text;
+alter table vehicle_photos add column if not exists source_license text;
 alter table vehicle_photos add column if not exists upload_status text not null default 'uploaded';
 alter table vehicle_photos drop constraint if exists vehicle_photos_checksum_sha256_check;
 alter table vehicle_photos add constraint vehicle_photos_checksum_sha256_check check (checksum_sha256 is null or checksum_sha256 ~* '^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$');

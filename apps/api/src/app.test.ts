@@ -28,6 +28,13 @@ const mutableEnvKeys = [
   "OIDC_ISSUER",
   "OIDC_AUDIENCE",
   "OIDC_JWKS_JSON",
+  "DEFAULT_AUTH_ROLE",
+  "OIDC_DEFAULT_ROLE",
+  "REQUIRE_JWT_ROLE_CLAIM",
+  "AUTH_ADMIN_EMAILS",
+  "AUTH_REVIEWER_EMAILS",
+  "AUTH_INSPECTOR_EMAILS",
+  "ENABLE_REFERENCE_EVIDENCE",
   "ENABLE_EVALUATION_MODE",
   "IMAGE_UPLOAD_MODE",
   "IMAGE_BUCKET"
@@ -146,6 +153,140 @@ describe("InspectIQ API", () => {
       suggestions: suggestions.body.data
     };
   }
+
+  it("loads confirmed damage for the reference reviewer queue", async () => {
+    const listed = await request(api).get("/api/inspections").set(reviewerHeaders).expect(200);
+    const details = await Promise.all(
+      listed.body.data.map((inspection: { id: string }) =>
+        request(api).get(`/api/inspections/${inspection.id}`).set(reviewerHeaders).expect(200)
+      )
+    );
+
+    const damageItems = details.flatMap((response) => response.body.data.damageItems);
+
+    expect(damageItems.length).toBeGreaterThanOrEqual(2);
+    expect(damageItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        location: "Driver-side front door",
+        damageType: "scratch",
+        severity: "minor",
+        source: "vision_suggestion",
+        confirmedBy: "review-lead"
+      }),
+      expect.objectContaining({
+        location: "Rear bumper",
+        damageType: "dent",
+        severity: "moderate",
+        source: "vision_suggestion",
+        confirmedBy: "review-lead"
+      })
+    ]));
+  });
+
+  it("loads reference report coverage for reviewer metrics", async () => {
+    const listed = await request(api).get("/api/inspections").set(reviewerHeaders).expect(200);
+    const details = await Promise.all(
+      listed.body.data.map((inspection: { id: string }) =>
+        request(api).get(`/api/inspections/${inspection.id}`).set(reviewerHeaders).expect(200)
+      )
+    );
+
+    const bundles = details.map((response) => response.body.data);
+    const reports = bundles.filter((bundle) => bundle.finalReport);
+    const finalized = reports.filter((bundle) => bundle.finalReport.finalizedAt);
+    const humanReviewDrafts = bundles.filter((bundle) => bundle.aiReportDraft?.humanReviewRequired);
+
+    expect(reports.length).toBeGreaterThanOrEqual(2);
+    expect(finalized.length).toBeGreaterThanOrEqual(1);
+    expect(humanReviewDrafts.length).toBeGreaterThanOrEqual(1);
+    expect(reports).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        inspection: expect.objectContaining({ vin: "1FMCU9H6XNUB81389" }),
+        finalReport: expect.objectContaining({ finalizedBy: "review-lead" })
+      }),
+      expect.objectContaining({
+        inspection: expect.objectContaining({ vin: "KNMAT2MV6KP514068" }),
+        aiReportDraft: expect.objectContaining({ humanReviewRequired: true }),
+        finalReport: expect.objectContaining({ finalizedAt: null })
+      })
+    ]));
+  });
+
+  it("blocks reference evidence loading when the production guard is disabled", async () => {
+    process.env.ENABLE_REFERENCE_EVIDENCE = "false";
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+
+    const response = await request(api)
+      .post(`/api/inspections/${inspectionId}/photos/sample`)
+      .set(inspectorHeaders)
+      .send({ sampleKey: "front-clean" })
+      .expect(400);
+
+    expect(response.body.error.message).toBe("Reference evidence loading is disabled. Upload captured photos for this inspection.");
+  });
+
+  it("allows read-only evaluation access without a bearer token and blocks workflow mutation", async () => {
+    process.env.AUTH_MODE = "jwt";
+    process.env.ENABLE_EVALUATION_MODE = "true";
+    api = createApp(new MemoryStore());
+
+    const session = await request(api)
+      .get("/api/evaluation/auth/session")
+      .set("x-actor-role", "reviewer")
+      .expect(200);
+
+    expect(session.body.data.actor).toMatchObject({
+      id: "evaluation-reviewer",
+      role: "reviewer"
+    });
+
+    const inspections = await request(api)
+      .get("/api/evaluation/inspections")
+      .set("x-actor-role", "reviewer")
+      .expect(200);
+
+    expect(inspections.body.data.length).toBeGreaterThan(0);
+
+    const adapterRewrittenInspections = await request(api)
+      .get("/api/inspections")
+      .set("x-evaluation-mode", "true")
+      .set("x-actor-role", "reviewer")
+      .expect(200);
+
+    expect(adapterRewrittenInspections.body.data.length).toBeGreaterThan(0);
+
+    const blockedCreate = await request(api)
+      .post("/api/evaluation/inspections")
+      .set("x-actor-role", "admin")
+      .send({
+        vin: "5NMS2DAJ5RH654321",
+        year: 2024,
+        make: "Hyundai",
+        model: "Tucson",
+        trim: "SEL",
+        mileage: 14250,
+        exteriorColor: "Gray",
+        sellerSource: "Evaluation",
+        inspectorName: "Evaluation Admin"
+      })
+      .expect(403);
+
+    expect(blockedCreate.body.error.message).toBe("Evaluation workspace is read-only. Sign in with Cognito to perform workflow actions.");
+  });
+
+  it("can disable the public evaluation route", async () => {
+    process.env.AUTH_MODE = "jwt";
+    process.env.ENABLE_EVALUATION_MODE = "false";
+    api = createApp(new MemoryStore());
+
+    const response = await request(api)
+      .get("/api/evaluation/auth/session")
+      .set("x-actor-role", "reviewer")
+      .expect(401);
+
+    expect(response.body.error.message).toBe("Evaluation workspace is not enabled for this environment.");
+  });
 
   async function finalizeCompleteInspection() {
     const { inspectionId, photos, suggestions } = await createAnalyzedCompleteInspection();
@@ -312,12 +453,43 @@ describe("InspectIQ API", () => {
     const reviewerToken = jwt.token({
       sub: "jwt-reviewer",
       name: "JWT Reviewer",
-      "custom:role": "reviewer"
+      "cognito:groups": ["InspectIQReviewer"]
     });
+    const defaultInspectorToken = jwt.token({
+      sub: "jwt-default-inspector",
+      email: "default.inspector@example.com"
+    });
+    const mappedAdminToken = jwt.token({
+      sub: "jwt-mapped-admin",
+      email: "owner@example.com"
+    });
+    process.env.AUTH_ADMIN_EMAILS = "owner@example.com";
 
     await request(jwtApi)
       .get("/api/inspections")
       .expect(401);
+
+    const defaultSession = await request(jwtApi)
+      .get("/api/auth/session")
+      .set("authorization", `Bearer ${defaultInspectorToken}`)
+      .expect(200);
+    expect(defaultSession.body.data.actor).toMatchObject({
+      id: "jwt-default-inspector",
+      name: "default.inspector@example.com",
+      role: "inspector"
+    });
+
+    const reviewerSession = await request(jwtApi)
+      .get("/api/auth/session")
+      .set("authorization", `Bearer ${reviewerToken}`)
+      .expect(200);
+    expect(reviewerSession.body.data.actor.role).toBe("reviewer");
+
+    const mappedAdminSession = await request(jwtApi)
+      .get("/api/auth/session")
+      .set("authorization", `Bearer ${mappedAdminToken}`)
+      .expect(200);
+    expect(mappedAdminSession.body.data.actor.role).toBe("admin");
 
     const created = await request(jwtApi)
       .post("/api/inspections")
@@ -389,24 +561,26 @@ describe("InspectIQ API", () => {
     api = createApp(store);
 
     const inspections = await request(api)
-      .get("/api/inspections")
-      .set("x-inspectiq-evaluation-mode", "readonly")
+      .get("/api/evaluation/inspections")
+      .set("x-actor-role", "admin")
       .expect(200);
     expect(inspections.body.data.length).toBeGreaterThan(0);
 
     const bundle = await request(api)
-      .get(`/api/inspections/${inspections.body.data[0].id}?evaluation=readonly`)
+      .get(`/api/evaluation/inspections/${inspections.body.data[0].id}`)
+      .set("x-actor-role", "admin")
       .expect(200);
     expect(bundle.body.data.photos.length).toBeGreaterThan(0);
 
     const imagePreview = await request(api)
-      .get(`/api/photos/${bundle.body.data.photos[0].id}/image?intent=preview&evaluation=readonly`)
+      .get(`/api/evaluation/photos/${bundle.body.data.photos[0].id}/image?intent=preview`)
+      .set("x-actor-role", "admin")
       .expect(200);
     expect(imagePreview.body.data.imageUrl).toBeTruthy();
 
     const mutation = await request(api)
-      .post("/api/inspections")
-      .set("x-inspectiq-evaluation-mode", "readonly")
+      .post("/api/evaluation/inspections")
+      .set("x-actor-role", "admin")
       .send({
         vin: "5NMS2DAJ5RH654321",
         year: 2024,
@@ -419,9 +593,32 @@ describe("InspectIQ API", () => {
         inspectorName: "Evaluation Reviewer"
       })
       .expect(403);
-    expect(mutation.body.error.details.mode).toBe("evaluation-readonly");
+    expect(mutation.body.error.message).toContain("Evaluation workspace is read-only");
 
     await request(api).get("/api/inspections").expect(401);
+  });
+
+  it("can require explicit JWT role claims for stricter deployments", async () => {
+    const jwt = createTestJwtFactory();
+    process.env.AUTH_MODE = "jwt";
+    process.env.OIDC_ISSUER = "https://issuer.test/inspectiq";
+    process.env.OIDC_AUDIENCE = "inspectiq-web";
+    process.env.OIDC_JWKS_JSON = jwt.jwksJson;
+    process.env.REQUIRE_JWT_ROLE_CLAIM = "true";
+    clearAuthCacheForTests();
+
+    const jwtApi = createApp(new MemoryStore());
+    const tokenWithoutRole = jwt.token({
+      sub: "jwt-no-role",
+      email: "no-role@example.com"
+    });
+
+    const response = await request(jwtApi)
+      .get("/api/auth/session")
+      .set("authorization", `Bearer ${tokenWithoutRole}`)
+      .expect(401);
+    expect(response.body.error.message).toBe("JWT is missing an InspectIQ role claim.");
+    expect(response.body.error.details.expectedClaims).toContain("custom:role");
   });
 
   it("analyzes outstanding photos for an inspection in one batch action", async () => {
@@ -533,9 +730,48 @@ describe("InspectIQ API", () => {
 
     const health = await request(api).get("/api/platform-health").expect(200);
     const retakeMetric = health.body.data.operationalMetrics.find((metric: { metric: string }) => metric.metric === "image_quality_retake_rate");
-    expect(retakeMetric.value).toBe("100%");
+    expect(Number.parseInt(retakeMetric.value, 10)).toBeGreaterThan(0);
+    expect(retakeMetric.evidence).toContain("completed analyses require image retake");
     const queueMetric = health.body.data.operationalMetrics.find((metric: { metric: string }) => metric.metric === "image_analysis_queue_latency");
     expect(queueMetric).toBeTruthy();
+    expect(health.body.data.runtimeProof.visionProvider).toBeTruthy();
+    expect(health.body.data.evidencePack.vehicleSets.length).toBeGreaterThanOrEqual(3);
+    expect(health.body.data.roleProof.map((item: { role: string }) => item.role)).toEqual(["inspector", "reviewer", "admin"]);
+  });
+
+  it("lets admins simulate and recover failed image jobs for the operations drill", async () => {
+    const simulated = await request(api)
+      .post("/api/platform-health/simulate-failed-image-job")
+      .set(adminHeaders)
+      .send({})
+      .expect(201);
+
+    expect(simulated.body.data.job.status).toBe("failed");
+    expect(simulated.body.data.photo.analysisStatus).toBe("failed");
+
+    const blocked = await request(api)
+      .post("/api/platform-health/recover-failed-jobs")
+      .set(reviewerHeaders)
+      .send({})
+      .expect(403);
+    expect(blocked.body.error.message).toContain("Switch to Admin");
+
+    const beforeRecovery = await request(api).get("/api/platform-health").set(adminHeaders).expect(200);
+    expect(beforeRecovery.body.data.failedJobRecovery.liveStatus.failedImageJobs).toBeGreaterThan(0);
+    expect(beforeRecovery.body.data.runtimeProof.latestFailedOrRecoveredJob.type).toBe("failed_job");
+
+    const recovered = await request(api)
+      .post("/api/platform-health/recover-failed-jobs")
+      .set(adminHeaders)
+      .send({ reason: "Vitest recovery drill" })
+      .expect(200);
+
+    expect(recovered.body.data.requeued).toBeGreaterThan(0);
+    expect(recovered.body.data.jobs.every((job: { status: string }) => job.status === "queued")).toBe(true);
+
+    const afterRecovery = await request(api).get("/api/platform-health").set(adminHeaders).expect(200);
+    expect(afterRecovery.body.data.failedJobRecovery.liveStatus.failedImageJobs).toBe(0);
+    expect(afterRecovery.body.data.runtimeProof.latestFailedOrRecoveredJob.type).toBe("recovered_job");
   });
 
   it("creates upload intent metadata for object-storage based image capture", async () => {

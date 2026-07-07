@@ -5,6 +5,7 @@ import { api } from "../api.js";
 import { useActor } from "../App.js";
 import { StatusPill } from "../components/StatusPill.js";
 import type { Inspection } from "../types.js";
+import { isCaptureQueueInspection, isReviewQueueInspection } from "../workflowMetrics.js";
 
 export function DashboardPage() {
   const { actor } = useActor();
@@ -25,18 +26,18 @@ export function DashboardPage() {
   }, [actor]);
 
   const visibleInspections = inspections.filter((inspection) => {
-    if (actor.role === "inspector") {
-      return inspection.status === "DRAFT" || inspection.status === "NEEDS_PHOTOS" || inspection.completenessPercentage < 100;
-    }
-    if (actor.role === "reviewer") {
-      return ["READY_FOR_GRADING", "GRADED", "AI_DRAFTED", "HUMAN_REVIEW_REQUIRED", "REPORT_FAILED"].includes(inspection.status);
-    }
+    if (actor.role === "inspector") return isCaptureQueueInspection(inspection);
+    if (actor.role === "reviewer") return isReviewQueueInspection(inspection);
     return true;
   });
+  const showingInspectorRecent = actor.role === "inspector" && visibleInspections.length === 0 && inspections.length > 0;
+  const tableInspections = showingInspectorRecent ? inspections : visibleInspections;
   const roleContext = actor.role === "inspector"
     ? {
-      title: "Capture queue",
-      detail: "Prioritizes vehicles that need required angles, retakes, or image analysis before review.",
+      title: showingInspectorRecent ? "Capture queue clear" : "Capture queue",
+      detail: showingInspectorRecent
+        ? "No vehicles currently need capture work. Recent assigned inspections remain visible for continuity."
+        : "Prioritizes vehicles that need required angles, retakes, or image analysis before review.",
       primaryMetric: `${visibleInspections.length} need capture work`
     }
     : actor.role === "reviewer"
@@ -56,7 +57,7 @@ export function DashboardPage() {
       <div className="page-heading">
         <div>
           <h1>Dashboard</h1>
-          <p>Wholesale inspection queue with evidence completeness, CR grade, and buyer-visible release status.</p>
+          <p>Wholesale inspection queue with evidence completeness, condition grade, and buyer-visible release status.</p>
         </div>
         <button className="secondary-button" onClick={() => void load()}>
           <RefreshCw size={16} /> Refresh
@@ -76,14 +77,22 @@ export function DashboardPage() {
               <th>VIN</th>
               <th>Status</th>
               <th>Evidence</th>
-              <th>CR grade</th>
+              <th>Condition grade</th>
               <th>Release</th>
               <th>Updated</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {visibleInspections.map((inspection) => (
+            {tableInspections.length === 0 ? (
+              <tr>
+                <td colSpan={8}>
+                  <div className="inspection-empty-row">
+                    No inspections match this workspace role. Check assignment, role, or queue filters.
+                  </div>
+                </td>
+              </tr>
+            ) : tableInspections.map((inspection) => (
               <tr key={inspection.id}>
                 <td>
                   <strong>{inspection.year} {inspection.make} {inspection.model}</strong>

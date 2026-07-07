@@ -1,6 +1,6 @@
 import { requiredPhotoAngles } from "@inspectiq/shared";
 import { describe, expect, it } from "vitest";
-import { deriveMarketplaceReadiness } from "./marketplaceReadiness.js";
+import { deriveMarketplaceReadiness, formatReportReadiness } from "./marketplaceReadiness.js";
 import type { InspectionBundle, VisionSuggestion } from "./types.js";
 
 function acceptedAngleSuggestions(): VisionSuggestion[] {
@@ -45,6 +45,9 @@ function baseBundle(extraSuggestions: VisionSuggestion[] = []): InspectionBundle
       checksumSha256: null,
       originalFilename: `${angle}.png`,
       mimeType: "image/png",
+      sourceName: null,
+      sourceUrl: null,
+      sourceLicense: null,
       uploadStatus: "uploaded",
       declaredAngle: angle,
       detectedAngle: angle,
@@ -93,6 +96,11 @@ describe("deriveMarketplaceReadiness", () => {
     expect(readiness.crStatus).toBe("CR ready");
     expect(readiness.vdpStatus).toBe("VDP ready");
     expect(readiness.blockers).toEqual([]);
+    expect(formatReportReadiness(readiness)).toMatchObject({
+      label: "Ready for report",
+      detail: "Buyer release complete",
+      className: "inline-ready"
+    });
   });
 
   it("keeps CR blocked while a quality warning is unresolved", () => {
@@ -110,5 +118,25 @@ describe("deriveMarketplaceReadiness", () => {
     expect(readiness.crStatus).toBe("CR blocked");
     expect(readiness.vdpStatus).toBe("Needs review");
     expect(readiness.blockers).toContain("1 image quality issue need review");
+    expect(formatReportReadiness(readiness)).toMatchObject({
+      label: "Report not ready",
+      detail: "Needs review decisions",
+      className: "inline-watch"
+    });
+  });
+
+  it("formats grade and final report blockers in end-user language", () => {
+    const readiness = deriveMarketplaceReadiness({
+      ...baseBundle(),
+      conditionGrade: null,
+      finalReport: null,
+      readinessIssues: []
+    });
+
+    expect(readiness.crStatus).toBe("CR blocked");
+    expect(formatReportReadiness(readiness)).toMatchObject({
+      label: "Report not ready",
+      detail: "Needs grade and final report"
+    });
   });
 });

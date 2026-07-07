@@ -43,6 +43,7 @@ export function AuditPage() {
   const reportEvents = rows.filter(({ event }) => eventFamily(event.eventType) === "Report").length;
   const evidenceEvents = rows.filter(({ event }) => eventFamily(event.eventType) === "Photo").length;
   const suggestionEvents = rows.filter(({ event }) => eventFamily(event.eventType) === "Suggestion").length;
+  const partialDetailCount = records.filter((record) => record.bundleLoadError).length;
 
   return (
     <section className="page">
@@ -56,6 +57,11 @@ export function AuditPage() {
         </button>
       </div>
       {error ? <div className="error-banner">{error}</div> : null}
+      {partialDetailCount > 0 ? (
+        <div className="warning-banner">
+          Showing available audit events while {partialDetailCount} inspection detail refresh{partialDetailCount === 1 ? "" : "es"} finish.
+        </div>
+      ) : null}
 
       <div className="summary-grid">
         <article className="summary-card">

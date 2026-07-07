@@ -10,6 +10,45 @@ export type MarketplaceReadiness = {
   blockers: string[];
 };
 
+export type ReportReadinessDisplay = {
+  label: "Ready for report" | "Report not ready";
+  detail: string;
+  className: "inline-ready" | "inline-watch";
+};
+
+function formatList(items: string[]): string {
+  if (items.length === 0) return "open blockers";
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+}
+
+export function formatReportReadiness(readiness: MarketplaceReadiness): ReportReadinessDisplay {
+  if (readiness.crStatus === "CR ready") {
+    return {
+      label: "Ready for report",
+      detail: readiness.vdpStatus === "VDP ready" ? "Buyer release complete" : "Evidence, review, and grade complete",
+      className: "inline-ready"
+    };
+  }
+
+  const blockerText = readiness.blockers.join(" ").toLowerCase();
+  const needsReview = blockerText.match(/suggestion|human review|missing .* angle|quality|failed|retake|angle/);
+  const nextSteps = [
+    needsReview ? "review decisions" : null,
+    !needsReview && blockerText.match(/missing|evidence/) ? "photo evidence" : null,
+    blockerText.includes("grade") ? "grade" : null,
+    blockerText.match(/final report|finalized|released/) ? "final report" : null,
+  ].filter((step): step is string => Boolean(step));
+  const uniqueSteps = Array.from(new Set(nextSteps));
+
+  return {
+    label: "Report not ready",
+    detail: `Needs ${formatList(uniqueSteps)}`,
+    className: "inline-watch"
+  };
+}
+
 export function deriveMarketplaceReadiness(bundle: InspectionBundle): MarketplaceReadiness {
   const acceptedAngles = new Set(
     bundle.suggestions

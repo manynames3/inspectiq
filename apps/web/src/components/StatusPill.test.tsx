@@ -6,7 +6,6 @@ describe("StatusPill", () => {
   it("renders readable status labels", () => {
     expect(statusLabel("HUMAN_REVIEW_REQUIRED")).toBe("Human review");
     render(<StatusPill status="READY_FOR_GRADING" />);
-    expect(screen.getByText("Ready for grading")).toBeInTheDocument();
+    expect(screen.getByText("Grade ready")).toBeInTheDocument();
   });
 });
-

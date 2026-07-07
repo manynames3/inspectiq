@@ -7,13 +7,18 @@ const chromePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
   ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const executablePath = existsSync(chromePath) ? chromePath : undefined;
 
+function generatedReviewVin() {
+  const suffix = Date.now().toString(36).toUpperCase().replace(/[IOQ]/g, "X").slice(-9);
+  return `5NMS2DAJ${suffix}`.padEnd(17, "0").slice(0, 17);
+}
+
 function fail(message) {
   throw new Error(`[inspectiq-e2e] ${message}`);
 }
 
 async function waitForBodyText(page, text, timeout = 15_000) {
   await page.waitForFunction(
-    (expected) => document.body.innerText.includes(expected),
+    (expected) => document.body.innerText.toLowerCase().includes(expected.toLowerCase()),
     text,
     { timeout }
   );
@@ -58,8 +63,10 @@ page.on("pageerror", (error) => {
 });
 
 try {
-  const uniqueVin = `E2EVIN${Date.now().toString().slice(-10)}`;
+  const uniqueVin = generatedReviewVin();
   await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await waitForBodyText(page, "InspectIQ Secure Workspace");
+  await page.getByRole("button", { name: /start inspector session/i }).click();
   await waitForBodyText(page, "Capture queue");
   await page.locator(".role-select select").selectOption("reviewer");
   await waitForBodyText(page, "Review queue");
@@ -82,7 +89,7 @@ try {
   await page.getByRole("button", { name: /create inspection/i }).click();
   await page.waitForURL(/\/inspections\/[^/]+$/, { timeout: 15_000 });
 
-  await page.getByRole("button", { name: /attach photo set/i }).click();
+  await page.getByRole("button", { name: /load reference set/i }).click();
   await waitForBodyText(page, "Uploaded images (8)");
   await page.getByRole("button", { name: /analyze photos/i }).click();
   await page.locator(".suggestion-card").first().waitFor({ timeout: 120_000 });
@@ -103,11 +110,11 @@ try {
   await page.waitForFunction(() => document.querySelector(".role-select select")?.value === "reviewer");
   await page.locator(".suggestion-card .accept-button:not([disabled])").first().waitFor({ timeout: 120_000 });
   await acceptVisibleSuggestions(page);
-  await waitForBodyText(page, "Ready for grading");
+  await waitForBodyText(page, "Grade ready");
 
   await page.getByRole("button", { name: /calculate grade/i }).click();
   await waitForBodyText(page, "Score based on evidence completeness");
-  await waitForBodyText(page, "CR ready");
+  await waitForBodyText(page, "Ready for report");
   await page.getByRole("button", { name: /draft report/i }).click();
   await waitForBodyText(page, "Draft summary");
   await page.getByRole("button", { name: /^finalize$/i }).click();

@@ -38,6 +38,9 @@ export type VehiclePhoto = {
   checksumSha256: string | null;
   originalFilename: string;
   mimeType: string;
+  sourceName: string | null;
+  sourceUrl: string | null;
+  sourceLicense: string | null;
   uploadStatus: ImageUploadStatus;
   declaredAngle: string | null;
   detectedAngle: string | null;
@@ -142,7 +145,23 @@ export type InspectionBundle = {
 export type SampleImage = {
   key: string;
   filename: string;
+  storageKey?: string;
   label: string;
   angle: string;
   mimeType: string;
+  sourceName?: string;
+  sourceUrl?: string;
+  sourceLicense?: string;
+};
+
+export type SamplePhotoSet = {
+  key: string;
+  label: string;
+  vehicle: {
+    year: number;
+    make: string;
+    model: string;
+    trim: string;
+  };
+  sampleKeys: string[];
 };

@@ -7,7 +7,7 @@
 - Unknown photo angle: keep angle unknown and require human review.
 - Low-confidence damage: store as pending suggestion only.
 - Duplicate analysis: return existing completed analysis unless forced.
-- Grading unavailable: local fallback mirrors Java rules; production should fail closed or retry based on policy.
+- Grading unavailable: local fallback mirrors the Python grading rules; production should fail closed or retry based on policy.
 - Grading before evidence: API returns conflict with missing evidence.
 - Report provider failure: job moves to failed and inspection moves to `REPORT_FAILED`.
 - Duplicate report request: idempotency key returns or rejects active job.

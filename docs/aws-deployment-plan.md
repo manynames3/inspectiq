@@ -70,7 +70,7 @@ Image worker requirements:
 
 Known open gaps:
 
-- Frontend OIDC is wired through Cognito hosted login. API Gateway JWT enforcement and Lambda-side JWT/JWKS validation are enabled for the deployed path.
-- The Java grading service remains optional; the deployed Lambda uses the equivalent Node fallback unless `GRADING_SERVICE_URL` points to a reachable service.
+- Frontend OIDC is wired through Cognito hosted login. API Gateway JWT enforcement and Lambda-side JWT/JWKS validation are enabled for the deployed path. Cognito groups, role claims, or configured owner/operator email mappings grant Reviewer/Admin access; unmapped missing app role claims fall back to least-privileged Inspector unless `REQUIRE_JWT_ROLE_CLAIM=true` is enabled.
+- The Python grading service remains optional; the deployed Lambda uses the equivalent Node fallback unless `GRADING_SERVICE_URL` points to a reachable service.
 - Report generation is async-shaped in the data model but not yet moved to SQS or Step Functions.
 - The included model evaluation set now gates Bedrock promotion, but production confidence claims still require a larger labeled auction/offsite image corpus and calibration report.

@@ -1,6 +1,6 @@
 import type { Actor } from "./types.js";
 
-type JwtClaims = {
+type JwtClaims = Record<string, unknown> & {
   sub?: string;
   name?: string;
   email?: string;
@@ -12,18 +12,38 @@ type JwtClaims = {
 };
 
 export type AuthSession = {
-  idToken: string | null;
+  idToken: string;
   accessToken: string | null;
   expiresAt: number;
   actor: Actor;
-  mode: "oidc" | "evaluation";
+  mode: "oidc" | "local" | "evaluation";
 };
 
 const storageKey = "inspectiq.auth.session";
-const evaluationStorageKey = "inspectiq.auth.evaluation";
+const localStorageKey = "inspectiq.local.session";
 const verifierKey = "inspectiq.auth.pkce.verifier";
 const stateKey = "inspectiq.auth.pkce.state";
 const roles = ["admin", "reviewer", "inspector"] as const;
+const directRoleClaimKeys = [
+  "custom:role",
+  "custom:inspectiq_role",
+  "inspectiq:role",
+  "https://inspectiq.app/role",
+  "role"
+] as const;
+const groupRoleClaimKeys = ["cognito:groups", "groups", "roles"] as const;
+
+const localProfiles: Record<Actor["role"], Pick<Actor, "id" | "name" | "role">> = {
+  inspector: { id: "inspector-john-smith", name: "John Smith", role: "inspector" },
+  reviewer: { id: "review-lead", name: "Review Lead", role: "reviewer" },
+  admin: { id: "admin-operator", name: "Admin Operator", role: "admin" }
+};
+
+const evaluationProfiles: Record<Actor["role"], Pick<Actor, "id" | "name" | "role">> = {
+  inspector: { id: "evaluation-inspector", name: "John Smith", role: "inspector" },
+  reviewer: { id: "evaluation-reviewer", name: "Evaluation Reviewer", role: "reviewer" },
+  admin: { id: "evaluation-admin", name: "Evaluation Admin", role: "admin" }
+};
 
 function authDomain(): string {
   return String(import.meta.env.VITE_COGNITO_DOMAIN ?? "").replace(/\/+$/, "");
@@ -43,6 +63,10 @@ function logoutUri(): string {
 
 export function oidcEnabled(): boolean {
   return import.meta.env.VITE_AUTH_MODE === "oidc" && Boolean(authDomain() && clientId());
+}
+
+export function evaluationModeEnabled(): boolean {
+  return String(import.meta.env.VITE_ENABLE_EVALUATION_MODE ?? "true").toLowerCase() !== "false";
 }
 
 function base64Url(bytes: Uint8Array): string {
@@ -72,17 +96,39 @@ function decodeJwt(token: string): JwtClaims {
   return JSON.parse(atob(padded)) as JwtClaims;
 }
 
-function roleFromClaims(claims: JwtClaims): Actor["role"] {
-  const directRole = claims["custom:role"] ?? claims.role;
-  if (directRole === "admin" || directRole === "reviewer" || directRole === "inspector") return directRole;
+function roleFromString(value: unknown): Actor["role"] | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (roles.includes(normalized as Actor["role"])) return normalized as Actor["role"];
 
-  const groups = Array.isArray(claims["cognito:groups"])
-    ? claims["cognito:groups"]
-    : typeof claims["cognito:groups"] === "string"
-      ? [claims["cognito:groups"]]
-      : [];
-  const normalizedGroups = groups.map((group) => group.toLowerCase());
-  return roles.find((role) => normalizedGroups.includes(role)) ?? "inspector";
+  const compact = normalized.replace(/[^a-z]/g, "");
+  const withoutProductPrefix = compact.startsWith("inspectiq") ? compact.slice("inspectiq".length) : compact;
+  return roles.find((role) => withoutProductPrefix === role) ?? null;
+}
+
+function stringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
+  return typeof value === "string" ? [value] : [];
+}
+
+function defaultAuthRole(): Actor["role"] {
+  return roleFromString(String(import.meta.env.VITE_DEFAULT_AUTH_ROLE ?? "inspector")) ?? "inspector";
+}
+
+function roleFromClaims(claims: JwtClaims): Actor["role"] {
+  for (const key of directRoleClaimKeys) {
+    const parsed = roleFromString(claims[key]);
+    if (parsed) return parsed;
+  }
+
+  for (const key of groupRoleClaimKeys) {
+    for (const candidate of stringList(claims[key])) {
+      const parsed = roleFromString(candidate);
+      if (parsed) return parsed;
+    }
+  }
+
+  return defaultAuthRole();
 }
 
 function sessionFromTokens(tokens: { id_token?: string; access_token?: string; expires_in?: number }): AuthSession {
@@ -102,43 +148,19 @@ function sessionFromTokens(tokens: { id_token?: string; access_token?: string; e
   };
 }
 
-export function evaluationEnabled(): boolean {
-  return import.meta.env.VITE_ENABLE_EVALUATION_MODE !== "false";
-}
-
-export function beginEvaluationPreview(): AuthSession {
-  const session: AuthSession = {
-    idToken: null,
-    accessToken: null,
-    expiresAt: Date.now() + 4 * 60 * 60 * 1000,
-    actor: {
-      id: "evaluation-reviewer",
-      name: "Evaluation Reviewer",
-      role: "reviewer"
-    },
-    mode: "evaluation"
+function normalizeSession(session: AuthSession, fallbackMode: AuthSession["mode"]): AuthSession {
+  return {
+    ...session,
+    mode: session.mode ?? fallbackMode
   };
-  localStorage.setItem(evaluationStorageKey, JSON.stringify(session));
-  localStorage.removeItem(storageKey);
-  return session;
 }
 
 export function storedAuthSession(): AuthSession | null {
-  const evaluationRaw = localStorage.getItem(evaluationStorageKey);
-  if (evaluationRaw && evaluationEnabled()) {
-    try {
-      const session = JSON.parse(evaluationRaw) as AuthSession;
-      if (session.expiresAt > Date.now() + 60_000 && session.mode === "evaluation") return session;
-    } catch {
-      // Clear malformed evaluation state below.
-    }
-    localStorage.removeItem(evaluationStorageKey);
-  }
   if (!oidcEnabled()) return null;
   const raw = localStorage.getItem(storageKey);
   if (!raw) return null;
   try {
-    const session = JSON.parse(raw) as AuthSession;
+    const session = normalizeSession(JSON.parse(raw) as AuthSession, "oidc");
     if (session.expiresAt <= Date.now() + 60_000) {
       localStorage.removeItem(storageKey);
       return null;
@@ -150,8 +172,58 @@ export function storedAuthSession(): AuthSession | null {
   }
 }
 
-export function isEvaluationSession(): boolean {
-  return storedAuthSession()?.mode === "evaluation";
+export function saveAuthSession(session: AuthSession): void {
+  localStorage.setItem(storageKey, JSON.stringify(session));
+}
+
+export function storedLocalSession(): AuthSession | null {
+  const raw = localStorage.getItem(localStorageKey);
+  if (!raw) return null;
+  try {
+    const session = normalizeSession(JSON.parse(raw) as AuthSession, "local");
+    if (session.expiresAt <= Date.now() + 60_000) {
+      localStorage.removeItem(localStorageKey);
+      return null;
+    }
+    return session;
+  } catch {
+    localStorage.removeItem(localStorageKey);
+    return null;
+  }
+}
+
+export function startLocalSession(role: Actor["role"]): AuthSession {
+  const actor = localProfiles[role];
+  const session: AuthSession = {
+    idToken: `local-session-${crypto.randomUUID()}`,
+    accessToken: null,
+    expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+    actor,
+    mode: "local"
+  };
+  localStorage.setItem(localStorageKey, JSON.stringify(session));
+  return session;
+}
+
+export function startEvaluationSession(role: Actor["role"] = "reviewer"): AuthSession {
+  const actor = evaluationProfiles[role];
+  const session: AuthSession = {
+    idToken: `evaluation-session-${crypto.randomUUID()}`,
+    accessToken: null,
+    expiresAt: Date.now() + 2 * 60 * 60 * 1000,
+    actor,
+    mode: "evaluation"
+  };
+  localStorage.setItem(localStorageKey, JSON.stringify(session));
+  return session;
+}
+
+export function clearLocalSession(): void {
+  localStorage.removeItem(localStorageKey);
+}
+
+export function isEvaluationSession(session: AuthSession | null): boolean {
+  return session?.mode === "evaluation";
 }
 
 export async function beginLogin(): Promise<void> {
@@ -211,7 +283,7 @@ export async function completeLoginFromCallback(): Promise<AuthSession | null> {
 
 export function signOut(): void {
   localStorage.removeItem(storageKey);
-  localStorage.removeItem(evaluationStorageKey);
+  localStorage.removeItem(localStorageKey);
   if (!oidcEnabled()) return;
   const params = new URLSearchParams({
     client_id: clientId(),
@@ -222,7 +294,12 @@ export function signOut(): void {
 
 export function authHeaders(): Record<string, string> {
   const session = storedAuthSession();
-  if (!session) return {};
-  if (session.mode === "evaluation") return { "x-inspectiq-evaluation-mode": "readonly" };
-  return session.idToken ? { authorization: `Bearer ${session.idToken}` } : {};
+  if (session) return { authorization: `Bearer ${session.idToken}` };
+  return isEvaluationSession(storedLocalSession()) ? { "x-evaluation-mode": "true" } : {};
+}
+
+export function evaluationApiPath(path: string): string {
+  if (!isEvaluationSession(storedLocalSession())) return path;
+  if (!path.startsWith("/api/") || path.startsWith("/api/evaluation/")) return path;
+  return path.replace(/^\/api\//, "/api/evaluation/");
 }

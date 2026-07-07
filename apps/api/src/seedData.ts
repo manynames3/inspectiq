@@ -1,164 +1,483 @@
 import { sampleBundles, sampleImages } from "./sampleImages.js";
-import type { Actor } from "./domain.js";
+import type { Actor, DamageItem } from "./domain.js";
 import { MemoryStore } from "./store.js";
+import type { DamageSeverity, DamageType, PhotoAngle, VisionOutput } from "@inspectiq/shared";
 
 const systemActor: Actor = { id: "queue-import", name: "Queue Import", role: "admin" };
+export const identitySourceName = "Reference identity capture";
+export const identitySourceLicense = "System-created reference card used when source media does not include a readable VIN or odometer close-up.";
+
+export function identityDataUrl(title: string, value: string): string {
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">`,
+    `<rect width="640" height="360" fill="#e8eef6"/>`,
+    `<rect x="54" y="92" width="532" height="176" rx="18" fill="#f8fafc" stroke="#334155" stroke-width="5"/>`,
+    `<text x="320" y="148" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#0f172a">${title}</text>`,
+    `<text x="320" y="214" text-anchor="middle" font-family="Arial, sans-serif" font-size="38" font-weight="800" fill="#111827">${value}</text>`,
+    `</svg>`
+  ].join("");
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
+function seedImageQuality(overrides: Partial<VisionOutput["imageQuality"]> = {}): VisionOutput["imageQuality"] {
+  return {
+    grade: "pass",
+    blurScore: 0.96,
+    exposureScore: 0.94,
+    framingScore: 0.95,
+    resolutionScore: 0.97,
+    occlusionRisk: 0.04,
+    retakeRequired: false,
+    notes: [],
+    ...overrides
+  };
+}
+
+function confidenceForAngle(angle: PhotoAngle | null | undefined): number {
+  if (angle === "odometer") return 0.98;
+  if (angle === "vin_plate") return 0.97;
+  if (angle === "front") return 0.95;
+  if (angle === "engine_bay") return 0.92;
+  if (angle === "interior") return 0.91;
+  return 0.94;
+}
+
+function referenceVisionOutput(input: {
+  angle: PhotoAngle;
+  storageKey: string;
+  vin: string;
+  mileage: number;
+}): VisionOutput {
+  const isBlurryRetake = input.storageKey.includes("blurry-front");
+  const extractedText: VisionOutput["extractedText"] = {};
+  if (input.angle === "vin_plate") extractedText.vin = input.vin;
+  if (input.angle === "odometer") extractedText.odometer = String(input.mileage);
+
+  if (isBlurryRetake) {
+    return {
+      photoAngle: "front",
+      confidence: 0.58,
+      imageQuality: seedImageQuality({
+        grade: "retake",
+        blurScore: 0.42,
+        exposureScore: 0.51,
+        framingScore: 0.82,
+        resolutionScore: 0.72,
+        occlusionRisk: 0.08,
+        retakeRequired: true,
+        notes: ["Blur and low light reduce buyer trust; retake before CR release."]
+      }),
+      qualityWarnings: ["Image appears blurry or low-light; retake recommended before final report."],
+      detectedDamageCandidates: [],
+      extractedText,
+      humanReviewRequired: true
+    };
+  }
+
+  return {
+    photoAngle: input.angle,
+    confidence: confidenceForAngle(input.angle),
+    imageQuality: seedImageQuality({
+      grade: input.angle === "interior" ? "review" : "pass",
+      notes: [`Imported ${input.angle.replaceAll("_", " ")} image matched the required capture slot.`]
+    }),
+    qualityWarnings: [],
+    detectedDamageCandidates: [],
+    extractedText,
+    humanReviewRequired: input.angle === "vin_plate" || input.angle === "odometer"
+  };
+}
+
+function analyzeImportedPhoto(store: MemoryStore, input: {
+  inspectionId: string;
+  photoId: string;
+  storageKey: string;
+  originalFilename: string;
+  angle: PhotoAngle;
+  vin: string;
+  mileage: number;
+}, actor: Actor): void {
+  const photo = store.getPhoto(input.photoId);
+  store.saveAnalysis(photo, {
+    provider: "referenceImportProvider",
+    promptVersion: "photo-import-v1",
+    raw: {
+      source: "reference-import",
+      filename: input.originalFilename,
+      angle: input.angle
+    },
+    validated: referenceVisionOutput({
+      angle: input.angle,
+      storageKey: input.storageKey,
+      vin: input.vin,
+      mileage: input.mileage
+    })
+  }, actor);
+
+  const angleSuggestion = store.listSuggestions(input.inspectionId)
+    .filter((suggestion) =>
+      suggestion.photoId === input.photoId &&
+      suggestion.suggestionType === "photo_angle" &&
+      suggestion.status === "pending"
+    )
+    .at(-1);
+  if (angleSuggestion) store.acceptSuggestion(angleSuggestion.id, actor);
+}
+
+type ReferenceConfirmedDamage = {
+  angle: PhotoAngle;
+  location: string;
+  damageType: DamageType;
+  severity: DamageSeverity;
+  notes: string;
+};
+
+type ReferenceReportState = "draft_human_review" | "finalized";
+
+type ReferenceInspectionInput = {
+  vin: string;
+  year: number;
+  make: string;
+  model: string;
+  trim: string;
+  mileage: number;
+  exteriorColor: string;
+  sellerSource: string;
+  inspectorName: string;
+  sampleKeys: string[];
+  confirmedDamage?: ReferenceConfirmedDamage[];
+  reportState?: ReferenceReportState;
+};
+
+type ReferenceGrade = {
+  id: string;
+  score: number;
+  grade: "A" | "B" | "C" | "D" | "F";
+};
+
+type ReferenceReportOutput = {
+  summary: string;
+  notableDefects: string[];
+  missingEvidence: string[];
+  recommendedDisclosure: string;
+  confidence: number;
+  humanReviewRequired: boolean;
+  reasoningSummary: string;
+};
+
+function titleDamage(item: DamageItem): string {
+  return `${item.severity} ${item.damageType.replaceAll("_", " ")} at ${item.location}`;
+}
+
+function referenceReportOutput(input: ReferenceInspectionInput, grade: ReferenceGrade, damageItems: DamageItem[], humanReviewRequired: boolean): ReferenceReportOutput {
+  const defects = damageItems.map(titleDamage);
+  const vehicle = `${input.year} ${input.make} ${input.model} ${input.trim}`.trim();
+  return {
+    summary: `${vehicle} graded ${grade.grade} with a condition score of ${grade.score}. ${humanReviewRequired ? "Reviewer approval is required before buyer-visible release." : "Buyer-ready condition report is finalized for release."}`,
+    notableDefects: defects.length > 0 ? defects : ["No confirmed damage items were recorded."],
+    missingEvidence: [],
+    recommendedDisclosure: defects.length > 0
+      ? `Disclose confirmed damage before buyer-visible release: ${defects.join("; ")}.`
+      : "Condition report is based on complete required photo evidence and reviewer-confirmed facts.",
+    confidence: humanReviewRequired ? 0.82 : 0.93,
+    humanReviewRequired,
+    reasoningSummary: "Review used required photo evidence, confirmed damage items, condition grade, disclosure checks, and buyer-visible release status."
+  };
+}
+
+function referenceReportBody(output: ReferenceReportOutput): string {
+  return [
+    `Summary: ${output.summary}`,
+    "",
+    "Notable defects:",
+    ...output.notableDefects.map((item) => `- ${item}`),
+    "",
+    "Missing evidence:",
+    ...(output.missingEvidence.length ? output.missingEvidence.map((item) => `- ${item}`) : ["- None"]),
+    "",
+    `Recommended disclosure: ${output.recommendedDisclosure}`,
+    "",
+    `Review rationale: ${output.reasoningSummary}`
+  ].join("\n");
+}
+
+function acceptAllOpenSuggestions(store: MemoryStore, inspectionId: string, actor: Actor): void {
+  for (const suggestion of store.listSuggestions(inspectionId)) {
+    if (suggestion.status === "pending" || suggestion.status === "edited") {
+      store.acceptSuggestion(suggestion.id, actor);
+    }
+  }
+}
+
+function createReferenceReport(store: MemoryStore, input: ReferenceInspectionInput, inspectionId: string, actor: Actor): void {
+  if (!input.reportState) return;
+  if (input.reportState === "finalized") {
+    acceptAllOpenSuggestions(store, inspectionId, actor);
+  }
+
+  const damageItems = store.listDamage(inspectionId);
+  const isHumanReview = input.reportState === "draft_human_review";
+  const grade = store.saveGrade(inspectionId, {
+    score: isHumanReview ? 82 : 94,
+    grade: isHumanReview ? "B" : "A",
+    explanationJson: {
+      baseScore: 100,
+      deductions: damageItems.map((item) => ({
+        reason: titleDamage(item),
+        points: item.severity === "moderate" ? 9 : item.severity === "minor" ? 3 : 5
+      })),
+      completionPenalty: 0,
+      mileageAdjustment: isHumanReview ? 7 : 2,
+      ageAdjustment: isHumanReview ? 2 : 1
+    },
+    gradingVersion: "reference-grading-v1"
+  }, actor);
+
+  const job = store.createReportJob(inspectionId, `reference-report-${input.vin}`, actor);
+  store.markJobRunning(job.id);
+  const output = referenceReportOutput(input, grade, damageItems, isHumanReview);
+  store.completeReportJob(job.id, {
+    inspectionId,
+    jobId: job.id,
+    provider: "referenceReportProvider",
+    promptVersion: "reference-report-v1",
+    inputSummaryJson: {
+      gradeId: grade.id,
+      damageItemCount: damageItems.length,
+      missingEvidence: store.missingRequiredEvidence(inspectionId)
+    },
+    outputJson: output,
+    confidence: output.confidence,
+    humanReviewRequired: output.humanReviewRequired,
+    validationStatus: "valid"
+  }, referenceReportBody(output), actor);
+
+  if (input.reportState === "finalized") {
+    const report = store.latestFinalReport(inspectionId);
+    if (report) store.finalizeReport(report.id, actor);
+  }
+}
 
 export function seedStore(store: MemoryStore): void {
   store.reset();
   const inspector = store.addUser({ id: "inspector-john-smith", name: "John Smith", role: "inspector" });
   const maria = store.addUser({ id: "inspector-maria-lee", name: "Maria Lee", role: "inspector" });
   const gateOps = store.addUser({ id: "inspector-gate-ops", name: "Gate Ops", role: "inspector" });
-  store.addUser({ id: "review-lead", name: "Review Lead", role: "reviewer" });
+  const reviewer = store.addUser({ id: "review-lead", name: "Review Lead", role: "reviewer" });
+  const reviewerActor: Actor = { id: reviewer.id, name: reviewer.name, role: reviewer.role };
   const inspectorActors: Record<string, Actor> = {
     "John Smith": { id: inspector.id, name: inspector.name, role: inspector.role },
     "Maria Lee": { id: maria.id, name: maria.name, role: maria.role },
     "Gate Ops": { id: gateOps.id, name: gateOps.name, role: gateOps.role }
   };
 
-  const seeded = [
+  const referenceInspections: ReferenceInspectionInput[] = [
     {
-      vin: "4T1G11AK8MU123456",
+      vin: "5NMJF3DE5RH407769",
+      year: 2024,
+      make: "Hyundai",
+      model: "Tucson",
+      trim: "SEL",
+      mileage: 22687,
+      exteriorColor: "Gray",
+      sellerSource: "Dealer listing intake",
+      inspectorName: "John Smith",
+      sampleKeys: sampleBundles["hyundai-tucson-sel-set"]
+    },
+    {
+      vin: "4T1G11AK0MU520503",
       year: 2021,
       make: "Toyota",
       model: "Camry",
       trim: "SE",
-      mileage: 64231,
-      exteriorColor: "Silver",
-      sellerSource: "Fleet remarketing offsite",
+      mileage: 106611,
+      exteriorColor: "Super White",
+      sellerSource: "Dealer listing intake",
       inspectorName: "John Smith",
-      sampleKeys: sampleBundles["complete-clean-set"]
+      sampleKeys: sampleBundles["toyota-camry-se-set"]
     },
     {
-      vin: "1HGCV1F34LA123456",
+      vin: "1HGCV1F49LA129627",
       year: 2020,
       make: "Honda",
       model: "Accord",
       trim: "EX",
-      mileage: 79812,
-      exteriorColor: "White",
+      mileage: 79037,
+      exteriorColor: "Gray",
       sellerSource: "Dealer trade-in lane",
       inspectorName: "John Smith",
-      sampleKeys: sampleBundles["complete-clean-set"].filter((key) => key !== "odometer-closeup-64231")
+      sampleKeys: sampleBundles["honda-accord-ex-set"]
     },
     {
-      vin: "1FMCU9G68NU123456",
+      vin: "1FMCU9H6XNUB81389",
       year: 2022,
       make: "Ford",
       model: "Escape",
       trim: "SEL",
-      mileage: 38125,
-      exteriorColor: "Blue",
-      sellerSource: "Lease return offsite",
+      mileage: 31992,
+      exteriorColor: "Iced Blue Silver Metallic",
+      sellerSource: "Dealer listing intake",
       inspectorName: "John Smith",
-      sampleKeys: ["front-clean", "driver-side-scratch", "odometer-closeup-64231"]
+      sampleKeys: sampleBundles["ford-escape-sel-set"],
+      confirmedDamage: [
+        {
+          angle: "driver_side",
+          location: "Driver-side front door",
+          damageType: "scratch",
+          severity: "minor",
+          notes: "Reviewer confirmed a light scratch on the driver-side front door from uploaded side evidence."
+        }
+      ],
+      reportState: "finalized"
     },
     {
-      vin: "5N1AT2MT9KC123456",
+      vin: "KNMAT2MV6KP514068",
       year: 2019,
       make: "Nissan",
       model: "Rogue",
       trim: "SV",
-      mileage: 102440,
-      exteriorColor: "Black",
-      sellerSource: "Wholesale auction lane",
+      mileage: 91168,
+      exteriorColor: "Caspian Blue Metallic",
+      sellerSource: "Dealer listing intake",
       inspectorName: "Maria Lee",
-      sampleKeys: ["rear-severe-damage", "front-clean", "vin-plate-4t1g11ak8mu123456"]
+      sampleKeys: sampleBundles["nissan-rogue-sv-set"],
+      confirmedDamage: [
+        {
+          angle: "rear",
+          location: "Rear bumper",
+          damageType: "dent",
+          severity: "moderate",
+          notes: "Reviewer confirmed rear bumper deformation visible in the rear evidence image."
+        }
+      ],
+      reportState: "draft_human_review"
     },
     {
-      vin: "4S4BTACC3P3123456",
+      vin: "4S4BTAFC8P3204430",
       year: 2023,
       make: "Subaru",
       model: "Outback",
       trim: "Premium",
-      mileage: 21088,
-      exteriorColor: "Green",
-      sellerSource: "Retail acquisition intake",
+      mileage: 49129,
+      exteriorColor: "Blue",
+      sellerSource: "Dealer listing intake",
       inspectorName: "John Smith",
-      sampleKeys: ["blurry-front"]
-    },
-    {
-      vin: "5UXCR6C03L9B12345",
-      year: 2020,
-      make: "BMW",
-      model: "X5",
-      trim: "xDrive40i",
-      mileage: 67844,
-      exteriorColor: "Mineral White",
-      sellerSource: "Seller disclosure arbitration review",
-      inspectorName: "Maria Lee",
-      sampleKeys: sampleBundles["arbitration-risk-set"]
-    },
-    {
-      vin: "3GCUDDED2NG123456",
-      year: 2022,
-      make: "Chevrolet",
-      model: "Silverado 1500",
-      trim: "LT",
-      mileage: 52410,
-      exteriorColor: "Summit White",
-      sellerSource: "Gate imaging lane",
-      inspectorName: "Gate Ops",
-      sampleKeys: sampleBundles["gate-imaging-partial-set"]
-    },
-    {
-      vin: "5XYRK4LF0NG123456",
-      year: 2022,
-      make: "Kia",
-      model: "Sorento",
-      trim: "SX",
-      mileage: 33291,
-      exteriorColor: "Gravity Gray",
-      sellerSource: "Offsite mobile capture retake",
-      inspectorName: "Maria Lee",
-      sampleKeys: sampleBundles["offsite-retake-set"]
-    },
-    {
-      vin: "55SWF4KB7HU123456",
-      year: 2017,
-      make: "Mercedes-Benz",
-      model: "C300",
-      trim: "4MATIC",
-      mileage: 128904,
-      exteriorColor: "Obsidian Black",
-      sellerSource: "Lender repossession intake",
-      inspectorName: "John Smith",
-      sampleKeys: sampleBundles["high-mile-repo-set"]
-    },
-    {
-      vin: "7SAYGDEE5PF123456",
-      year: 2023,
-      make: "Tesla",
-      model: "Model Y",
-      trim: "Long Range",
-      mileage: 18622,
-      exteriorColor: "Pearl White",
-      sellerSource: "EV fleet return",
-      inspectorName: "Gate Ops",
-      sampleKeys: sampleBundles["complete-clean-set"].filter((key) => key !== "engine-bay-clean")
+      sampleKeys: sampleBundles["subaru-outback-premium-set"]
     }
   ];
 
-  for (const input of seeded) {
+  for (const input of referenceInspections) {
     const actor = inspectorActors[input.inspectorName] ?? inspectorActors["John Smith"];
     const inspection = store.createInspection(input, actor);
-    for (const sampleKey of input.sampleKeys) {
+    const photoByAngle = new Map<PhotoAngle, string>();
+    const importSamples = input.sampleKeys.flatMap((sampleKey) => {
       const sample = sampleImages.find((item) => item.key === sampleKey);
-      if (!sample) continue;
-      store.addPhoto({
+      return sample ? [sample] : [];
+    });
+    const importedAngles = new Set(importSamples.map((sample) => sample.angle));
+
+    for (const sample of importSamples) {
+      const storageKey = sample.storageKey ?? `/sample-images/${sample.filename}`;
+      const photo = store.addPhoto({
         inspectionId: inspection.id,
-        storageKey: `/sample-images/${sample.filename}`,
+        storageKey,
         objectBucket: "inspectiq-sample-images",
-        objectKey: `sample-images/${sample.filename}`,
-        thumbnailStorageKey: `/sample-images/${sample.filename}`,
+        objectKey: `sample-images/${sample.key}`,
+        thumbnailStorageKey: storageKey,
         byteSize: null,
         checksumSha256: null,
         originalFilename: sample.filename,
         mimeType: sample.mimeType,
+        sourceName: sample.sourceName ?? null,
+        sourceUrl: sample.sourceUrl ?? null,
+        sourceLicense: sample.sourceLicense ?? null,
         uploadedBy: actor.id,
         declaredAngle: sample.angle
       }, actor);
+      photoByAngle.set(sample.angle, photo.id);
+      analyzeImportedPhoto(store, {
+        inspectionId: inspection.id,
+        photoId: photo.id,
+        storageKey,
+        originalFilename: sample.filename,
+        angle: sample.angle,
+        vin: input.vin,
+        mileage: input.mileage
+      }, actor);
     }
+
+    if (!importedAngles.has("vin_plate")) {
+      const vinPhoto = store.addPhoto({
+        inspectionId: inspection.id,
+        storageKey: identityDataUrl("VIN PLATE", input.vin),
+        objectBucket: null,
+        objectKey: null,
+        thumbnailStorageKey: null,
+        byteSize: null,
+        checksumSha256: null,
+        originalFilename: `vin-plate-${input.vin}.svg`,
+        mimeType: "image/svg+xml",
+        sourceName: identitySourceName,
+        sourceUrl: null,
+        sourceLicense: identitySourceLicense,
+        uploadedBy: actor.id,
+        declaredAngle: "vin_plate"
+      }, actor);
+      photoByAngle.set("vin_plate", vinPhoto.id);
+      analyzeImportedPhoto(store, {
+        inspectionId: inspection.id,
+        photoId: vinPhoto.id,
+        storageKey: vinPhoto.storageKey,
+        originalFilename: vinPhoto.originalFilename,
+        angle: "vin_plate",
+        vin: input.vin,
+        mileage: input.mileage
+      }, actor);
+    }
+
+    if (!importedAngles.has("odometer")) {
+      const odometerPhoto = store.addPhoto({
+        inspectionId: inspection.id,
+        storageKey: identityDataUrl("ODOMETER", input.mileage.toLocaleString()),
+        objectBucket: null,
+        objectKey: null,
+        thumbnailStorageKey: null,
+        byteSize: null,
+        checksumSha256: null,
+        originalFilename: `odometer-${input.mileage}.svg`,
+        mimeType: "image/svg+xml",
+        sourceName: identitySourceName,
+        sourceUrl: null,
+        sourceLicense: identitySourceLicense,
+        uploadedBy: actor.id,
+        declaredAngle: "odometer"
+      }, actor);
+      photoByAngle.set("odometer", odometerPhoto.id);
+      analyzeImportedPhoto(store, {
+        inspectionId: inspection.id,
+        photoId: odometerPhoto.id,
+        storageKey: odometerPhoto.storageKey,
+        originalFilename: odometerPhoto.originalFilename,
+        angle: "odometer",
+        vin: input.vin,
+        mileage: input.mileage
+      }, actor);
+    }
+
+    for (const damage of input.confirmedDamage ?? []) {
+      store.addDamage({
+        inspectionId: inspection.id,
+        photoId: photoByAngle.get(damage.angle) ?? null,
+        location: damage.location,
+        damageType: damage.damageType,
+        severity: damage.severity,
+        notes: damage.notes,
+        source: "vision_suggestion",
+        confirmedBy: reviewer.id
+      }, reviewerActor);
+    }
+
+    createReferenceReport(store, input, inspection.id, reviewerActor);
   }
 
   store.addAudit([...store.inspections.values()][0].id, systemActor, "inspection.queue.loaded", {

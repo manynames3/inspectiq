@@ -12,9 +12,10 @@ import {
   UpdateSuggestionSchema,
   UploadIntentSchema,
   UploadPhotoSchema,
+  rolePermissions,
   type ApiEnvelope
 } from "@inspectiq/shared";
-import { errorHandler, validation, conflict, forbidden } from "./errors.js";
+import { errorHandler, validation, conflict, unauthorized } from "./errors.js";
 import { gradeCondition } from "./gradingClient.js";
 import { getReportProvider } from "./reportProvider.js";
 import { getVisionProvider } from "./visionProvider.js";
@@ -22,10 +23,10 @@ import { createPresignedDownload, createPresignedUpload, s3ObjectUrl } from "./a
 import { sendImageAnalysisMessage } from "./awsQueue.js";
 import { runImageAnalysisJob } from "./imageAnalysisRunner.js";
 import { platformHealthPayload } from "./platformHealth.js";
-import { authenticateRequest, isEvaluationRequest } from "./auth.js";
-import { canAccessInspection, requireAction, requireInspectionAccess } from "./rbac.js";
-import { findSampleImage, sampleBundles, sampleImageDirectory } from "./sampleImages.js";
-import { seedStore } from "./seedData.js";
+import { authenticateRequest, authMode } from "./auth.js";
+import { canAccessInspection, isEvaluationActor, requireAction, requireInspectionAccess } from "./rbac.js";
+import { findSampleImage, findSamplePhotoSet, sampleBundles, sampleImageDirectory, sampleSetForInspection } from "./sampleImages.js";
+import { identityDataUrl, identitySourceLicense, identitySourceName, seedStore } from "./seedData.js";
 import { MemoryStore, store as defaultStore } from "./store.js";
 import type { Actor, DamageItem, FinalReport, Inspection, VehiclePhoto, VisionSuggestion } from "./domain.js";
 
@@ -52,6 +53,56 @@ function sendData<T>(res: Response, data: T, status = 200): void {
 
 async function persistMutation(options: AppOptions): Promise<void> {
   await options.afterMutation?.();
+}
+
+function referenceEvidenceEnabled(): boolean {
+  const configured = process.env.ENABLE_REFERENCE_EVIDENCE;
+  if (configured) return configured.toLowerCase() === "true";
+  return process.env.NODE_ENV !== "production";
+}
+
+function opsSimulationEnabled(): boolean {
+  const configured = process.env.ENABLE_OPS_SIMULATION;
+  if (configured) return configured.toLowerCase() === "true";
+  return process.env.NODE_ENV !== "production";
+}
+
+function evaluationModeEnabled(): boolean {
+  const configured = process.env.ENABLE_EVALUATION_MODE;
+  if (configured) return configured.toLowerCase() === "true";
+  return process.env.NODE_ENV !== "production";
+}
+
+function evaluationActorFromRequest(req: Request): Actor {
+  const role = req.header("x-actor-role");
+  const evaluationRole = role === "inspector" || role === "reviewer" || role === "admin" ? role : "reviewer";
+  const names: Record<Actor["role"], string> = {
+    inspector: "John Smith",
+    reviewer: "Evaluation Reviewer",
+    admin: "Evaluation Admin"
+  };
+  return {
+    id: `evaluation-${evaluationRole}`,
+    name: names[evaluationRole],
+    role: evaluationRole
+  };
+}
+
+function prepareEvaluationRequest(req: Request, store: MemoryStore): void {
+  const isEvaluationPath = req.url.startsWith("/api/evaluation");
+  const isEvaluationHeader = req.header("x-evaluation-mode")?.toLowerCase() === "true";
+  const isLegacyEvaluationHeader = req.header("x-inspectiq-evaluation-mode")?.toLowerCase() === "readonly";
+  if (!isEvaluationPath && !isEvaluationHeader && !isLegacyEvaluationHeader) return;
+  if (!evaluationModeEnabled()) {
+    throw unauthorized("Evaluation workspace is not enabled for this environment.");
+  }
+  const actor = evaluationActorFromRequest(req);
+  store.ensureUser(actor);
+  (req as AuthenticatedRequest).actor = actor;
+  req.headers["x-evaluation-mode"] = "true";
+  if (isEvaluationPath) {
+    req.url = req.url.replace(/^\/api\/evaluation(?=\/|$)/, "/api");
+  }
 }
 
 function actorFromRequest(req: Request, store: MemoryStore): Actor {
@@ -163,6 +214,48 @@ function assertUploadObjectScope(inspectionId: string, input: {
   }
 }
 
+function addMissingIdentityEvidence(store: MemoryStore, inspection: Inspection, actor: Actor): VehiclePhoto[] {
+  const existingAngles = new Set(store.listPhotos(inspection.id).map((photo) => photo.declaredAngle));
+  const additions: VehiclePhoto[] = [];
+  if (!existingAngles.has("vin_plate")) {
+    additions.push(store.addPhoto({
+      inspectionId: inspection.id,
+      storageKey: identityDataUrl("VIN PLATE", inspection.vin),
+      objectBucket: null,
+      objectKey: null,
+      thumbnailStorageKey: null,
+      byteSize: null,
+      checksumSha256: null,
+      originalFilename: `vin-plate-${inspection.vin}.svg`,
+      mimeType: "image/svg+xml",
+      sourceName: identitySourceName,
+      sourceUrl: null,
+      sourceLicense: identitySourceLicense,
+      uploadedBy: actor.id,
+      declaredAngle: "vin_plate"
+    }, actor));
+  }
+  if (!existingAngles.has("odometer")) {
+    additions.push(store.addPhoto({
+      inspectionId: inspection.id,
+      storageKey: identityDataUrl("ODOMETER", inspection.mileage.toLocaleString()),
+      objectBucket: null,
+      objectKey: null,
+      thumbnailStorageKey: null,
+      byteSize: null,
+      checksumSha256: null,
+      originalFilename: `odometer-${inspection.mileage}.svg`,
+      mimeType: "image/svg+xml",
+      sourceName: identitySourceName,
+      sourceUrl: null,
+      sourceLicense: identitySourceLicense,
+      uploadedBy: actor.id,
+      declaredAngle: "odometer"
+    }, actor));
+  }
+  return additions;
+}
+
 export function createApp(appStore = defaultStore, options: AppOptions = {}): express.Express {
   if (appStore.inspections.size === 0) seedStore(appStore);
 
@@ -180,6 +273,14 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     origin: allowedOrigins && allowedOrigins.length > 1 ? allowedOrigins : process.env.WEB_ORIGIN ?? true
   }));
   app.use(express.json({ limit: "4mb" }));
+  app.use((req, _res, next) => {
+    try {
+      prepareEvaluationRequest(req, appStore);
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
   app.use("/api", (req, res, next) => {
     if (!options.beforeRequest) {
       next();
@@ -194,15 +295,14 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       next();
       return;
     }
+    if ((req as AuthenticatedRequest).actor) {
+      next();
+      return;
+    }
     const actor = await authenticateRequest(req);
     if (actor) {
       appStore.ensureUser(actor);
       (req as AuthenticatedRequest).actor = actor;
-    }
-    if (isEvaluationRequest(req) && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
-      throw forbidden("Evaluation workspace is read-only. Sign in with Cognito to make workflow changes.", {
-        mode: "evaluation-readonly"
-      });
     }
     next();
   }));
@@ -217,6 +317,24 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
         report: process.env.REPORT_PROVIDER ?? "local"
       },
       uptimeSeconds: Math.round(process.uptime())
+    });
+  });
+
+  app.get("/api/auth/session", (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    sendData(res, {
+      actor,
+      authMode: authMode() === "jwt" ? "oidc-jwt" : "local-header-session",
+      permissions: rolePermissions[actor.role],
+      objectScope: actor.role === "inspector"
+        ? "Assigned inspections only"
+        : actor.role === "reviewer"
+          ? "Review queue and assigned inspection records"
+          : "Administrative exception access",
+      sessionPolicy: {
+        production: "Bearer JWT with issuer, audience, expiry, signature, Cognito group or role-claim mapping, and least-privileged Inspector fallback unless strict role claims are required.",
+        local: "Role-scoped local session for RBAC and object-level authorization testing."
+      }
     });
   });
 
@@ -271,6 +389,9 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       checksumSha256: input.checksumSha256 ?? null,
       originalFilename: input.originalFilename,
       mimeType: input.mimeType,
+      sourceName: input.sourceName ?? null,
+      sourceUrl: input.sourceUrl ?? null,
+      sourceLicense: input.sourceLicense ?? null,
       uploadedBy: actor.id,
       declaredAngle: input.declaredAngle ?? null
     }, actor);
@@ -319,25 +440,41 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const input = SamplePhotoSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "photo:capture");
-    inspectionForRequest(appStore, req.params.id, actor, "attach sample photos to this inspection");
-    const keys = sampleBundles[input.sampleKey] ?? [input.sampleKey];
+    const inspection = inspectionForRequest(appStore, req.params.id, actor, "load reference evidence for this inspection");
+    if (!referenceEvidenceEnabled()) {
+      throw validation("Reference evidence loading is disabled. Upload captured photos for this inspection.");
+    }
+    const requestedSet = input.sampleKey === "vehicle-required-set"
+      ? sampleSetForInspection(inspection)
+      : findSamplePhotoSet(input.sampleKey);
+    if (input.sampleKey === "vehicle-required-set" && !requestedSet) {
+      throw validation(`No model-matched sample evidence set exists for ${inspection.year} ${inspection.make} ${inspection.model} ${inspection.trim}. Upload actual inspection photos for this vehicle.`);
+    }
+    const keys = requestedSet?.sampleKeys ?? sampleBundles[input.sampleKey] ?? [input.sampleKey];
     const photos = keys.map((key) => {
       const sample = findSampleImage(key);
-      if (!sample) throw validation(`Unknown sample image: ${key}`);
+      if (!sample) throw validation(`Unknown reference image: ${key}`);
+      const storageKey = sample.storageKey ?? `/sample-images/${sample.filename}`;
       return appStore.addPhoto({
         inspectionId: req.params.id,
-        storageKey: `/sample-images/${sample.filename}`,
+        storageKey,
         objectBucket: "inspectiq-sample-images",
-        objectKey: `sample-images/${sample.filename}`,
-        thumbnailStorageKey: `/sample-images/${sample.filename}`,
+        objectKey: `sample-images/${sample.key}`,
+        thumbnailStorageKey: storageKey,
         byteSize: null,
         checksumSha256: null,
         originalFilename: sample.filename,
         mimeType: sample.mimeType,
+        sourceName: sample.sourceName ?? null,
+        sourceUrl: sample.sourceUrl ?? null,
+        sourceLicense: sample.sourceLicense ?? null,
         uploadedBy: actor.id,
         declaredAngle: sample.angle
       }, actor);
     });
+    if (requestedSet) {
+      photos.push(...addMissingIdentityEvidence(appStore, inspection, actor));
+    }
     await persistMutation(options);
     sendData(res, photos, 201);
   }));
@@ -704,13 +841,110 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     sendData(res, reportForRequest(appStore, req.params.id, actor, "view this report"));
   }));
 
-  app.get("/api/platform-health", (_req, res) => {
+  app.get("/api/platform-health", (req, res) => {
+    const actor = actorFromRequest(req, appStore);
     const provider = getVisionProvider();
     sendData(res, platformHealthPayload(appStore, {
       visionProviderName: provider.name,
-      visionPromptVersion: provider.promptVersion
+      visionPromptVersion: provider.promptVersion,
+      actor,
+      apiBaseUrl: process.env.PUBLIC_API_BASE_URL ?? `${req.protocol}://${req.get("host")}`,
+      authMode: authMode() === "jwt" ? "Cognito/OIDC JWT" : "local role header",
+      roleSource: isEvaluationActor(actor)
+        ? "public evaluation route (read-only)"
+        : (req as AuthenticatedRequest).actor
+          ? "verified JWT role claim or configured identity mapping"
+          : "local role header"
     }));
   });
+
+  app.post("/api/platform-health/simulate-failed-image-job", asyncRoute(async (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "ops:recover");
+    if (!opsSimulationEnabled()) {
+      throw conflict("Failed-job simulation is disabled in this environment.", {
+        enableWith: "ENABLE_OPS_SIMULATION=true"
+      });
+    }
+
+    let inspection = appStore.listInspections().find((item) => item.status !== "FINALIZED");
+    if (!inspection) {
+      inspection = appStore.createInspection({
+        vin: `OPS${Date.now().toString().slice(-12)}`,
+        year: 2024,
+        make: "Hyundai",
+        model: "Tucson",
+        trim: "SEL",
+        mileage: 14250,
+        exteriorColor: "Gray",
+        sellerSource: "Operations recovery drill",
+        inspectorName: actor.name
+      }, actor);
+    }
+
+    let photo = appStore.listPhotos(inspection.id).find((item) => item.analysisStatus !== "completed");
+    if (!photo) {
+      photo = appStore.addPhoto({
+        inspectionId: inspection.id,
+        storageKey: "/sample-images/front-clean.jpg",
+        originalFilename: "ops-recovery-front.jpg",
+        mimeType: "image/jpeg",
+        sourceName: "Operations recovery drill",
+        uploadedBy: actor.id,
+        declaredAngle: "front"
+      }, actor);
+    }
+
+    const job = appStore.enqueueImageAnalysis(photo, actor, `ops-drill-${Date.now()}`);
+    const timestamp = new Date().toISOString();
+    job.status = "failed";
+    job.attempts = Math.max(job.attempts, 1);
+    job.errorMessage = "Simulated image-provider timeout for Platform Health recovery drill.";
+    job.updatedAt = timestamp;
+    job.completedAt = null;
+    photo.analysisStatus = "failed";
+    photo.qualityStatus = "fail";
+    appStore.addAudit(inspection.id, actor, "image_analysis.failure_simulated", {
+      jobId: job.id,
+      photoId: photo.id,
+      purpose: "Platform Health recovery drill"
+    });
+
+    await persistMutation(options);
+    sendData(res, {
+      inspection,
+      photo,
+      job
+    }, 201);
+  }));
+
+  app.post("/api/platform-health/recover-failed-jobs", asyncRoute(async (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "ops:recover");
+    const timestamp = new Date().toISOString();
+    const recoverableJobs = [...appStore.imageAnalysisJobs.values()].filter((job) => job.status === "failed" || job.status === "dead_letter");
+    for (const job of recoverableJobs) {
+      const photo = appStore.photos.get(job.photoId);
+      if (!photo) continue;
+      job.status = "queued";
+      job.errorMessage = null;
+      job.completedAt = null;
+      job.updatedAt = timestamp;
+      photo.analysisStatus = "pending";
+      photo.qualityStatus = "unknown";
+      appStore.addAudit(job.inspectionId, actor, "image_analysis.requeued", {
+        jobId: job.id,
+        photoId: job.photoId,
+        previousStatus: "failed_or_dead_letter",
+        reason: req.body?.reason ?? "Operator recovery from Platform Health"
+      });
+    }
+    await persistMutation(options);
+    sendData(res, {
+      requeued: recoverableJobs.length,
+      jobs: recoverableJobs
+    });
+  }));
 
   app.use(errorHandler);
   return app;

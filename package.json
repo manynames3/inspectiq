@@ -16,10 +16,15 @@
     "eval:vision": "npm run eval:vision -w @inspectiq/api",
     "lint": "npm run build -w @inspectiq/shared && npm run lint -w @inspectiq/api && npm run lint -w @inspectiq/web",
     "ops:walkthrough": "node scripts/ops-walkthrough.mjs",
+    "prepare:live-photos": "node scripts/prepare-live-photo-set.mjs",
     "seed": "npm run seed -w @inspectiq/api",
     "test": "npm run build -w @inspectiq/shared && npm run test -w @inspectiq/api && npm run test -w @inspectiq/web",
     "test:e2e": "node apps/web/scripts/e2e-inspection-flow.mjs",
     "test:live": "node apps/web/scripts/live-readonly-smoke.mjs",
+    "test:grading": "cd services/grading-python && python3 -m pytest",
+    "test:screenshots": "node apps/web/scripts/screenshot-regression.mjs",
+    "test:live-upload": "node scripts/live-upload-review-proof.mjs",
+    "proof:video": "node apps/web/scripts/proof-video.mjs",
     "typecheck": "npm run build -w @inspectiq/shared && npm run typecheck -w @inspectiq/api && npm run typecheck -w @inspectiq/web"
   },
   "devDependencies": {

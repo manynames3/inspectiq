@@ -45,7 +45,7 @@ export async function gradeCondition(input: GradingInput): Promise<GradingOutput
         return GradingOutputSchema.parse(await response.json());
       }
     } catch {
-      // Local inspection review remains usable if the Java service is not running.
+      // Local inspection review remains usable if the optional Python service is not running.
     }
   }
   return localGrade(input);

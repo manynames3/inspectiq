@@ -53,6 +53,9 @@ export type VehiclePhoto = {
   checksumSha256: string | null;
   originalFilename: string;
   mimeType: string;
+  sourceName: string | null;
+  sourceUrl: string | null;
+  sourceLicense: string | null;
   uploadedBy: string;
   uploadedAt: string;
   uploadStatus: ImageUploadStatus;

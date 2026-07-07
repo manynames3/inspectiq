@@ -24,7 +24,7 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 
 - React + TypeScript workbench for inspector/reviewer/admin roles.
 - Node + Express REST API with Zod request/output validation.
-- Java Spring Boot grading service boundary for deterministic business rules.
+- Python FastAPI grading service boundary for deterministic business rules.
 - Postgres schema, Drizzle table definitions, and deployed `PERSISTENCE_MODE=postgres` persistence using Neon and `pg`.
 - S3 presigned upload intent, private object metadata, and photo image redirect flow.
 - SQS-backed image-analysis jobs processed by a Lambda worker.
@@ -41,7 +41,7 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 - Deterministic image analysis and Bedrock image analysis use the same production-shaped contract: angle, image quality, damage, OCR, confidence, repair estimate, provider metadata, prompt version, raw output, validated output, and audit event.
 - Local server persists to a JSON snapshot by default; the deployed backend persists normalized rows to Neon Postgres through transactional row-level upserts/deletes. A high-concurrency production version should move the busiest mutation paths to DB-first repositories.
 - Local browser uploads can use small data URLs for preview; deployed uploads use S3 presigned object URLs.
-- The Java grading service is optional locally; the API fallback keeps the workflow available while preserving the service boundary.
+- The Python grading service is optional locally; the API fallback keeps the workflow available while preserving the service boundary.
 - Local auth is role-header based for deterministic testing; the deployed walkthrough uses Cognito hosted OIDC, API Gateway JWT enforcement, Lambda-side JWT/JWKS validation, Cognito groups, and object-level inspection authorization.
 
 ## What I Would Build Next In Production
@@ -73,6 +73,6 @@ What I would expect the candidate to explain clearly:
 - why accepted AI suggestions become facts only through reviewer action;
 - why grading is deterministic and reports are generated from confirmed facts;
 - why local deterministic providers are a reliability choice for review, not a substitute for production CV;
-- how the same contract moves to S3, SQS/EventBridge, Postgres, and Bedrock/Rekognition/custom models.
+- how the same contract moves through the implemented S3 -> SQS -> Lambda worker -> Bedrock -> Postgres path, and when EventBridge, Step Functions, or Rekognition would be worth adding.
 
 See `docs/implementation-boundary.md` for the crisp "real vs deterministic local" explanation.

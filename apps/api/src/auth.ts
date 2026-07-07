@@ -14,7 +14,7 @@ type JwtHeader = {
   typ?: string;
 };
 
-type JwtPayload = {
+type JwtPayload = Record<string, unknown> & {
   sub?: string;
   iss?: string;
   aud?: string | string[];
@@ -31,6 +31,16 @@ type JwtPayload = {
 
 let cachedJwks: JsonWebKeySet | null = null;
 
+const inspectIqRoles = ["admin", "reviewer", "inspector"] as const;
+const directRoleClaimKeys = [
+  "custom:role",
+  "custom:inspectiq_role",
+  "inspectiq:role",
+  "https://inspectiq.app/role",
+  "role"
+] as const;
+const groupRoleClaimKeys = ["cognito:groups", "groups", "roles"] as const;
+
 function decodeBase64Url(value: string): Buffer {
   return Buffer.from(value, "base64url");
 }
@@ -39,23 +49,79 @@ function parseJsonSegment<T>(segment: string): T {
   return JSON.parse(decodeBase64Url(segment).toString("utf8")) as T;
 }
 
-function roleFromPayload(payload: JwtPayload): Actor["role"] {
-  const directRole = UserRoleSchema.safeParse(payload["custom:role"] ?? payload.role);
+function roleFromString(value: unknown): Actor["role"] | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  const directRole = UserRoleSchema.safeParse(normalized);
   if (directRole.success) return directRole.data;
 
-  const groups = Array.isArray(payload["cognito:groups"])
-    ? payload["cognito:groups"]
-    : typeof payload["cognito:groups"] === "string"
-      ? [payload["cognito:groups"]]
-      : [];
-  for (const group of groups.map((item) => item.toLowerCase())) {
-    const parsed = UserRoleSchema.safeParse(group);
-    if (parsed.success) return parsed.data;
+  const compact = normalized.replace(/[^a-z]/g, "");
+  const withoutProductPrefix = compact.startsWith("inspectiq") ? compact.slice("inspectiq".length) : compact;
+  return inspectIqRoles.find((role) => withoutProductPrefix === role) ?? null;
+}
+
+function stringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
+  return typeof value === "string" ? [value] : [];
+}
+
+function configuredDefaultRole(): Actor["role"] {
+  const configured = process.env.DEFAULT_AUTH_ROLE ?? process.env.OIDC_DEFAULT_ROLE;
+  if (!configured) return "inspector";
+
+  const parsed = roleFromString(configured);
+  if (parsed) return parsed;
+  throw unauthorized("Configured default auth role is invalid.", { allowedRoles: inspectIqRoles });
+}
+
+function emailFromPayload(payload: JwtPayload): string | null {
+  const email = typeof payload.email === "string" ? payload.email : null;
+  return email?.trim().toLowerCase() || null;
+}
+
+function configuredEmailsForRole(role: Actor["role"]): Set<string> {
+  const key = `AUTH_${role.toUpperCase()}_EMAILS`;
+  const value = process.env[key] ?? "";
+  return new Set(value
+    .split(/[,\s]+/)
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean));
+}
+
+function roleFromEmailMapping(payload: JwtPayload): Actor["role"] | null {
+  const email = emailFromPayload(payload);
+  if (!email) return null;
+
+  for (const role of inspectIqRoles) {
+    if (configuredEmailsForRole(role).has(email)) return role;
+  }
+  return null;
+}
+
+function missingRoleClaimError(): never {
+  throw unauthorized("JWT is missing an InspectIQ role claim.", {
+    expectedClaims: [...directRoleClaimKeys, ...groupRoleClaimKeys]
+  });
+}
+
+function roleFromPayload(payload: JwtPayload): Actor["role"] {
+  for (const key of directRoleClaimKeys) {
+    const parsed = roleFromString(payload[key]);
+    if (parsed) return parsed;
   }
 
-  throw unauthorized("JWT is missing an InspectIQ role claim.", {
-    expectedClaims: ["custom:role", "role", "cognito:groups"]
-  });
+  for (const key of groupRoleClaimKeys) {
+    for (const candidate of stringList(payload[key])) {
+      const parsed = roleFromString(candidate);
+      if (parsed) return parsed;
+    }
+  }
+
+  const mappedRole = roleFromEmailMapping(payload);
+  if (mappedRole) return mappedRole;
+
+  if (process.env.REQUIRE_JWT_ROLE_CLAIM === "true") return missingRoleClaimError();
+  return configuredDefaultRole();
 }
 
 function validateRegisteredClaims(payload: JwtPayload): void {

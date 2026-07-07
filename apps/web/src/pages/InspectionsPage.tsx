@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useActor } from "../App.js";
 import { StatusPill } from "../components/StatusPill.js";
-import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
+import { deriveMarketplaceReadiness, formatReportReadiness } from "../marketplaceReadiness.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
 
 export function InspectionsPage() {
@@ -34,6 +34,7 @@ export function InspectionsPage() {
     inspectionId: record.inspection.id,
     readiness: deriveMarketplaceReadiness(record.bundle)
   })), [records]);
+  const partialDetailCount = useMemo(() => records.filter((record) => record.bundleLoadError).length, [records]);
   const crReadyCount = useMemo(() => readinessRows.filter(({ readiness }) => readiness.crStatus === "CR ready").length, [readinessRows]);
   const vdpReadyCount = useMemo(() => readinessRows.filter(({ readiness }) => readiness.vdpStatus === "VDP ready").length, [readinessRows]);
   const arbitrationWatchCount = useMemo(() => readinessRows.filter(({ readiness }) => readiness.arbitrationRisk !== "Low").length, [readinessRows]);
@@ -55,6 +56,11 @@ export function InspectionsPage() {
         </div>
       </div>
       {error ? <div className="error-banner">{error}</div> : null}
+      {partialDetailCount > 0 ? (
+        <div className="warning-banner">
+          Showing {records.length} inspections with {partialDetailCount} readiness detail refresh{partialDetailCount === 1 ? "" : "es"} still pending.
+        </div>
+      ) : null}
 
       <div className="summary-grid">
         <article className="summary-card">
@@ -63,7 +69,7 @@ export function InspectionsPage() {
           <strong>{records.length}</strong>
         </article>
         <article className="summary-card">
-          <span>CR ready</span>
+          <span>Ready for report</span>
           <strong>{crReadyCount}</strong>
         </article>
         <article className="summary-card">
@@ -78,7 +84,7 @@ export function InspectionsPage() {
       <div className="queue-context-line">
         <span>{completeCount} evidence-complete</span>
         <span>{reviewCount} in human review</span>
-        <span>{records.filter(({ inspection }) => inspection.status === "FINALIZED").length} finalized CRs</span>
+        <span>{records.filter(({ inspection }) => inspection.status === "FINALIZED").length} finalized reports</span>
       </div>
 
       <div className="table-panel">
@@ -89,7 +95,7 @@ export function InspectionsPage() {
               <th>VIN</th>
               <th>Status</th>
               <th>Evidence</th>
-              <th>CR</th>
+              <th>Report readiness</th>
               <th>VDP</th>
               <th>Recon</th>
               <th>Arb. risk</th>
@@ -100,6 +106,7 @@ export function InspectionsPage() {
           <tbody>
             {records.map(({ inspection, bundle }) => {
               const readiness = deriveMarketplaceReadiness(bundle);
+              const reportReadiness = formatReportReadiness(readiness);
               return (
               <tr key={inspection.id}>
                 <td>
@@ -114,7 +121,12 @@ export function InspectionsPage() {
                     <div><i style={{ width: `${inspection.completenessPercentage}%` }} /></div>
                   </div>
                 </td>
-                <td><span className={readiness.crStatus === "CR ready" ? "inline-ready" : "inline-watch"}>{readiness.crStatus}</span></td>
+                <td>
+                  <span className="readiness-cell">
+                    <strong className={reportReadiness.className}>{reportReadiness.label}</strong>
+                    <small>{reportReadiness.detail}</small>
+                  </span>
+                </td>
                 <td>{readiness.vdpStatus}</td>
                 <td>{readiness.reconditioningEstimate}</td>
                 <td><span className={`risk-label risk-${readiness.arbitrationRisk.toLowerCase()}`}>{readiness.arbitrationRisk}</span></td>

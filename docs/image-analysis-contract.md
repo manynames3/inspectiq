@@ -91,13 +91,15 @@ Required validated fields:
 
 ```txt
 S3 image object
--> SQS/EventBridge image-analysis job
+-> SQS image-analysis job
 -> image worker
--> Bedrock/Rekognition/custom model
+-> Bedrock multimodal provider
 -> schema validation
 -> suggestion records
 -> audit trail
 ```
+
+Deferred extensions: EventBridge can publish broader domain events, Step Functions can orchestrate multi-step report workflows if waits/retries/branching justify it, and Rekognition can be added as a narrow OCR/label fallback. They are not part of the implemented runtime path.
 
 ## Confidence Policy
 
@@ -105,3 +107,13 @@ S3 image object
 - Lower confidence or unknown angle outputs create reviewer work instead of silently changing facts.
 - Damage candidates include severity, confidence, and repair estimate range for triage, not automatic disclosure.
 - Reviewer overrides are stored as edits before acceptance, preserving the original AI recommendation in the audit trail.
+
+## Evaluation Coverage
+
+`evals/vision-eval-set.json` is intentionally small enough to run in CI but now covers the high-risk inspection cases that matter for buyer trust:
+
+- required angle classification across exterior, interior, engine bay, odometer, and VIN plate;
+- damage recall and false-positive control for clean panels versus visible dents/scratches;
+- OCR acceptance for clear odometer and VIN evidence;
+- retake policy for blur, glare, low-light interiors, partial VIN plates, dirty odometer views, and poorly framed side angles;
+- auction-lane exterior imagery that should not create false damage findings.

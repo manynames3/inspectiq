@@ -1,7 +1,7 @@
 import { Download, FileText, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiBase, requestHeaders } from "../api.js";
+import { apiUrl, requestHeaders } from "../api.js";
 import { useActor } from "../App.js";
 import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
 import type { Actor } from "../types.js";
@@ -10,11 +10,11 @@ import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./revi
 function reportSummary(record: InspectionReviewRecord): string {
   const output = record.bundle.aiReportDraft?.outputJson as { summary?: string } | undefined;
   if (output?.summary) return output.summary;
-  return record.bundle.finalReport?.reportBody.split("\n").find(Boolean) ?? "Generate a report draft from the inspection workbench.";
+  return record.bundle.finalReport?.reportBody.split("\n").find(Boolean) ?? "Report not started. Open the inspection to prepare a buyer-ready draft.";
 }
 
 async function downloadBuyerReport(reportId: string, actor: Actor): Promise<void> {
-  const response = await fetch(`${apiBase}/api/reports/${reportId}/export`, {
+  const response = await fetch(apiUrl(`/api/reports/${reportId}/export`), {
     headers: requestHeaders(actor)
   });
   if (!response.ok) throw new Error("Could not export the buyer-ready report.");
@@ -51,6 +51,7 @@ export function ReportsPage() {
   const finalizedCount = reportRecords.filter(({ bundle }) => bundle.finalReport?.finalizedAt).length;
   const draftCount = reportRecords.length - finalizedCount;
   const humanReviewCount = records.filter(({ bundle }) => bundle.aiReportDraft?.humanReviewRequired).length;
+  const partialDetailCount = records.filter((record) => record.bundleLoadError).length;
 
   return (
     <section className="page">
@@ -64,6 +65,11 @@ export function ReportsPage() {
         </button>
       </div>
       {error ? <div className="error-banner">{error}</div> : null}
+      {partialDetailCount > 0 ? (
+        <div className="warning-banner">
+          Showing available report records while {partialDetailCount} inspection detail refresh{partialDetailCount === 1 ? "" : "es"} finish.
+        </div>
+      ) : null}
 
       <div className="summary-grid">
         <article className="summary-card">
@@ -90,7 +96,7 @@ export function ReportsPage() {
           <div className="empty-state">
             <FileText size={22} />
             <strong>No inspections available</strong>
-            <span>Create an inspection and generate a report draft from the workbench.</span>
+            <span>Create an inspection, complete required evidence, and prepare a buyer-ready report.</span>
           </div>
         ) : (
           <table>

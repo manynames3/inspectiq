@@ -4,7 +4,7 @@
 2. Relevance? Inspection teams handle image ingestion, required-angle quality, damage documentation, CR readiness, VDP readiness, buyer trust, seller disclosure, auditability, and reviewer workflows.
 3. Why advisory AI? Model output can be uncertain, so humans confirm facts before grading or disclosure.
 4. Why deterministic grading? Scores need explainable, repeatable business rules.
-5. Why Java service? It shows a service boundary for independently owned business rules; it could be collapsed early in a smaller system.
+5. Why Python service? It shows a service boundary for independently owned business rules; it could be collapsed early in a smaller system.
 6. Why async reports? Model calls can be slow, fail, or need retries without blocking the UI.
 7. Image processing? Provider interface, strict schema validation, raw and validated output, angle confidence, image-quality scores, retake policy, damage confidence, OCR, repair estimate range, pending suggestions.
 8. AWS scale? The live path is React on Cloudflare Pages -> API Gateway/Lambda -> Neon Postgres -> S3 -> SQS -> Lambda image worker -> Bedrock multimodal model -> validated suggestions -> audit trail.

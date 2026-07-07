@@ -1,6 +1,6 @@
 # Architecture
 
-InspectIQ is a production-shaped inspection workflow implemented as a monorepo with a React/Vite workbench, TypeScript Express API, shared Zod schemas, Neon Postgres persistence for the deployed backend, and a narrow Java grading service boundary.
+InspectIQ is a production-shaped inspection workflow implemented as a monorepo with a React/Vite workbench, TypeScript Express API, shared Zod schemas, Neon Postgres persistence for the deployed backend, and a narrow Python grading service boundary.
 
 The architecture is intentionally boring where reliability matters: explicit state transitions, schema-validated model output, append-style audit events, deterministic grading, role-aware actions, and backend-derived readiness blockers. The AI path is advisory by design; it accelerates review without silently becoming the source of truth.
 
@@ -21,7 +21,7 @@ flowchart LR
   Vision --> LocalVision[Deterministic local provider]
   Worker --> BedrockVision[Bedrock multimodal provider]
   API --> Jobs[Image-analysis jobs]
-  API --> Java[Java grading service]
+  API --> Python[Python grading service]
   API --> Report[Report provider interface]
   Report --> LocalReport[Deterministic local report provider]
   Report --> BedrockReport[Bedrock report provider]
@@ -52,7 +52,7 @@ Create inspection
 | Shared schemas | Keep API, UI, provider output, and tests aligned around explicit contracts. |
 | Vision provider | Swap deterministic local analysis for the Bedrock multimodal provider without changing reviewer workflow. |
 | Image-analysis jobs | Model queue/retry/idempotency even when local analysis completes immediately. |
-| Java grading service | Show how deterministic condition rules can be versioned and owned separately when justified. |
+| Python grading service | Show how deterministic condition rules can be versioned and owned separately when justified. |
 | Readiness blockers | Keep CR/VDP/buyer-visible release decisions backend-derived instead of UI-only. |
 | Audit events | Preserve a defensible chain of custody for AI suggestions, human decisions, grading, and finalization. |
 

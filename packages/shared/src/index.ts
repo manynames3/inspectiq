@@ -67,7 +67,8 @@ export const roleActions = [
   "report:draft",
   "report:edit",
   "report:finalize",
-  "report:retry"
+  "report:retry",
+  "ops:recover"
 ] as const;
 
 export const InspectionStatusSchema = z.enum(inspectionStatuses);
@@ -221,7 +222,8 @@ export const roleActionLabels: Record<RoleAction, string> = {
   "report:draft": "draft condition reports",
   "report:edit": "edit report drafts",
   "report:finalize": "finalize condition reports",
-  "report:retry": "retry report jobs"
+  "report:retry": "retry report jobs",
+  "ops:recover": "recover failed operations jobs"
 };
 
 export const roleDescriptions: Record<UserRole, string> = {
@@ -263,7 +265,10 @@ export const UploadPhotoSchema = z.object({
   objectKey: z.string().trim().min(1).max(500).optional(),
   thumbnailStorageKey: z.string().trim().max(500).optional(),
   byteSize: z.coerce.number().int().min(1).max(maxImageUploadBytes).optional(),
-  checksumSha256: z.string().trim().regex(/^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$/i).optional()
+  checksumSha256: z.string().trim().regex(/^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$/i).optional(),
+  sourceName: z.string().trim().min(1).max(120).optional(),
+  sourceUrl: z.string().trim().url().max(500).optional(),
+  sourceLicense: z.string().trim().min(1).max(160).optional()
 });
 
 export const UploadIntentSchema = z.object({

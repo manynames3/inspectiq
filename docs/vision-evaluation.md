@@ -19,7 +19,8 @@ The default command uses the deterministic local provider so CI can run without 
 - damage-positive cases for rear bumper dent and driver-side scratch;
 - damage-negative cases to catch false positives on clean angles;
 - OCR checks for generated odometer and VIN fixtures that contain the expected text;
-- retake policy for blurry or low-light capture.
+- retake policy for blurry capture, glare, low-light interiors, bad side angles, partial VIN plates, and dirty odometer views;
+- auction-lane/front-angle cases that should not create false damage findings.
 
 ## Metrics
 

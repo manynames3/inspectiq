@@ -1,16 +1,213 @@
-import { sampleImages } from "./sampleImages.js";
+import { requiredPhotoAngles, roleActionLabels, rolePermissions, type UserRole } from "@inspectiq/shared";
+import { sampleImages, samplePhotoSets } from "./sampleImages.js";
+import type { Actor, AuditEvent, ImageAnalysisJob, Inspection, PhotoAnalysisResult } from "./domain.js";
 import type { MemoryStore } from "./store.js";
 
 export type PlatformHealthProvider = {
   visionProviderName: string;
   visionPromptVersion: string;
+  actor?: Actor;
+  apiBaseUrl?: string;
+  authMode?: string;
+  roleSource?: string;
 };
+
+function latestBy<T>(items: T[], readDate: (item: T) => string | null | undefined): T | null {
+  return items
+    .filter((item) => Boolean(readDate(item)))
+    .sort((a, b) => String(readDate(b)).localeCompare(String(readDate(a))))[0] ?? null;
+}
+
+function inspectionLabel(inspection: Inspection | undefined): string {
+  if (!inspection) return "Unknown inspection";
+  return `${inspection.year} ${inspection.make} ${inspection.model}`;
+}
+
+function latestAnalysisSummary(store: MemoryStore): Record<string, unknown> | null {
+  const analysis = latestBy([...store.analyses.values()].filter((item) => item.status === "completed"), (item) => item.createdAt);
+  if (!analysis) return null;
+  const photo = store.photos.get(analysis.photoId);
+  const inspection = photo ? store.inspections.get(photo.inspectionId) : undefined;
+  return {
+    inspectionId: inspection?.id ?? null,
+    inspection: inspectionLabel(inspection),
+    photoId: analysis.photoId,
+    provider: analysis.provider,
+    promptVersion: analysis.promptVersion,
+    confidence: `${Math.round(analysis.confidence * 100)}%`,
+    completedAt: analysis.createdAt
+  };
+}
+
+function latestJobOrRecoverySummary(store: MemoryStore): Record<string, unknown> | null {
+  const failedJob = latestBy(
+    [...store.imageAnalysisJobs.values()].filter((job) => job.status === "failed" || job.status === "dead_letter"),
+    (job) => job.updatedAt
+  );
+  const recoveredEvent = latestBy(
+    [...store.auditEvents.values()].filter((event) => event.eventType === "image_analysis.requeued"),
+    (event) => event.createdAt
+  );
+  if (!failedJob && !recoveredEvent) return null;
+
+  if (failedJob && (!recoveredEvent || failedJob.updatedAt >= recoveredEvent.createdAt)) {
+    const inspection = store.inspections.get(failedJob.inspectionId);
+    return {
+      type: "failed_job",
+      inspectionId: failedJob.inspectionId,
+      inspection: inspectionLabel(inspection),
+      jobId: failedJob.id,
+      photoId: failedJob.photoId,
+      status: failedJob.status,
+      attempts: failedJob.attempts,
+      message: failedJob.errorMessage ?? "No provider error recorded.",
+      updatedAt: failedJob.updatedAt
+    };
+  }
+
+  return {
+    type: "recovered_job",
+    inspectionId: recoveredEvent?.inspectionId ?? null,
+    inspection: inspectionLabel(recoveredEvent ? store.inspections.get(recoveredEvent.inspectionId) : undefined),
+    eventType: recoveredEvent?.eventType,
+    actor: recoveredEvent?.actor,
+    recoveredAt: recoveredEvent?.createdAt
+  };
+}
+
+function latestAuditForRole(events: AuditEvent[], eventTypes: string[]): AuditEvent | null {
+  return latestBy(events.filter((event) => eventTypes.includes(event.eventType)), (event) => event.createdAt);
+}
+
+function roleProof(store: MemoryStore) {
+  const events = [...store.auditEvents.values()];
+  const roleSpecs: Array<{
+    role: UserRole;
+    title: string;
+    proof: string;
+    eventTypes: string[];
+  }> = [
+    {
+      role: "inspector",
+      title: "Inspector capture",
+      proof: "Creates inspections, uploads required-angle evidence, and queues image analysis.",
+      eventTypes: ["inspection.created", "photo.uploaded", "image_analysis.queued", "photo.analyzed"]
+    },
+    {
+      role: "reviewer",
+      title: "Reviewer decisioning",
+      proof: "Accepts/rejects AI suggestions, confirms damage, grades CR readiness, drafts, and finalizes reports.",
+      eventTypes: ["suggestion.accepted", "suggestion.rejected", "damage.added", "condition.grade_generated", "ai_report.generated", "report.finalized"]
+    },
+    {
+      role: "admin",
+      title: "Admin operations",
+      proof: "Views platform health, recovers failed image jobs, and owns exception paths.",
+      eventTypes: ["image_analysis.requeued", "image_analysis.failure_simulated", "inspection.updated"]
+    }
+  ];
+
+  return roleSpecs.map((spec) => {
+    const latestEvent = latestAuditForRole(events, spec.eventTypes);
+    return {
+      role: spec.role,
+      title: spec.title,
+      proof: spec.proof,
+      permissions: rolePermissions[spec.role].map((action) => roleActionLabels[action]),
+      latestEvent: latestEvent ? {
+        eventType: latestEvent.eventType,
+        actor: latestEvent.actor,
+        inspectionId: latestEvent.inspectionId,
+        occurredAt: latestEvent.createdAt
+      } : null
+    };
+  });
+}
+
+function evidencePackSummary() {
+  const sampleByKey = new Map(sampleImages.map((sample) => [sample.key, sample]));
+  const externalSources = sampleImages.filter((sample) => Boolean(sample.sourceUrl));
+  const edgeCaseKeys = ["blurry-front", "glare-front", "dark-interior", "partial-vin-plate", "dirty-odometer", "auction-lane-front", "bad-angle-side"];
+  return {
+    requiredAngles: requiredPhotoAngles,
+    vehicleSets: samplePhotoSets.map((set) => {
+      const samples = set.sampleKeys.map((key) => sampleByKey.get(key)).filter((sample): sample is NonNullable<typeof sample> => Boolean(sample));
+      const angles = new Set(samples.map((sample) => sample.angle));
+      return {
+        key: set.key,
+        label: set.label,
+        vehicle: `${set.vehicle.year} ${set.vehicle.make} ${set.vehicle.model} ${set.vehicle.trim}`.trim(),
+        documentedPhotoCount: samples.filter((sample) => Boolean(sample.sourceUrl)).length,
+        requiredAngleCoverage: `${[...requiredPhotoAngles].filter((angle) => angles.has(angle)).length}/${requiredPhotoAngles.length}`,
+        sources: [...new Set(samples.map((sample) => sample.sourceName).filter(Boolean))]
+      };
+    }),
+    sourceDocumentedImages: externalSources.length,
+    edgeCases: edgeCaseKeys
+      .map((key) => sampleByKey.get(key))
+      .filter((sample): sample is NonNullable<typeof sample> => Boolean(sample))
+      .map((sample) => ({
+        key: sample.key,
+        label: sample.label,
+        angle: sample.angle,
+        sourceName: sample.sourceName ?? "InspectIQ fixture"
+      }))
+  };
+}
+
+function hotPathRepositoryProof() {
+  return [
+    { domain: "Inspection repository", table: "inspections", operation: "Targeted row upsert/delete for changed inspection records." },
+    { domain: "Photo repository", table: "vehicle_photos + image_analysis_jobs + photo_analysis_results", operation: "Photo, job, and analysis rows persist independently for capture and analysis hot paths." },
+    { domain: "Suggestion repository", table: "vision_suggestions", operation: "Reviewer accept/reject/edit decisions persist as row-level changes." },
+    { domain: "Audit repository", table: "audit_events", operation: "Append-only audit events are inserted without rewriting unrelated workflow rows." },
+    { domain: "Report repository", table: "ai_report_jobs + ai_report_drafts + final_reports", operation: "Report job, draft, and final report rows persist as separate state transitions." }
+  ];
+}
 
 export function platformHealthPayload(store: MemoryStore, provider: PlatformHealthProvider) {
   const env = typeof process !== "undefined" ? process.env : {};
   const operationalMetrics = store.operationalMetrics();
+  const imageJobs = [...store.imageAnalysisJobs.values()];
+  const failedImageJobs = imageJobs.filter((job) => job.status === "failed" || job.status === "dead_letter");
+  const queuedImageJobs = imageJobs.filter((job) => job.status === "queued" || job.status === "running");
   const metricValue = (metric: string) => operationalMetrics.find((item) => item.metric === metric)?.value ?? "No data";
+  const hasQueue = Boolean(env.IMAGE_ANALYSIS_QUEUE_URL || env.IMAGE_ANALYSIS_QUEUE_ARN || env.IMAGE_ANALYSIS_MODE === "queue");
+  const hasS3 = Boolean(env.IMAGE_BUCKET || env.IMAGE_UPLOAD_MODE === "presigned");
+  const authDescription = provider.authMode ?? (env.AUTH_MODE === "jwt" ? "Cognito/OIDC JWT" : "local role header");
+  const opsSimulationEnabled = env.ENABLE_OPS_SIMULATION
+    ? env.ENABLE_OPS_SIMULATION.toLowerCase() === "true"
+    : env.NODE_ENV !== "production";
   return {
+    runtimeProof: {
+      environment: env.APP_ENV ?? env.NODE_ENV ?? "local",
+      apiBaseUrl: provider.apiBaseUrl ?? env.PUBLIC_API_BASE_URL ?? "not reported",
+      authenticatedRole: provider.actor?.role ?? "unknown",
+      actorName: provider.actor?.name ?? "Unknown actor",
+      authMode: authDescription,
+      roleSource: provider.roleSource ?? (env.AUTH_MODE === "jwt" ? "verified JWT claims" : "local role header"),
+      persistenceMode: env.PERSISTENCE_MODE ?? "file",
+      postgres: Boolean(env.DATABASE_URL || env.DATABASE_SECRET_ARN) ? "configured" : "not configured",
+      imageStorage: hasS3 ? "S3 presigned upload path configured" : "local browser preview mode",
+      imageBucket: env.IMAGE_BUCKET ?? "not configured",
+      imageAnalysisMode: hasQueue ? "SQS/Lambda worker path configured" : "inline local analysis path",
+      visionProvider: provider.visionProviderName,
+      promptVersion: provider.visionPromptVersion,
+      queueHealth: {
+        failedImageJobs: failedImageJobs.length,
+        deadLetterImageJobs: imageJobs.filter((job) => job.status === "dead_letter").length,
+        activeImageJobs: queuedImageJobs.length
+      },
+      latestSuccessfulImageAnalysis: latestAnalysisSummary(store),
+      latestFailedOrRecoveredJob: latestJobOrRecoverySummary(store),
+      opsSimulation: {
+        enabled: opsSimulationEnabled,
+        endpoint: "/api/platform-health/simulate-failed-image-job",
+        localOnly: "Enabled outside production unless ENABLE_OPS_SIMULATION=false."
+      }
+    },
+    roleProof: roleProof(store),
+    evidencePack: evidencePackSummary(),
     scorecard: [
       { pillar: "Operational excellence", status: "implemented", evidence: "Request IDs, structured logs, runbook, retryable report jobs, audit events." },
       { pillar: "Security", status: "implemented", evidence: "Role-aware UI/API RBAC, JWT/JWKS verification path, object-level inspection authorization tests, presigned S3, encryption, and Secrets Manager." },
@@ -19,7 +216,8 @@ export function platformHealthPayload(store: MemoryStore, provider: PlatformHeal
       { pillar: "Cost optimization", status: "documented", evidence: "Cost model separates image storage, model calls, relational storage, and logs." },
       { pillar: "AI governance", status: "implemented", evidence: "AI output is schema-validated, prompt-versioned, and advisory until human acceptance." }
     ],
-    sampleImages,
+    sampleImages: sampleImages.filter((sample) => Boolean(sample.sourceUrl)),
+    samplePhotoSets,
     operationalMetrics,
     serviceLevelObjectives: [
       {
@@ -34,7 +232,7 @@ export function platformHealthPayload(store: MemoryStore, provider: PlatformHeal
         target: ">= 80% on the evaluation set before model/prompt promotion",
         current: "Measured by npm run eval:vision",
         risk: "Poor retake precision wastes inspector time and slows offsite/mobile capture.",
-        evidence: "evals/vision-eval-set.json covers blurry, clean, damage, OCR, and required-angle cases."
+        evidence: "evals/vision-eval-set.json covers required angles, damage, clean negatives, OCR, glare, blur, low-light interiors, partial VIN, dirty odometer, and bad-angle retakes."
       },
       {
         name: "Human review queue freshness",
@@ -80,6 +278,12 @@ export function platformHealthPayload(store: MemoryStore, provider: PlatformHeal
     ],
     failedJobRecovery: {
       detection: "Image jobs move through queued -> running -> completed/failed/dead_letter and emit audit events.",
+      liveStatus: {
+        failedImageJobs: failedImageJobs.length,
+        deadLetterImageJobs: imageJobs.filter((job) => job.status === "dead_letter").length,
+        activeImageJobs: queuedImageJobs.length,
+        recoveryEndpoint: "/api/platform-health/recover-failed-jobs"
+      },
       operatorWorkflow: [
         "Open Platform Health and confirm the queue/DLQ alert.",
         "Open the affected inspection audit trail and identify the photo/job/provider failure.",
@@ -170,8 +374,9 @@ export function platformHealthPayload(store: MemoryStore, provider: PlatformHeal
     persistence: {
       activeMode: env.PERSISTENCE_MODE ?? "file",
       postgresReady: Boolean(env.DATABASE_URL || env.DATABASE_SECRET_ARN),
-      localMode: "File snapshot is retained for repeatable local walkthroughs and tests.",
-      productionMode: "Set PERSISTENCE_MODE=postgres and DATABASE_URL or DATABASE_SECRET_ARN to persist normalized inspection, photo, suggestion, report, and audit records through row-level Postgres upsert/delete transactions."
+      localMode: "File snapshot mode is retained for controlled test runs.",
+      productionMode: "Set PERSISTENCE_MODE=postgres and DATABASE_URL or DATABASE_SECRET_ARN to persist normalized inspection, photo, suggestion, report, and audit records through row-level Postgres upsert/delete transactions.",
+      hotPathRepositories: hotPathRepositoryProof()
     },
     storageContract: {
       uploadIntentEndpoint: "/api/uploads/intent",
@@ -190,7 +395,8 @@ export function platformHealthPayload(store: MemoryStore, provider: PlatformHeal
         "Express uses file snapshots locally by default; PERSISTENCE_MODE=postgres switches to normalized row-level Postgres persistence.",
         "Cloudflare Pages can host the web client while API state lives in Postgres.",
         "Browser uploads store small preview data URLs instead of production object-storage writes.",
-        "Role headers simulate authenticated role claims for local inspection/reviewer/admin flows."
+        "Role headers simulate authenticated role claims for local inspection/reviewer/admin flows.",
+        "Local reference records use VIN-specific listing photos for Hyundai, Toyota, Honda, Ford, Nissan, and Subaru where public listings expose the required angle."
       ],
       production: [
         "DB-first repositories for high-concurrency mutation paths, schema migrations, indexed foreign keys, transaction boundaries, and retention policy.",
@@ -199,7 +405,7 @@ export function platformHealthPayload(store: MemoryStore, provider: PlatformHeal
         "Bedrock multimodal adapter storing raw output, validated output, prompt version, provider metadata, and rejected-output audit records.",
         "Cognito or enterprise OIDC with object-level authorization and least-privilege IAM."
       ],
-      javaBoundary: "The Java grading service is intentionally small: keep it separate only when condition rules need independent ownership, versioning, testing, or reuse outside the Node API; collapse it into the API for a smaller early-stage team."
+      gradingBoundary: "The Python grading service is intentionally small: keep it separate only when condition rules need independent ownership, versioning, testing, or reuse outside the Node API; collapse it into the API for a smaller early-stage team."
     }
   };
 }

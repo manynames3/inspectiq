@@ -2,7 +2,7 @@
 
 Local flow:
 
-1. Attach required photo evidence or upload a vehicle photo.
+1. Attach required photo evidence or upload a vehicle photo. Local development can optionally load sourced reference evidence for controlled walkthrough records.
 2. Validate upload type and size. Production upload paths accept JPEG, PNG, and WebP; local browser-preview fallback is intentionally smaller.
 3. Store S3-style object metadata on the inspection.
 4. In presigned mode, require scoped object bucket/key, byte size, and SHA-256 checksum metadata before creating the photo record.
@@ -17,8 +17,8 @@ Production AWS flow:
 
 ```mermaid
 flowchart LR
-  Upload[Presigned S3 upload] --> Event[S3/EventBridge event]
-  Event --> Queue[SQS image analysis queue]
+  Upload[Presigned S3 upload] --> API[Lambda API]
+  API --> Queue[SQS image analysis queue]
   Queue --> Worker[Image analysis worker]
   Worker --> Bedrock[Bedrock multimodal model]
   Worker --> Validate[Zod or JSON Schema validation]

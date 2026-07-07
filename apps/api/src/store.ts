@@ -272,6 +272,9 @@ export class MemoryStore {
     checksumSha256?: string | null;
     originalFilename: string;
     mimeType: string;
+    sourceName?: string | null;
+    sourceUrl?: string | null;
+    sourceLicense?: string | null;
     uploadedBy: string;
     declaredAngle?: PhotoAngle | null;
   }, actor: Actor): VehiclePhoto {
@@ -287,6 +290,9 @@ export class MemoryStore {
       checksumSha256: input.checksumSha256 ?? null,
       originalFilename: input.originalFilename,
       mimeType: input.mimeType,
+      sourceName: input.sourceName ?? null,
+      sourceUrl: input.sourceUrl ?? null,
+      sourceLicense: input.sourceLicense ?? null,
       uploadedBy: input.uploadedBy,
       uploadedAt: now(),
       uploadStatus: "uploaded",
@@ -304,7 +310,9 @@ export class MemoryStore {
       objectBucket: photo.objectBucket,
       objectKey: photo.objectKey,
       byteSize: photo.byteSize,
-      declaredAngle: photo.declaredAngle
+      declaredAngle: photo.declaredAngle,
+      sourceName: photo.sourceName,
+      sourceUrl: photo.sourceUrl
     });
     return photo;
   }
@@ -440,7 +448,7 @@ export class MemoryStore {
       suggestionType: "photo_angle",
       suggestedValueJson: { photoAngle: input.validated.photoAngle },
       confidence: input.validated.confidence,
-      explanation: `Detected likely photo angle: ${input.validated.photoAngle}. AI suggestion - requires human confirmation.`
+      explanation: `Likely photo angle: ${input.validated.photoAngle}. Reviewer confirmation required.`
     });
 
     for (const warning of input.validated.qualityWarnings) {
@@ -450,7 +458,7 @@ export class MemoryStore {
         suggestionType: "quality_warning",
         suggestedValueJson: { warning, imageQuality: input.validated.imageQuality },
         confidence: Math.min(input.validated.confidence, 0.75),
-        explanation: `${warning} AI suggestion - requires human confirmation.`
+        explanation: `${warning} Reviewer confirmation required.`
       });
     }
 
@@ -461,7 +469,7 @@ export class MemoryStore {
         suggestionType: "damage_candidate",
         suggestedValueJson: candidate,
         confidence: candidate.confidence,
-        explanation: `${candidate.explanation} AI suggestion - requires human confirmation.`
+        explanation: `${candidate.explanation} Reviewer confirmation required.`
       });
     }
 
@@ -469,11 +477,11 @@ export class MemoryStore {
       this.createSuggestion({
         inspectionId: photo.inspectionId,
         photoId: photo.id,
-        suggestionType: "extracted_text",
-        suggestedValueJson: input.validated.extractedText,
-        confidence: input.validated.confidence,
-        explanation: "Detected possible odometer or VIN text. AI suggestion - requires human confirmation."
-      });
+      suggestionType: "extracted_text",
+      suggestedValueJson: input.validated.extractedText,
+      confidence: input.validated.confidence,
+      explanation: "Possible odometer or VIN text detected. Reviewer confirmation required before approval."
+    });
     }
 
     this.addAudit(photo.inspectionId, actor, "photo.analyzed", {

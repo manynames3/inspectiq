@@ -69,12 +69,16 @@ const caseResults = [];
 for (const testCase of evalSet.cases) {
   const sample = findSampleImage(testCase.sampleKey);
   if (!sample) throw new Error(`Unknown sample image in eval set: ${testCase.sampleKey}`);
+  const storageKey = sample.storageKey ?? `/sample-images/${sample.filename}`;
+  const objectKey = storageKey.startsWith("/sample-images/")
+    ? storageKey.replace(/^\//, "")
+    : null;
 
   const result = await provider.analyze({
     filename: sample.filename,
-    storageKey: `/sample-images/${sample.filename}`,
+    storageKey,
     objectBucket: "inspectiq-sample-images",
-    objectKey: `sample-images/${sample.filename}`,
+    objectKey,
     mimeType: sample.mimeType,
     declaredAngle: sample.angle
   });

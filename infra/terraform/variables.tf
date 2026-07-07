@@ -26,6 +26,11 @@ variable "enable_cognito_authorizer" {
   default = true
 }
 
+variable "enable_evaluation_mode" {
+  type    = bool
+  default = true
+}
+
 variable "cognito_callback_urls" {
   type = list(string)
   default = [

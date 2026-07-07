@@ -7,7 +7,7 @@ Local review:
 - Reviewer: AI suggestion review, damage confirmation, grading, report drafting, and finalization.
 - Admin: full workflow access, including record correction and destructive exceptions.
 - No hardcoded secrets.
-- Synthetic vehicle records and license-safe photographic fixtures only.
+- Synthetic vehicle records, sourced reference imagery for local reference records, and generated identity evidence only.
 
 Production plan:
 
@@ -15,9 +15,9 @@ Production plan:
 - JWT validation in service middleware, with API Gateway forwarding requests to Lambda. Read-only evaluation preview is explicitly separated from authenticated mutation paths.
 - RBAC for inspector, reviewer, and admin actions.
 - S3 presigned uploads with object-level authorization, scoped object keys, byte-size validation, MIME validation for JPEG/PNG/WebP, and SHA-256 checksum metadata.
-- S3 and RDS encryption.
+- S3 encryption and managed Postgres transport/storage controls.
 - Secrets Manager for database and provider credentials.
-- Least-privilege IAM for API, workers, Step Functions, and queues.
+- Least-privilege IAM for API Lambda, image worker Lambda, S3, SQS, Secrets Manager, Bedrock, and CloudWatch.
 - CloudTrail for infrastructure audit.
 
 Production hardening still required before real vehicle/customer data:

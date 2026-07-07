@@ -106,7 +106,7 @@ resource "aws_cognito_user_pool_client" "web" {
   callback_urls                        = var.cognito_callback_urls
   logout_urls                          = var.cognito_logout_urls
   supported_identity_providers         = ["COGNITO"]
-  explicit_auth_flows                  = ["ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
+  explicit_auth_flows                  = ["ALLOW_USER_SRP_AUTH", "ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
 }
 
 resource "aws_cognito_user_pool_domain" "inspectiq" {
@@ -331,6 +331,8 @@ resource "aws_lambda_function" "api" {
       IMAGE_UPLOAD_MODE                   = "presigned"
       IMAGE_ANALYSIS_MODE                 = "queue"
       IMAGE_ANALYSIS_QUEUE_URL            = aws_sqs_queue.image_analysis.url
+      ENABLE_REFERENCE_EVIDENCE           = "false"
+      ENABLE_EVALUATION_MODE              = var.enable_evaluation_mode ? "true" : "false"
       VISION_PROVIDER                     = "bedrock"
       REPORT_PROVIDER                     = "bedrock"
       BEDROCK_MODEL_ID                    = var.bedrock_model_id
@@ -339,6 +341,9 @@ resource "aws_lambda_function" "api" {
       AUTH_MODE                           = "jwt"
       OIDC_ISSUER                         = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.inspectiq.id}"
       OIDC_AUDIENCE                       = aws_cognito_user_pool_client.web.id
+      DEFAULT_AUTH_ROLE                   = "inspector"
+      REQUIRE_JWT_ROLE_CLAIM              = "false"
+      AUTH_ADMIN_EMAILS                   = "aidenrhaacloud@gmail.com"
       WEB_ORIGIN                          = join(",", local.allowed_origins)
       PG_POOL_SIZE                        = "2"
     }
@@ -396,7 +401,7 @@ resource "aws_apigatewayv2_api" "http" {
 
   cors_configuration {
     allow_credentials = false
-    allow_headers     = ["authorization", "content-type", "x-actor-id", "x-actor-name", "x-actor-role", "x-request-id", "idempotency-key", "x-inspectiq-evaluation-mode"]
+    allow_headers     = ["authorization", "content-type", "x-actor-id", "x-actor-name", "x-actor-role", "x-evaluation-mode", "x-inspectiq-evaluation-mode", "x-request-id", "idempotency-key"]
     allow_methods     = ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
     allow_origins     = local.allowed_origins
     expose_headers    = ["content-disposition", "x-request-id"]
@@ -431,16 +436,16 @@ resource "aws_apigatewayv2_route" "default" {
   authorization_type = "NONE"
 }
 
-resource "aws_apigatewayv2_route" "health" {
+resource "aws_apigatewayv2_route" "evaluation" {
   api_id             = aws_apigatewayv2_api.http.id
-  route_key          = "GET /api/health"
+  route_key          = "ANY /api/evaluation/{proxy+}"
   target             = "integrations/${aws_apigatewayv2_integration.api.id}"
   authorization_type = "NONE"
 }
 
-resource "aws_apigatewayv2_route" "cors_preflight" {
+resource "aws_apigatewayv2_route" "health" {
   api_id             = aws_apigatewayv2_api.http.id
-  route_key          = "OPTIONS /{proxy+}"
+  route_key          = "GET /api/health"
   target             = "integrations/${aws_apigatewayv2_integration.api.id}"
   authorization_type = "NONE"
 }

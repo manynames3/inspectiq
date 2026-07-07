@@ -169,9 +169,9 @@ export const localVisionProvider: VisionProvider = {
     const key = `${input.filename} ${input.storageKey}`.toLowerCase();
     let raw: VisionOutput;
 
-    if (key.includes("rear-severe-damage")) {
+    if (key.includes("rear-severe-damage") || key.includes("honda-accord-rear")) {
       raw = {
-        ...cleanOutput("rear", 0.96, imageQuality({
+        ...cleanOutput("rear", key.includes("honda-accord-rear") ? 0.94 : 0.96, imageQuality({
           grade: "review",
           framingScore: 0.89,
           notes: ["Rear angle is usable, but confirmed damage requires reviewer close inspection."]
@@ -179,9 +179,11 @@ export const localVisionProvider: VisionProvider = {
         detectedDamageCandidates: [damageCandidate({
           location: "rear bumper",
           damageType: "dent",
-          severityEstimate: "severe",
-          confidence: 0.9,
-          explanation: "Inspection photo indicates a rear bumper deformation."
+          severityEstimate: key.includes("honda-accord-rear") ? "moderate" : "severe",
+          confidence: key.includes("honda-accord-rear") ? 0.87 : 0.9,
+          explanation: key.includes("honda-accord-rear")
+            ? "Source listing photo appears to show rear bumper deformation; reviewer confirmation required."
+            : "Inspection photo indicates a rear bumper deformation."
         })],
         humanReviewRequired: true
       };
@@ -201,6 +203,66 @@ export const localVisionProvider: VisionProvider = {
           explanation: "Inspection photo indicates a visible linear scratch on the driver door."
         })]
       };
+    } else if (key.includes("glare")) {
+      raw = {
+        ...cleanOutput("front", 0.76, imageQuality({
+          grade: "review",
+          exposureScore: 0.58,
+          framingScore: 0.88,
+          retakeRequired: true,
+          notes: ["Glare affects front-bumper confidence; capture another image before buyer-visible release."]
+        })),
+        qualityWarnings: ["Glare reduces confidence on the front bumper; retake recommended."],
+        humanReviewRequired: true
+      };
+    } else if (key.includes("bad-angle")) {
+      raw = {
+        ...cleanOutput(input.declaredAngle ?? "unknown", 0.72, imageQuality({
+          grade: "review",
+          framingScore: 0.54,
+          retakeRequired: true,
+          notes: ["Vehicle side is partially framed; retake square to the panel for the required angle."]
+        })),
+        qualityWarnings: ["Required side angle is not framed squarely enough for release."],
+        humanReviewRequired: true
+      };
+    } else if (key.includes("dark-interior")) {
+      raw = cleanOutput("interior", 0.82, imageQuality({
+        grade: "review",
+        exposureScore: 0.49,
+        occlusionRisk: 0.16,
+        retakeRequired: true,
+        notes: ["Interior is too dark to confirm upholstery and trim condition."]
+      }));
+      raw.qualityWarnings = ["Interior lighting is too low for reliable condition review."];
+      raw.humanReviewRequired = true;
+    } else if (key.includes("dirty-odometer")) {
+      raw = {
+        ...cleanOutput("odometer", 0.7, imageQuality({
+          grade: "retake",
+          blurScore: 0.64,
+          exposureScore: 0.58,
+          framingScore: 0.72,
+          retakeRequired: true,
+          notes: ["Odometer is partially obscured; mileage is not reliable enough for disclosure."]
+        })),
+        qualityWarnings: ["Odometer digits are not legible enough for buyer-visible mileage evidence."],
+        extractedText: {},
+        humanReviewRequired: true
+      };
+    } else if (key.includes("partial-vin")) {
+      raw = {
+        ...cleanOutput("vin_plate", 0.69, imageQuality({
+          grade: "retake",
+          blurScore: 0.71,
+          framingScore: 0.52,
+          retakeRequired: true,
+          notes: ["VIN plate is partially framed; full VIN cannot be verified."]
+        })),
+        qualityWarnings: ["VIN plate text is not legible enough for identity verification."],
+        extractedText: {},
+        humanReviewRequired: true
+      };
     } else if (key.includes("interior-overview") || key.includes("interior-wear")) {
       raw = cleanOutput("interior", 0.91, imageQuality({
         grade: "review",
@@ -209,6 +271,7 @@ export const localVisionProvider: VisionProvider = {
         notes: ["Interior overview is usable; no clear trim or seat damage is visible."]
       }));
     } else if (key.includes("odometer")) {
+      const odometerValue = key.match(/odometer-([0-9]{1,6})/)?.[1] ?? "64231";
       raw = {
         ...cleanOutput("odometer", 0.98, imageQuality({
           blurScore: 0.98,
@@ -216,23 +279,22 @@ export const localVisionProvider: VisionProvider = {
           framingScore: 0.97,
           notes: ["Odometer digits are centered and readable."]
         })),
-        extractedText: { odometer: "64231" }
+        extractedText: { odometer: odometerValue }
       };
     } else if (key.includes("vin-plate")) {
+      const vinValue = key.match(/vin-plate-([a-hj-npr-z0-9]{11,17})/)?.[1]?.toUpperCase() ?? "4T1G11AK8MU123456";
       raw = {
         ...cleanOutput("vin_plate", 0.97, imageQuality({
           blurScore: 0.96,
           framingScore: 0.96,
           notes: ["VIN plate is framed tightly enough for OCR review."]
         })),
-        extractedText: { vin: "4T1G11AK8MU123456" }
+        extractedText: { vin: vinValue }
       };
     } else if (key.includes("passenger-side")) {
       raw = cleanOutput("passenger_side", 0.94);
     } else if (key.includes("engine-bay")) {
       raw = cleanOutput("engine_bay", 0.92);
-    } else if (key.includes("front-clean")) {
-      raw = cleanOutput("front", 0.95);
     } else if (key.includes("blurry")) {
       raw = {
         photoAngle: "front",
@@ -252,6 +314,12 @@ export const localVisionProvider: VisionProvider = {
         extractedText: {},
         humanReviewRequired: true
       };
+    } else if (key.includes("front-clean")) {
+      raw = cleanOutput("front", 0.95);
+    } else if (input.declaredAngle && input.declaredAngle !== "unknown") {
+      raw = cleanOutput(input.declaredAngle, input.declaredAngle === "engine_bay" ? 0.92 : 0.94, imageQuality({
+        notes: [`Declared ${input.declaredAngle.replaceAll("_", " ")} angle matches the source-documented reference image.`]
+      }));
     } else {
       raw = {
         photoAngle: "unknown",
@@ -382,6 +450,15 @@ async function loadImageInput(input: Parameters<VisionProvider["analyze"]>[0]): 
     return {
       bytes: await readFile(sampleImageFilePath(input.storageKey)),
       format: imageFormat(input.mimeType, input.filename)
+    };
+  }
+
+  if (input.storageKey.startsWith("https://")) {
+    const response = await fetch(input.storageKey);
+    if (!response.ok) throw new Error(`Unable to fetch external sample image: ${response.status}`);
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      format: imageFormat(input.mimeType ?? response.headers.get("content-type"), input.filename)
     };
   }
 

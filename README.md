@@ -8,7 +8,23 @@ InspectIQ is a production-shaped vertical slice of an automotive inspection syst
 
 Live walkthrough: https://inspectiq.pages.dev
 
-The hosted walkthrough is Cognito-protected to show the real authenticated path. Temporary Inspector, Reviewer, or Admin credentials can be provided for interview review; local setup remains available for unrestricted code review.
+Hiring-manager review link: https://inspectiq.pages.dev/?review=1
+
+The hosted walkthrough offers a read-only Evaluation Workspace for public review. Cognito review credentials are available on request for the authenticated Inspector/Reviewer/Admin production proof path.
+
+## Production Proof At A Glance
+
+| Proof point | Current evidence |
+| --- | --- |
+| Live app | https://inspectiq.pages.dev |
+| No-login review | https://inspectiq.pages.dev/?review=1 starts the read-only Evaluation Workspace directly. |
+| Architecture | ![AWS Architecture](docs/architecture_aws.png) |
+| Real vs deterministic boundary | Live uses Cognito, API Gateway, Lambda, Neon, S3, SQS, Bedrock, and CloudWatch. Local defaults to deterministic providers for repeatable CI and interviews. |
+| Role separation | Inspector captures/analyzes, Reviewer accepts/grades/finalizes, Admin monitors/recovers. See `docs/role-separated-proof.md`. |
+| Real-photo evidence | Source-documented listing/dealer photo sets plus quality edge cases. See `sample-data/real-photo-evidence-pack.md` and `sample-data/IMAGE_CREDITS.md`. |
+| Model evaluation | 24-case suite currently passes local thresholds for angle, OCR, damage, false positives, and retakes. See `docs/model-evaluation-report.md`. |
+| Operations proof | Platform Health shows live runtime status and has Admin-only local failure simulation/recovery. |
+| Visual regression | `npm run test:screenshots` captures dashboard, workbench, suggestions, damage, reports, audit, platform health, and mobile capture. |
 
 ## 90-Second Demo
 
@@ -22,6 +38,25 @@ The hosted walkthrough is Cognito-protected to show the real authenticated path.
 
 The live authenticated path uses Cloudflare Pages, Cognito, API Gateway, Lambda, Neon Postgres, private S3 image objects, SQS image-analysis jobs, Bedrock multimodal analysis, and CloudWatch operations visibility. Local development defaults to deterministic providers and file persistence so interviews, tests, and code review stay repeatable. Both paths use the same schema contracts, state machine, reviewer approval workflow, and audit-event model.
 
+For deployed proof with real uploaded photos, run `npm run test:live-upload` with a Cognito JWT and a required-angle photo directory. See `docs/live-production-proof.md`.
+
+For a generated walkthrough artifact, run `npm run proof:video` against a local dev stack. It records login -> inspect -> attach evidence -> analyze -> review -> finalize -> audit -> platform health into `docs/images/inspectiq-proof.webm`.
+
+## Engineering Iterations
+
+InspectIQ was tightened through review passes focused on reducing walkthrough risk, production ambiguity, and end-user friction. The useful signal is not that every production feature is finished; it is that each iteration closes a concrete risk and keeps the tradeoff explainable.
+
+| Concern found | Improvement made | Tradeoff or reasoning |
+| --- | --- | --- |
+| Image analysis needed stronger evidence grounding | Added source-documented vehicle photo sets, bad-capture cases, a model evaluation report, and a deployed Bedrock-shaped provider path. | Local analysis stays deterministic so CI and interviews do not fail on credentials, latency, or provider drift; the same schema contract is used for Bedrock. |
+| Roles were too similar | Split Inspector, Reviewer, and Admin responsibilities in UI, API RBAC, tests, and proof docs. | Local role sessions mirror enterprise OIDC roles for repeatable walkthroughs; deployed flow uses Cognito/JWT claims. |
+| Production readiness was buried in docs | Added Platform Health production proof: auth mode, role source, API URL, persistence mode, provider, queue health, latest analysis, and failed/recovered job status. | Makes architecture observable in the product instead of asking a reviewer to trust a diagram. |
+| Operations story lacked a live failure path | Added Admin-only local failure simulation and recovery for image-analysis jobs. | Proves retry/DLQ thinking without injecting real AWS failures; simulation is guarded and disabled by default in production. |
+| Persistence looked transitional | Moved the deployed Postgres path toward row-level upsert/delete for inspection, photo, suggestion, audit, and report hot paths. | The current bridge is credible for a hosted vertical slice; a high-concurrency production system should continue toward DB-first repositories. |
+| Dense screens could regress across viewports | Added Playwright screenshot regression for dashboard, workbench, suggestions, damage, platform health, and mobile capture. | Visual proof is generated from the app instead of relying only on static screenshots. |
+| Architecture could look over-scaffolded | Kept the main AWS diagram to services actually used, with inferred/planned items labeled separately in docs. | Avoids name-dropping services like Step Functions or Rekognition unless the workflow truly needs them. |
+| README was too text-heavy for a first pass | Moved live URL, architecture, proof points, screenshots, real-vs-local boundary, and walkthrough commands near the top. | A recruiter can see visual proof quickly; a technical reviewer can still drill into docs and code. |
+
 ## What This Demonstrates
 
 This repo is designed to answer a hiring manager's core question: can this engineer turn an ambiguous operational workflow into a reliable system with clear boundaries, credible tradeoffs, and a path to production?
@@ -29,11 +64,11 @@ This repo is designed to answer a hiring manager's core question: can this engin
 It demonstrates:
 
 - domain understanding of wholesale/offsite inspection workflows, CR readiness, VDP readiness, buyer trust, seller disclosure, reconditioning estimates, and arbitration risk;
-- end-to-end product execution across React, TypeScript, Node, Java, Postgres schema design, REST APIs, RBAC, audit trails, and browser E2E tests;
+- end-to-end product execution across React, TypeScript, Node, Python, Postgres schema design, REST APIs, RBAC, audit trails, and browser E2E tests;
 - responsible AI design where model output is validated, treated as advisory, reviewed by humans, and kept out of buyer-facing output until confirmed;
 - production architecture thinking around private S3 image storage, protected short-lived image previews, async image-analysis workers, Neon Postgres persistence, metrics, runbooks, and AWS Lambda deployment.
 
-It does not use Cox Automotive branding, proprietary data, or unlicensed assets. Vehicle records are synthetic, and bundled sample photos use license-safe public image sources documented in `sample-data/IMAGE_CREDITS.md`.
+It does not use Cox Automotive branding, proprietary data, or unlicensed assets. Vehicle records are representative sample records, and reference imagery/local test fixtures use documented public sources in `sample-data/IMAGE_CREDITS.md`.
 
 ## Business Problem
 
@@ -53,7 +88,7 @@ A production-grade inspection platform would use a hybrid AI/ML approach: image-
 2. Create a new inspection when needed.
 3. Use the Inspector role to attach required photo evidence or upload vehicle photos.
 4. Run image analysis and validate the structured AI output.
-5. Switch to the Reviewer role for suggestions labelled `AI suggestion - requires human confirmation`.
+5. Switch to the Reviewer role and resolve findings marked `Reviewer confirmation required`.
 6. Accept, reject, or edit suggestions.
 7. Confirmed photo-angle suggestions update required evidence completeness.
 8. Accepted damage candidates become human-confirmed damage items.
@@ -74,25 +109,53 @@ A production-grade inspection platform would use a hybrid AI/ML approach: image-
 
 ## Architecture
 
+![AWS Architecture](docs/architecture_aws.png)
+
+The live path is Cloudflare Pages -> Cognito -> API Gateway -> Lambda API -> Neon Postgres, private S3 image objects, SQS image-analysis jobs, Lambda image worker, Bedrock multimodal analysis, and CloudWatch operations visibility. Cloudflare Pages and Neon Postgres are external services; the AWS resources are provisioned by Terraform in `infra/terraform`.
+
+Request flow: users sign in through Cognito, the React/Vite workbench sends JWT-authenticated REST calls through API Gateway, and the Lambda API performs schema validation, RBAC, object-level authorization, workflow persistence, and audit logging. Image uploads use presigned S3 URLs, while image-analysis jobs move through SQS to the Lambda worker before Bedrock output is validated and stored.
+
+Deployment flow: GitHub Actions runs CI, local E2E, Python tests, Lambda packaging, and Terraform validation. The Cloudflare Pages workflow deploys the frontend with Wrangler. AWS infrastructure is Terraform-managed; the repo validates Terraform in CI, while AWS apply remains an explicit operator action.
+
+Security: Cognito OIDC and groups drive role-aware access, API Gateway enforces JWTs on the normal API route, the separate `/api/evaluation/*` route is read-only for public review, the service repeats JWT/JWKS validation, S3 blocks public access with server-side encryption, Secrets Manager stores the Neon connection string, and Lambda IAM is scoped to required S3, SQS, Secrets Manager, and Bedrock actions.
+
+Observability and cost controls: CloudWatch log groups, alarms, and the `inspectiq-ops` dashboard cover API errors, worker errors, API latency, SQS queue age, and DLQ depth. Bedrock calls happen on explicit analysis/report actions rather than page loads, and deterministic local providers keep CI and local development from spending on model calls.
+
+Service selection decisions:
+
+| Service | Decision | Rationale |
+| --- | --- | --- |
+| Lambda + API Gateway | Used | Fits a bursty inspection API and image worker without paying for idle container capacity. The API remains a single cohesive service until ownership, scaling, or release cadence justify splitting it. |
+| Neon Postgres | Used as system of record | Inspection records, photos, suggestions, damage items, reports, users, roles, and audit events are relational and benefit from transactions, constraints, and explainable joins. |
+| S3 | Used for images | Vehicle photos belong in object storage, not the database. The app stores object keys, metadata, checksums, and protected preview intents in Postgres. |
+| SQS + DLQ | Used for image analysis | The current async workflow needs durable dispatch, retries, backoff, and failed-job recovery. SQS is enough for a single image-analysis worker path. |
+| DynamoDB | Not used in this version | Useful later for very high-write idempotency keys, ephemeral job checkpoints, or device sync state, but not as the primary store for this relational CR workflow. |
+| OpenSearch | Not used in this version | Useful once VIN/OCR/damage-note/report search, similarity search, or marketplace-scale discovery outgrows indexed Postgres queries. Current queues and tables do not need a search cluster. |
+| Kinesis | Not used in this version | Useful for high-throughput streaming telemetry or auction-lane event ingestion. Current user-driven inspection events are transactional workflow events, not a continuous stream. |
+| EventBridge | Deferred | Useful for publishing domain events such as `inspection.finalized` or `retake.required` to downstream systems. The current repo has one internal API/worker bounded context, so SQS keeps the operational surface smaller. |
+| Step Functions | Deferred | Useful when image/report processing needs explicit waits, branches, compensation, or multi-provider fallback orchestration. Current image analysis is a straightforward queue worker path. |
+| Rekognition | Deferred | Useful as a narrow OCR, label, moderation, or image-quality fallback. Bedrock is the implemented provider because the product slice needs one validated multimodal contract for angle, quality, OCR, damage reasoning, repair estimate, confidence, and reviewer routing. |
+
+Render the diagram with:
+
+```bash
+make diagram
+```
+
+See `docs/architecture-notes.md` for the inspected source files, render prerequisites, and exclusions.
+
+Optional logical flow:
+
 ```mermaid
-flowchart TD
-  Web[React + TypeScript workbench on Cloudflare Pages] --> API[API Gateway + Node.js Lambda]
-  API --> Shared[Shared Zod schemas]
-  API --> Store[MemoryStore facade]
-  Store --> FileStore[Local file snapshot]
-  Store --> PostgresStore[Neon Postgres persistence mode]
-  API --> S3[S3 presigned uploads]
-  API --> SQS[SQS image-analysis queue]
+flowchart LR
+  Web[Cloudflare Pages React workbench] --> Auth[Cognito OIDC]
+  Web --> API[API Gateway + Lambda API]
+  API --> PG[Neon Postgres]
+  API --> S3[Private S3 images]
+  API --> SQS[SQS image jobs]
   SQS --> Worker[Lambda image worker]
-  API --> Vision[Vision provider interface]
-  Vision --> LocalVision[Deterministic local analysis]
-  Worker --> BedrockVision[Bedrock multimodal analysis]
-  API --> Grade[Java Spring Boot grading service]
-  API --> Report[Report provider interface]
-  Report --> LocalReport[Deterministic local report provider]
-  Report --> BedrockReport[Bedrock report provider]
-  API --> Audit[Audit events]
-  Store --> PG[(Neon Postgres)]
+  Worker --> Bedrock[Bedrock multimodal model]
+  Worker --> PG
 ```
 
 ## Scope
@@ -111,10 +174,14 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 - `docs/production-readiness.md`: implemented proof, remaining production gates, and the honest interview framing.
 - `docs/state-machine.md`: workflow states and legal transitions.
 - `docs/image-analysis-contract.md`: model output contract, schema validation, and reviewer routing.
+- `docs/live-production-proof.md`: deployed uploaded-photo proof for Cognito, S3, SQS, Bedrock, Neon persistence, reviewer approval, report finalization, and audit events.
+- `docs/role-separated-proof.md`: Inspector, Reviewer, and Admin proof paths.
 - `docs/vision-evaluation.md`: image-analysis evaluation set, metrics, thresholds, and promotion command.
+- `docs/model-evaluation-report.md`: current evaluation metrics, coverage, failure cases, and promotion standard.
 - `docs/ai-governance.md`: prompt/version metadata, human review, and audit posture.
 - `docs/aws-deployment-plan.md`: AWS production shape and migration path.
 - `docs/security.md`, `docs/observability.md`, `docs/runbook.md`: operational hardening notes.
+- `sample-data/real-photo-evidence-pack.md`: source-documented reference vehicles and bad-capture examples.
 
 ## Real Vs Deterministic Local
 
@@ -124,22 +191,22 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 | Image analysis | Deterministic local provider plus deployed SQS -> Lambda -> Bedrock multimodal provider using the same strict schema contract and `npm run eval:vision` evaluation set; outputs remain advisory until reviewer confirmation | Larger labeled evaluation corpus, calibrated angle/OCR/damage metrics, dedicated image-quality and damage-detection models, and provider fallback policy |
 | Persistence | In-memory tests, local JSON snapshot, and deployed `PERSISTENCE_MODE=postgres` against Neon with row-level upsert/delete transactions | Direct DB-first repositories for the highest-concurrency production paths, retention, backups, and audit durability |
 | Image storage | Deployed presigned S3 upload intent, private S3 objects, protected preview intent, object key metadata, MIME type, byte size, and checksum capture | EXIF stripping, image normalization, thumbnails, lifecycle, KMS key policy, and CDN/object access policy hardening |
-| Java grading | Optional Spring Boot service plus identical Node fallback for deterministic local reliability | Keep separate only when grading rules need independent ownership, versioning, or reuse |
-| Report generation | Async-shaped job model with deterministic local provider | Queue/Step Functions workflow with model retries, DLQ, provider telemetry, and reviewer approval |
+| Python grading | Optional FastAPI service plus identical Node fallback for deterministic local reliability | Keep separate only when grading rules need independent ownership, versioning, or reuse |
+| Report generation | Async-shaped job model with deterministic local provider | Dedicated queue or Step Functions orchestration only if report retries, waits, and branch logic justify the extra control plane |
 
 ## Tech Stack
 
 - React, TypeScript, Vite, React Router, CSS.
 - Node.js, Express, Zod, structured logging, request IDs.
 - Shared TypeScript schemas.
-- Java Spring Boot grading service.
+- Python FastAPI grading service.
 - Postgres schema and Drizzle table definitions.
 - Optional Postgres persistence mode using the existing `pg` client.
 - Local file snapshot persistence plus Neon Postgres persistence for the deployed backend.
 - S3-style image storage interface.
-- Queue-shaped image analysis jobs and Step Functions-style report jobs.
+- Queue-backed image analysis jobs and async-shaped report jobs.
 - Provider interfaces with deterministic local AI and Bedrock implementations.
-- Vitest, Supertest, React Testing Library, JUnit.
+- Vitest, Supertest, React Testing Library, pytest.
 - Terraform-managed AWS Lambda, API Gateway, S3, SQS/DLQ, Secrets Manager, Cognito, CloudWatch alarms, and dashboard.
 
 ## Local Setup
@@ -154,14 +221,15 @@ Open:
 - Web: `http://localhost:5173`
 - API health: `http://localhost:4000/api/health`
 
-Optional Java service:
+Optional Python service:
 
 ```bash
-cd services/grading-java
-mvn spring-boot:run
+cd services/grading-python
+python -m pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8080
 ```
 
-The API falls back to equivalent local grading rules when the Java service is not running so the inspection workflow remains usable.
+The API falls back to equivalent local grading rules when the Python service is not running so the inspection workflow remains usable.
 
 ## Environment Variables
 
@@ -169,11 +237,12 @@ Copy `.env.example` to `.env` if you want to customize:
 
 - `PORT`
 - `WEB_ORIGIN`
-- `DATABASE_URL`
 - `VISION_PROVIDER=local|bedrock`
 - `REPORT_PROVIDER=local|bedrock`
 - `GRADING_SERVICE_URL`
 - `PERSISTENCE_MODE=file|memory|postgres`
+- `ENABLE_REFERENCE_EVIDENCE=true|false`
+- `ENABLE_EVALUATION_MODE=true|false`
 - `INSPECTIQ_STORE_FILE`
 - `DATABASE_URL`
 - `IMAGE_BUCKET`
@@ -182,7 +251,15 @@ Copy `.env.example` to `.env` if you want to customize:
 - `AUTH_MODE=jwt`
 - `OIDC_ISSUER`
 - `OIDC_AUDIENCE`
+- `DEFAULT_AUTH_ROLE=inspector`
+- `REQUIRE_JWT_ROLE_CLAIM=false|true`
+- `AUTH_ADMIN_EMAILS`
+- `AUTH_REVIEWER_EMAILS`
+- `AUTH_INSPECTOR_EMAILS`
 - `VITE_AUTH_MODE=oidc`
+- `VITE_DEFAULT_AUTH_ROLE=inspector`
+- `VITE_ENABLE_REFERENCE_EVIDENCE=true|false`
+- `VITE_ENABLE_EVALUATION_MODE=true|false`
 - `VITE_COGNITO_DOMAIN`
 - `VITE_COGNITO_CLIENT_ID`
 
@@ -195,6 +272,15 @@ npm run dev:api
 ```
 
 The API applies `apps/api/src/db/schema.sql` on startup, loads existing rows, and persists workflow mutations back to Postgres. Local file mode remains the default for reliable interview walkthroughs.
+
+Refresh reference inspection data:
+
+```bash
+npm run seed
+PERSISTENCE_MODE=postgres DATABASE_URL='postgres://user:password@host/db' npm run seed
+```
+
+The seed command replaces the persisted reference queue with VIN-specific listing evidence for the listed vehicles. VIN plate and odometer closeups are generated per vehicle only when the public listing does not expose that required angle. Deployed AWS infrastructure sets `ENABLE_REFERENCE_EVIDENCE=false`; production users upload captured photos instead of loading reference sets through the UI.
 
 Vision evaluation:
 
@@ -339,13 +425,45 @@ npm run test:e2e
 
 The API tests cover the full create-to-finalize flow, upload intent metadata, image-analysis job records, readiness blockers, schema validation failures, evidence completeness gates, AI suggestion review, SLA assignment metadata, audit trail events, buyer-ready report export, and post-finalization immutability guards. The browser E2E script covers role-specific dashboard context, create -> attach photos -> analyze -> reviewer SLA queue -> reviewer acceptance -> grade -> draft report -> finalize -> export buyer report -> audit verification through the rendered React app.
 
-The live hosted flow has also been verified against Cognito sign-in, presigned S3 upload, protected preview intent, rendered object-storage image, Bedrock-backed image-analysis completion, and desktop/tablet/mobile overflow checks.
-
-Java tests:
+Capture viewport regression evidence:
 
 ```bash
-cd services/grading-java
-mvn test
+PERSISTENCE_MODE=memory npm run dev
+npm run test:screenshots
+```
+
+This writes dashboard, inspection workbench, suggestions queue, damage, reports, audit, platform health, and mobile capture screenshots to `docs/images/regression`.
+
+Generate the 90-second walkthrough artifact:
+
+```bash
+PERSISTENCE_MODE=memory npm run dev
+npm run proof:video
+```
+
+This writes `docs/images/inspectiq-proof.webm` and records the role-separated local flow from login through finalization and Platform Health.
+
+Run the deployed uploaded-photo proof against Cognito, S3, SQS, Bedrock, Neon persistence, reviewer approval, report finalization, and audit events:
+
+```bash
+npm run prepare:live-photos -- --out /tmp/inspectiq-live-photos-ford
+
+LIVE_API_BASE_URL=https://imml0cczh7.execute-api.us-east-1.amazonaws.com \
+LIVE_ID_TOKEN="$(cat /tmp/inspectiq-live-auth/inspector.idtoken)" \
+LIVE_REVIEWER_TOKEN="$(cat /tmp/inspectiq-live-auth/reviewer.idtoken)" \
+LIVE_REQUIRE_SEPARATE_ROLES=true \
+LIVE_PHOTO_DIR=/tmp/inspectiq-live-photos-ford \
+npm run test:live-upload
+```
+
+See `docs/live-production-proof.md` for the AWS CLI commands that mint separate Inspector and Reviewer JWTs from Cognito. The proof fails if it uses inline/sample evidence, misses Bedrock analysis, skips reviewer confirmation, leaves buyer-visible release blocked, or lacks required audit events.
+
+Python tests:
+
+```bash
+cd services/grading-python
+python -m pip install -r requirements.txt
+python -m pytest
 ```
 
 ## Observability
@@ -362,7 +480,7 @@ Production metrics include image analysis success rate, image retake rate, image
 
 ## Security
 
-Local review uses role-aware UI controls and API RBAC for Inspector, Reviewer, and Admin workflows. The deployed path uses Cognito hosted OIDC, API Gateway JWT enforcement, Lambda-side JWT/JWKS validation, object-level authorization, S3 presigned uploads, protected short-lived image preview URLs, encrypted S3 storage, Secrets Manager, and least-privilege IAM.
+Local review uses role-aware UI controls and API RBAC for Inspector, Reviewer, and Admin workflows. The deployed path uses Cognito hosted OIDC, API Gateway JWT enforcement, Lambda-side JWT/JWKS validation, Cognito group or role-claim mapping, optional email-based bootstrap role mapping for owner/operator accounts, least-privilege Inspector fallback for authenticated users without an app role claim, object-level authorization, S3 presigned uploads, protected short-lived image preview URLs, encrypted S3 storage, Secrets Manager, and least-privilege IAM. Set `REQUIRE_JWT_ROLE_CLAIM=true` after Cognito groups are fully managed to fail closed on unmapped missing role claims.
 
 ## AWS Deployment Architecture
 
@@ -417,8 +535,8 @@ Handled or documented:
 
 I would discuss:
 
-- Keep the current row-level Postgres store bridge for the hosted walkthrough; move hot paths to direct DB-first repository methods before high-concurrency multi-reviewer production use.
-- Keep Java grading separate only if condition rules are independently owned, versioned, or reused outside the Node API.
+- Keep the current deterministic row-delta Postgres store bridge for the hosted walkthrough; move hot paths to direct DB-first repository methods before high-concurrency multi-reviewer production use.
+- Keep Python grading separate only if condition rules are independently owned, versioned, or reused outside the Node API.
 - Stay on Lambda for the current bursty image-analysis worker; consider containers only if native image tooling or runtime duration outgrows Lambda limits.
 - Treat Bedrock output as untrusted input: validate schemas, store raw and validated output, and require human confirmation before facts affect reports.
 - Use presigned S3 uploads with MIME validation, object-level authorization, checksum capture, and lifecycle policies.

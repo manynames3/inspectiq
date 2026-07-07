@@ -7,6 +7,14 @@ function roleLabel(role: string): string {
 }
 
 export function requireAction(actor: Actor, action: RoleAction): void {
+  if (isEvaluationActor(actor)) {
+    throw forbidden("Evaluation workspace is read-only. Sign in with Cognito to perform workflow actions.", {
+      action,
+      actorId: actor.id,
+      actorRole: actor.role
+    });
+  }
+
   if (canRole(actor.role, action)) return;
 
   const allowedRoles = rolesForAction(action).map(roleLabel).join(" or ");
@@ -18,6 +26,10 @@ export function requireAction(actor: Actor, action: RoleAction): void {
       allowedRoles: rolesForAction(action)
     }
   );
+}
+
+export function isEvaluationActor(actor: Actor): boolean {
+  return actor.id.startsWith("evaluation-");
 }
 
 export function canAccessInspection(actor: Actor, inspection: Inspection): boolean {

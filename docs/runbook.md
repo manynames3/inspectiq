@@ -36,7 +36,7 @@ Common failures:
 - Upload metadata rejected: verify presigned mode includes the configured image bucket, an object key under `inspections/:inspectionId/photos/`, byte size, and SHA-256 checksum.
 - Browser preview upload rejected: local data-URL fallback is limited to small JPEG/PNG/WebP files because the API JSON body is capped for safety.
 - Image analysis stuck pending: inspect `image_analysis_jobs` for queued/running/failed/dead_letter status and retry or request retake.
-- Java grading service unavailable: the API falls back to identical local grading rules for workflow continuity.
+- Python grading service unavailable: the API falls back to identical local grading rules for workflow continuity.
 - Report generation failed: check provider env vars and retry the job endpoint.
 - Incomplete inspection: accept photo-angle suggestions for all required photo angles.
 - Finalization blocked: call `/api/inspections/:id/readiness` and resolve blocker issues before releasing the buyer-visible report.

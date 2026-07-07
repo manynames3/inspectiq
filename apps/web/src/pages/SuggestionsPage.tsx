@@ -54,6 +54,7 @@ function cleanExplanation(value: string): string {
   return value
     .replaceAll("_", " ")
     .replace(/\s*AI suggestion\s*-\s*requires human confirmation\.?/i, "")
+    .replace(/\s*Reviewer confirmation required(?: before approval)?\.?/i, "")
     .replace(/\bvin\b/gi, "VIN")
     .trim();
 }
@@ -204,7 +205,7 @@ function suggestionRank(suggestion: VisionSuggestion) {
 }
 
 export function SuggestionsPage() {
-  const { actor, can } = useActor();
+  const { actor, can, isEvaluationMode } = useActor();
   const [records, setRecords] = useState<InspectionReviewRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -310,8 +311,8 @@ export function SuggestionsPage() {
       </div>
       {!canReviewSuggestions ? (
         <div className="role-callout role-restricted">
-          <strong>Reviewer or Admin access required</strong>
-          <span>Inspectors can create inspections, attach photos, and run analysis; reviewers approve or reject the resulting suggestions.</span>
+          <strong>{isEvaluationMode ? "Read-only evaluation workspace" : "Reviewer or Admin access required"}</strong>
+          <span>{isEvaluationMode ? "Queue data is visible for review. Sign in with Cognito to accept, reject, edit, or assign findings." : "Inspectors can create inspections, attach photos, and run analysis; reviewers approve or reject the resulting suggestions."}</span>
         </div>
       ) : null}
       {error ? <div className="error-banner">{error}</div> : null}
@@ -472,7 +473,7 @@ export function SuggestionsPage() {
                             <button
                               className="accept-button"
                               disabled={busyId === suggestion.id || !canReviewSuggestions}
-                              title={canReviewSuggestions ? undefined : "Reviewer or Admin access required"}
+                              title={canReviewSuggestions ? undefined : isEvaluationMode ? "Sign in with Cognito to change findings." : "Reviewer or Admin access required"}
                               onClick={() => void reviewSuggestion(suggestion.id, "accept")}
                             >
                               <Check size={15} /> Accept
@@ -480,7 +481,7 @@ export function SuggestionsPage() {
                             <button
                               className="reject-button"
                               disabled={busyId === suggestion.id || !canReviewSuggestions}
-                              title={canReviewSuggestions ? undefined : "Reviewer or Admin access required"}
+                              title={canReviewSuggestions ? undefined : isEvaluationMode ? "Sign in with Cognito to change findings." : "Reviewer or Admin access required"}
                               onClick={() => void reviewSuggestion(suggestion.id, "reject")}
                             >
                               <X size={15} /> Reject

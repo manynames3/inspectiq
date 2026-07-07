@@ -147,6 +147,48 @@
       "expectedAngle": "front",
       "expectedDamagePresent": false,
       "expectedRetakeRequired": true
+    },
+    {
+      "id": "glare_front_retake_guidance",
+      "sampleKey": "glare-front",
+      "expectedAngle": "front",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": true
+    },
+    {
+      "id": "bad_side_angle_retake_guidance",
+      "sampleKey": "bad-angle-side",
+      "expectedAngle": "driver_side",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": true
+    },
+    {
+      "id": "dark_interior_retake_guidance",
+      "sampleKey": "dark-interior",
+      "expectedAngle": "interior",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": true
+    },
+    {
+      "id": "partial_vin_plate_retake",
+      "sampleKey": "partial-vin-plate",
+      "expectedAngle": "vin_plate",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": true
+    },
+    {
+      "id": "dirty_odometer_retake",
+      "sampleKey": "dirty-odometer",
+      "expectedAngle": "odometer",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": true
+    },
+    {
+      "id": "auction_lane_front_no_false_damage",
+      "sampleKey": "auction-lane-front",
+      "expectedAngle": "front",
+      "expectedDamagePresent": false,
+      "expectedRetakeRequired": false
     }
   ]
 }
