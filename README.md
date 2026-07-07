@@ -12,6 +12,14 @@ Hiring-manager review link: https://inspectiq.pages.dev/?review=1
 
 The hosted walkthrough offers a read-only Evaluation Workspace for public review. Cognito review credentials are available on request for the authenticated Inspector/Reviewer/Admin production proof path.
 
+## Who This Is For
+
+InspectIQ is built for wholesale and offsite vehicle inspection teams: inspectors capturing required photo evidence, reviewers validating AI-assisted findings, and operations leads monitoring condition-report readiness, failed image jobs, and audit history.
+
+The product standardizes how vehicle evidence moves from capture to human review to buyer-visible condition reporting. It helps teams reduce incomplete inspections, inconsistent damage facts, weak photo evidence, arbitration risk, and untraceable AI-assisted decisions.
+
+The core value is workflow reliability. AI can suggest required photo angles, image-quality issues, OCR values, and visible damage candidates, but reviewers approve facts before they affect CR readiness, VDP visibility, recon estimates, arbitration risk, or final reports.
+
 ## Production Proof At A Glance
 
 | Proof point | Current evidence |
