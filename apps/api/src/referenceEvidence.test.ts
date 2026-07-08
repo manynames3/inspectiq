@@ -88,4 +88,32 @@ describe("reference evidence reconciliation", () => {
     expect(passengerPhoto!.detectedAngleConfidence).toBe(0.94);
     expect(passengerPhoto!.qualityStatus).toBe("ok");
   });
+
+  it("repairs stale Toyota Camry front reference evidence to the direct front image", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const camry = [...store.inspections.values()].find((inspection) => inspection.vin === "4T1G11AK0MU520503");
+    expect(camry).toBeTruthy();
+
+    const frontPhoto = [...store.photos.values()].find((photo) =>
+      photo.inspectionId === camry?.id &&
+      photo.objectKey === "sample-images/toyota-camry-front"
+    );
+    expect(frontPhoto).toBeTruthy();
+
+    frontPhoto!.objectBucket = "inspectiq-prod-images";
+    frontPhoto!.objectKey = "uploads/reference-evidence/2021-toyota-camry-4t1g11ak0mu520503/front-old.jpg";
+    frontPhoto!.storageKey = "https://pictures.dealer.com/a/autonationhondaofrenton/1957/c7b577ac16141bbc1161d145810ad97cx.jpg";
+    frontPhoto!.thumbnailStorageKey = frontPhoto!.storageKey;
+    frontPhoto!.detectedAngleConfidence = 0.95;
+    frontPhoto!.qualityStatus = "ok";
+
+    expect(reconcileReferenceEvidence(store)).toBe(true);
+
+    expect(frontPhoto!.storageKey).toBe("https://pictures.dealer.com/a/autonationhondaofrenton/0484/002c87ec96ae6c3cb575e0ce2e4029f0x.jpg");
+    expect(frontPhoto!.declaredAngle).toBe("front");
+    expect(frontPhoto!.detectedAngle).toBe("front");
+    expect(frontPhoto!.detectedAngleConfidence).toBe(0.95);
+    expect(frontPhoto!.qualityStatus).toBe("ok");
+  });
 });
