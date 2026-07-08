@@ -218,14 +218,27 @@ type UploadIntent = {
 };
 
 function photoImageUrl(photo: VehiclePhoto): string {
+  if (isDirectPreviewStorageKey(photo.storageKey)) return assetUrl(photo.storageKey);
   if (photo.objectBucket && photo.objectKey && photo.objectBucket !== "inspectiq-sample-images") {
     return apiUrl(`/api/photos/${photo.id}/image`);
   }
   return assetUrl(photo.storageKey);
 }
 
+function isDirectPreviewStorageKey(storageKey: string): boolean {
+  return storageKey.startsWith("http://")
+    || storageKey.startsWith("https://")
+    || storageKey.startsWith("data:")
+    || storageKey.startsWith("/sample-images/");
+}
+
 function needsAuthenticatedImageFetch(photo: VehiclePhoto): boolean {
-  return Boolean(photo.objectBucket && photo.objectKey && photo.objectBucket !== "inspectiq-sample-images");
+  return Boolean(
+    photo.objectBucket &&
+    photo.objectKey &&
+    photo.objectBucket !== "inspectiq-sample-images" &&
+    !isDirectPreviewStorageKey(photo.storageKey)
+  );
 }
 
 async function uploadInspectionPhoto(inspectionId: string, file: File, actor: ReturnType<typeof useActor>["actor"]) {
