@@ -555,6 +555,36 @@ describe("InspectIQ API", () => {
     });
   });
 
+  it("returns external reference-evidence URLs without S3 presigning", async () => {
+    process.env.IMAGE_UPLOAD_MODE = "presigned";
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+    const storageKey = "https://example.test/reference-evidence/passenger-side.jpg";
+    const photo = store.addPhoto({
+      inspectionId,
+      originalFilename: "2020-honda-accord-passenger-side.jpg",
+      mimeType: "image/jpeg",
+      objectBucket: "inspectiq-test-images",
+      objectKey: `uploads/reference-evidence/${inspectionId}/passenger-side.jpg`,
+      storageKey,
+      byteSize: 2048,
+      checksumSha256: "n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg=",
+      uploadedBy: inspectorHeaders["x-actor-id"],
+      declaredAngle: "passenger_side"
+    }, { id: inspectorHeaders["x-actor-id"], name: inspectorHeaders["x-actor-name"], role: "inspector" });
+
+    const imagePreview = await request(api)
+      .get(`/api/photos/${photo.id}/image?intent=preview`)
+      .set(reviewerHeaders)
+      .expect(200);
+
+    expect(imagePreview.body.data).toMatchObject({
+      imageUrl: storageKey,
+      expiresInSeconds: null,
+      source: "reference-evidence"
+    });
+  });
+
   it("allows read-only evaluation preview without allowing mutations", async () => {
     process.env.AUTH_MODE = "jwt";
     process.env.ENABLE_EVALUATION_MODE = "true";

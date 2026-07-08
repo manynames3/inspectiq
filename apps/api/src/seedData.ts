@@ -1,4 +1,4 @@
-import { findSampleImageByObjectKey, sampleBundles, sampleImages } from "./sampleImages.js";
+import { findSampleImageByObjectKey, sampleBundles, sampleImages, type SampleImage } from "./sampleImages.js";
 import type { Actor, DamageItem, VehiclePhoto } from "./domain.js";
 import { MemoryStore } from "./store.js";
 import type { DamageSeverity, DamageType, PhotoAngle, VisionOutput } from "@inspectiq/shared";
@@ -98,11 +98,27 @@ function sameJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function isReferenceEvidencePhoto(photo: VehiclePhoto, sample: SampleImage): boolean {
+  if (photo.objectBucket === "inspectiq-sample-images") return true;
+  if (photo.objectKey?.includes("/reference-evidence/")) return true;
+  if (photo.sourceUrl && sample.sourceUrl && photo.sourceUrl === sample.sourceUrl) return true;
+  return Boolean(photo.sourceName && sample.sourceName && photo.sourceName === sample.sourceName);
+}
+
+function findReferenceSampleForPhoto(photo: VehiclePhoto): SampleImage | undefined {
+  const objectKeySample = findSampleImageByObjectKey(photo.objectKey);
+  if (objectKeySample) return objectKeySample;
+
+  const filenameSample = sampleImages.find((sample) => sample.filename === photo.originalFilename);
+  if (filenameSample && isReferenceEvidencePhoto(photo, filenameSample)) return filenameSample;
+
+  return undefined;
+}
+
 export function reconcileReferenceEvidence(store: MemoryStore): boolean {
   let changed = false;
   for (const photo of store.photos.values()) {
-    if (photo.objectBucket !== "inspectiq-sample-images") continue;
-    const sample = findSampleImageByObjectKey(photo.objectKey);
+    const sample = findReferenceSampleForPhoto(photo);
     if (!sample) continue;
 
     const inspection = store.inspections.get(photo.inspectionId);

@@ -558,15 +558,22 @@ export function InspectionDetailPage() {
   async function load() {
     if (!id) return;
     setError(null);
-    const [nextBundle, nextInspections, health] = await Promise.all([
-      api<InspectionBundle>(`/api/inspections/${id}`, {}, actor),
+    const nextBundle = await api<InspectionBundle>(`/api/inspections/${id}`, {}, actor);
+    setBundle(nextBundle);
+    setReportBody(nextBundle.finalReport?.reportBody ?? "");
+
+    const [nextInspections, health] = await Promise.allSettled([
       api<Inspection[]>("/api/inspections", {}, actor),
       api<{ samplePhotoSets?: SamplePhotoSet[] }>("/api/platform-health")
     ]);
-    setBundle(nextBundle);
-    setInspections(nextInspections);
-    setReportBody(nextBundle.finalReport?.reportBody ?? "");
-    setSamplePhotoSets(health.samplePhotoSets ?? []);
+    if (nextInspections.status === "fulfilled") {
+      setInspections(nextInspections.value);
+    } else {
+      setInspections([nextBundle.inspection]);
+    }
+    if (health.status === "fulfilled") {
+      setSamplePhotoSets(health.value.samplePhotoSets ?? []);
+    }
   }
 
   async function runAction(label: string, action: () => Promise<unknown>) {

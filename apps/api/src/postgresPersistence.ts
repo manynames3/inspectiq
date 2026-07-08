@@ -19,6 +19,7 @@ import type {
 import type { MemoryStore } from "./store.js";
 
 const POSTGRES_ROW_STORE_LOCK_KEY = "7803144587035695001";
+const retryablePostgresCodes = new Set(["40001", "40P01", "55P03"]);
 
 function schemaPath(): string {
   const candidates = [
@@ -46,6 +47,21 @@ function num(value: unknown): number {
 function nullableNum(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   return num(value);
+}
+
+function postgresErrorCode(error: unknown): string | null {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : null;
+}
+
+function isRetryablePostgresError(error: unknown): boolean {
+  const code = postgresErrorCode(error);
+  return Boolean(code && retryablePostgresCodes.has(code));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function upsertRows(client: PoolClient, table: string, columns: string[], rows: unknown[][]): Promise<void> {
@@ -605,7 +621,7 @@ async function writeChangedPostgresRowsFromStore(store: MemoryStore, client: Poo
   rememberSnapshot(store);
 }
 
-export async function savePostgresRows(store: MemoryStore, pool: Pool): Promise<void> {
+async function savePostgresRowsOnce(store: MemoryStore, pool: Pool): Promise<void> {
   await migratePostgres(pool);
   const client = await pool.connect();
   try {
@@ -619,6 +635,19 @@ export async function savePostgresRows(store: MemoryStore, pool: Pool): Promise<
     throw error;
   } finally {
     client.release();
+  }
+}
+
+export async function savePostgresRows(store: MemoryStore, pool: Pool): Promise<void> {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await savePostgresRowsOnce(store, pool);
+      return;
+    } catch (error) {
+      if (attempt === maxAttempts || !isRetryablePostgresError(error)) throw error;
+      await delay(50 * attempt * attempt);
+    }
   }
 }
 
