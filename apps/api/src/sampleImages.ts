@@ -315,6 +315,12 @@ export function findSampleImage(sampleKey: string): SampleImage | undefined {
   return sampleImages.find((sample) => sample.key === sampleKey);
 }
 
+export function findSampleImageByObjectKey(objectKey: string | null | undefined): SampleImage | undefined {
+  const match = objectKey?.match(/^sample-images\/(.+)$/);
+  if (!match) return undefined;
+  return findSampleImage(match[1]);
+}
+
 export function sampleImageDirectory(): string {
   const candidates = [
     process.env.SAMPLE_IMAGE_DIR,

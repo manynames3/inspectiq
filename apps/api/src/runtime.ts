@@ -3,6 +3,7 @@ import { createApp } from "./app.js";
 import { loadPostgresRows, savePostgresRows } from "./postgresPersistence.js";
 import { createPostgresPool } from "./postgresPool.js";
 import { resolveDatabaseUrl } from "./runtimeConfig.js";
+import { reconcileReferenceEvidence } from "./seedData.js";
 import { store } from "./store.js";
 import { loadStoreSnapshot, saveStoreSnapshot } from "./storeSnapshot.js";
 
@@ -32,11 +33,13 @@ export async function createRuntime(): Promise<Runtime> {
       : persistLocally
         ? await loadStoreSnapshot(store)
         : false;
+    const reconciledReferenceEvidence = reconcileReferenceEvidence(store);
 
     const app = createApp(store, {
       beforeRequest: persistPostgres && pool
         ? async () => {
           await loadPostgresRows(store, pool);
+          reconcileReferenceEvidence(store);
         }
         : undefined,
       afterMutation: persistPostgres && pool
@@ -46,10 +49,10 @@ export async function createRuntime(): Promise<Runtime> {
           : undefined
     });
 
-    if (persistPostgres && pool && !loadedStore) {
+    if (persistPostgres && pool && (!loadedStore || reconciledReferenceEvidence)) {
       await savePostgresRows(store, pool);
     }
-    if (persistLocally && !loadedStore) {
+    if (persistLocally && (!loadedStore || reconciledReferenceEvidence)) {
       await saveStoreSnapshot(store);
     }
 

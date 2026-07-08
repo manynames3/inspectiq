@@ -1,5 +1,5 @@
-import { sampleBundles, sampleImages } from "./sampleImages.js";
-import type { Actor, DamageItem } from "./domain.js";
+import { findSampleImageByObjectKey, sampleBundles, sampleImages } from "./sampleImages.js";
+import type { Actor, DamageItem, VehiclePhoto } from "./domain.js";
 import { MemoryStore } from "./store.js";
 import type { DamageSeverity, DamageType, PhotoAngle, VisionOutput } from "@inspectiq/shared";
 
@@ -86,6 +86,95 @@ function referenceVisionOutput(input: {
     extractedText,
     humanReviewRequired: input.angle === "vin_plate" || input.angle === "odometer"
   };
+}
+
+function setIfChanged<T extends keyof VehiclePhoto>(photo: VehiclePhoto, key: T, value: VehiclePhoto[T]): boolean {
+  if (photo[key] === value) return false;
+  photo[key] = value;
+  return true;
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function reconcileReferenceEvidence(store: MemoryStore): boolean {
+  let changed = false;
+  for (const photo of store.photos.values()) {
+    if (photo.objectBucket !== "inspectiq-sample-images") continue;
+    const sample = findSampleImageByObjectKey(photo.objectKey);
+    if (!sample) continue;
+
+    const inspection = store.inspections.get(photo.inspectionId);
+    const storageKey = sample.storageKey ?? `/sample-images/${sample.filename}`;
+    const output = referenceVisionOutput({
+      angle: sample.angle,
+      storageKey,
+      vin: inspection?.vin ?? "",
+      mileage: inspection?.mileage ?? 0
+    });
+
+    changed = setIfChanged(photo, "storageKey", storageKey) || changed;
+    changed = setIfChanged(photo, "thumbnailStorageKey", storageKey) || changed;
+    changed = setIfChanged(photo, "originalFilename", sample.filename) || changed;
+    changed = setIfChanged(photo, "mimeType", sample.mimeType) || changed;
+    changed = setIfChanged(photo, "sourceName", sample.sourceName ?? null) || changed;
+    changed = setIfChanged(photo, "sourceUrl", sample.sourceUrl ?? null) || changed;
+    changed = setIfChanged(photo, "sourceLicense", sample.sourceLicense ?? null) || changed;
+    changed = setIfChanged(photo, "declaredAngle", sample.angle) || changed;
+    changed = setIfChanged(photo, "detectedAngle", output.photoAngle) || changed;
+    changed = setIfChanged(photo, "detectedAngleConfidence", output.confidence) || changed;
+    changed = setIfChanged(photo, "qualityStatus", output.qualityWarnings.length > 0 ? "warning" : "ok") || changed;
+    changed = setIfChanged(photo, "analysisStatus", "completed") || changed;
+
+    for (const analysis of store.analyses.values()) {
+      if (analysis.photoId !== photo.id || analysis.status !== "completed") continue;
+      const raw = {
+        source: "reference-import",
+        filename: sample.filename,
+        angle: sample.angle
+      };
+      if (analysis.provider !== "referenceImportProvider") {
+        analysis.provider = "referenceImportProvider";
+        changed = true;
+      }
+      if (analysis.promptVersion !== "photo-import-v1") {
+        analysis.promptVersion = "photo-import-v1";
+        changed = true;
+      }
+      if (!sameJson(analysis.rawModelOutputJson, raw)) {
+        analysis.rawModelOutputJson = raw;
+        changed = true;
+      }
+      if (!sameJson(analysis.validatedOutputJson, output)) {
+        analysis.validatedOutputJson = output;
+        changed = true;
+      }
+      if (analysis.confidence !== output.confidence) {
+        analysis.confidence = output.confidence;
+        changed = true;
+      }
+    }
+
+    for (const suggestion of store.suggestions.values()) {
+      if (suggestion.photoId !== photo.id || suggestion.suggestionType !== "photo_angle") continue;
+      const suggestedValue = { photoAngle: output.photoAngle };
+      const explanation = `Likely photo angle: ${output.photoAngle}. Reviewer confirmation required.`;
+      if (!sameJson(suggestion.suggestedValueJson, suggestedValue)) {
+        suggestion.suggestedValueJson = suggestedValue;
+        changed = true;
+      }
+      if (suggestion.confidence !== output.confidence) {
+        suggestion.confidence = output.confidence;
+        changed = true;
+      }
+      if (suggestion.explanation !== explanation) {
+        suggestion.explanation = explanation;
+        changed = true;
+      }
+    }
+  }
+  return changed;
 }
 
 function analyzeImportedPhoto(store: MemoryStore, input: {
