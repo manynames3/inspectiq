@@ -10,6 +10,7 @@ import type {
   DamageItem,
   FinalReport,
   ImageAnalysisJob,
+  IdentityVerification,
   Inspection,
   PhotoAnalysisResult,
   User,
@@ -89,6 +90,7 @@ type StoreMapName =
   | "analyses"
   | "suggestions"
   | "damageItems"
+  | "identityVerifications"
   | "conditionGrades"
   | "reportJobs"
   | "reportDrafts"
@@ -111,6 +113,7 @@ const storeMapNames: StoreMapName[] = [
   "analyses",
   "suggestions",
   "damageItems",
+  "identityVerifications",
   "conditionGrades",
   "reportJobs",
   "reportDrafts",
@@ -125,6 +128,7 @@ const storeMapToTable: Record<StoreMapName, string> = {
   analyses: "photo_analysis_results",
   suggestions: "vision_suggestions",
   damageItems: "damage_items",
+  identityVerifications: "identity_verifications",
   conditionGrades: "condition_grades",
   reportJobs: "ai_report_jobs",
   reportDrafts: "ai_report_drafts",
@@ -290,6 +294,20 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         createdAt: iso(record.created_at),
         updatedAt: iso(record.updated_at)
       } satisfies DamageItem);
+    }
+
+    for (const row of (await client.query("select * from identity_verifications order by verified_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.identityVerifications.set(record.id, {
+        id: record.id,
+        inspectionId: record.inspection_id,
+        photoId: record.photo_id,
+        field: record.field,
+        value: record.value,
+        sourceSuggestionId: record.source_suggestion_id,
+        verifiedBy: record.verified_by,
+        verifiedAt: iso(record.verified_at)
+      } satisfies IdentityVerification);
     }
 
     for (const row of (await client.query("select * from condition_grades order by created_at, id")).rows) {
@@ -503,6 +521,20 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
         record.confirmedBy,
         record.createdAt,
         record.updatedAt
+      ])
+    },
+    {
+      table: "identity_verifications",
+      columns: ["id", "inspection_id", "photo_id", "field", "value", "source_suggestion_id", "verified_by", "verified_at"],
+      rows: [...store.identityVerifications.values()].map((record) => [
+        record.id,
+        record.inspectionId,
+        record.photoId,
+        record.field,
+        record.value,
+        record.sourceSuggestionId,
+        record.verifiedBy,
+        record.verifiedAt
       ])
     },
     {

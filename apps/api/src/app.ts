@@ -180,6 +180,49 @@ function reportBodyFromDraft(output: unknown): string {
   ].join("\n");
 }
 
+async function draftInspectionReport(store: MemoryStore, inspection: Inspection, actor: Actor, idempotencyKey: string | null) {
+  const grade = store.latestGrade(inspection.id);
+  if (!grade) throw conflict("Calculate the condition grade before requesting a report draft.");
+  if (inspection.status !== "GRADED" && inspection.status !== "REPORT_FAILED" && inspection.status !== "HUMAN_REVIEW_REQUIRED") {
+    throw conflict(`Cannot request AI report from status ${inspection.status}.`);
+  }
+  const job = store.createReportJob(inspection.id, idempotencyKey, actor);
+  store.markJobRunning(job.id);
+  const provider = getReportProvider();
+  try {
+    const damageItems = store.listDamage(inspection.id);
+    const missingEvidence = store.missingRequiredEvidence(inspection.id);
+    const result = await provider.generate({
+      inspection,
+      grade,
+      missingEvidence,
+      damageItems
+    });
+    const draft = store.completeReportJob(job.id, {
+      inspectionId: inspection.id,
+      jobId: job.id,
+      provider: provider.name,
+      promptVersion: provider.promptVersion,
+      inputSummaryJson: {
+        gradeId: grade.id,
+        damageItemCount: damageItems.length,
+        missingEvidence
+      },
+      outputJson: result.validated,
+      confidence: result.validated.confidence,
+      humanReviewRequired: result.validated.humanReviewRequired,
+      validationStatus: "valid"
+    }, reportBodyFromDraft(result.validated), actor);
+    return {
+      job,
+      draft,
+      finalReport: store.latestFinalReport(inspection.id)
+    };
+  } catch (error) {
+    return store.failReportJob(job.id, error instanceof Error ? error.message : "Unknown report provider failure.", actor);
+  }
+}
+
 function objectKeyForUpload(inspectionId: string, filename: string): string {
   const cleanName = filename.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 120);
   return `inspections/${inspectionId}/photos/${crypto.randomUUID()}-${cleanName}`;
@@ -743,47 +786,9 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "report:draft");
     const inspection = inspectionForRequest(appStore, req.params.id, actor, "draft a report for this inspection");
-    const grade = appStore.latestGrade(inspection.id);
-    if (!grade) throw conflict("Calculate the condition grade before requesting a report draft.");
-    if (inspection.status !== "GRADED" && inspection.status !== "REPORT_FAILED" && inspection.status !== "HUMAN_REVIEW_REQUIRED") {
-      throw conflict(`Cannot request AI report from status ${inspection.status}.`);
-    }
-    const job = appStore.createReportJob(inspection.id, req.header("idempotency-key") ?? req.body?.idempotencyKey ?? null, actor);
-    appStore.markJobRunning(job.id);
-    const provider = getReportProvider();
-    try {
-      const result = await provider.generate({
-        inspection,
-        grade,
-        missingEvidence: appStore.missingRequiredEvidence(inspection.id),
-        damageItems: appStore.listDamage(inspection.id)
-      });
-      const draft = appStore.completeReportJob(job.id, {
-        inspectionId: inspection.id,
-        jobId: job.id,
-        provider: provider.name,
-        promptVersion: provider.promptVersion,
-        inputSummaryJson: {
-          gradeId: grade.id,
-          damageItemCount: appStore.listDamage(inspection.id).length,
-          missingEvidence: appStore.missingRequiredEvidence(inspection.id)
-        },
-        outputJson: result.validated,
-        confidence: result.validated.confidence,
-        humanReviewRequired: result.validated.humanReviewRequired,
-        validationStatus: "valid"
-      }, reportBodyFromDraft(result.validated), actor);
-      await persistMutation(options);
-      sendData(res, {
-        job: appStore.latestReportJob(inspection.id),
-        draft,
-        finalReport: appStore.latestFinalReport(inspection.id)
-      });
-    } catch (error) {
-      const failed = appStore.failReportJob(job.id, error instanceof Error ? error.message : "Unknown report provider failure.", actor);
-      await persistMutation(options);
-      sendData(res, failed, 502);
-    }
+    const result = await draftInspectionReport(appStore, inspection, actor, req.header("idempotency-key") ?? req.body?.idempotencyKey ?? null);
+    await persistMutation(options);
+    sendData(res, result, "status" in result && result.status === "failed" ? 502 : 200);
   }));
 
   app.get("/api/inspections/:id/ai-report", asyncRoute((req, res) => {
@@ -801,8 +806,11 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     requireAction(actor, "report:retry");
     const job = appStore.reportJobs.get(req.params.jobId);
     if (!job) throw validation("Unknown AI report job.");
-    inspectionForRequest(appStore, job.inspectionId, actor, "retry this report job");
-    sendData(res, { retryWith: `/api/inspections/${job.inspectionId}/ai-report` });
+    if (job.status !== "failed") throw conflict("Only failed report jobs can be retried.", { status: job.status });
+    const inspection = inspectionForRequest(appStore, job.inspectionId, actor, "retry this report job");
+    const result = await draftInspectionReport(appStore, inspection, actor, `retry:${job.id}:${Date.now()}`);
+    await persistMutation(options);
+    sendData(res, result, "status" in result && result.status === "failed" ? 502 : 200);
   }));
 
   app.get("/api/reports/:id/export", asyncRoute((req, res) => {

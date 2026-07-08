@@ -120,7 +120,9 @@ function roleFromPayload(payload: JwtPayload): Actor["role"] {
   const mappedRole = roleFromEmailMapping(payload);
   if (mappedRole) return mappedRole;
 
-  if (process.env.REQUIRE_JWT_ROLE_CLAIM === "true") return missingRoleClaimError();
+  const allowDefaultRoleFallback = process.env.ALLOW_JWT_DEFAULT_ROLE === "true"
+    || process.env.REQUIRE_JWT_ROLE_CLAIM === "false";
+  if (!allowDefaultRoleFallback) return missingRoleClaimError();
   return configuredDefaultRole();
 }
 

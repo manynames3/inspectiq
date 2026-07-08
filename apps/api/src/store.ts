@@ -23,6 +23,7 @@ import type {
   DamageItem,
   FinalReport,
   ImageAnalysisJob,
+  IdentityVerification,
   Inspection,
   InspectionBundle,
   OperationalMetric,
@@ -131,6 +132,7 @@ export class MemoryStore {
   reportJobs = new Map<string, AiReportJob>();
   reportDrafts = new Map<string, AiReportDraft>();
   finalReports = new Map<string, FinalReport>();
+  identityVerifications = new Map<string, IdentityVerification>();
   auditEvents = new Map<string, AuditEvent>();
 
   assertMutableInspection(inspectionId: string, action: string): Inspection {
@@ -153,6 +155,7 @@ export class MemoryStore {
     this.reportJobs.clear();
     this.reportDrafts.clear();
     this.finalReports.clear();
+    this.identityVerifications.clear();
     this.auditEvents.clear();
   }
 
@@ -429,7 +432,11 @@ export class MemoryStore {
 
     photo.detectedAngle = input.validated.photoAngle;
     photo.detectedAngleConfidence = input.validated.confidence;
-    photo.qualityStatus = input.validated.qualityWarnings.length > 0 ? "warning" : "ok";
+    photo.qualityStatus = input.validated.imageQuality.retakeRequired || input.validated.imageQuality.grade === "retake"
+      ? "fail"
+      : input.validated.qualityWarnings.length > 0 || input.validated.imageQuality.grade === "review"
+        ? "warning"
+        : "ok";
     photo.analysisStatus = "completed";
 
     if (input.jobId) {
@@ -622,6 +629,30 @@ export class MemoryStore {
       materializedDamageItemId = item.id;
     }
 
+    if (suggestion.suggestionType === "extracted_text") {
+      const textValue = value as { odometer?: string | null; vin?: string | null };
+      const materialized: Array<{ field: IdentityVerification["field"]; verificationId: string; value: string }> = [];
+      for (const field of ["vin", "odometer"] as const) {
+        const extracted = textValue[field]?.trim();
+        if (!extracted) continue;
+        const verification = this.upsertIdentityVerification({
+          inspectionId: suggestion.inspectionId,
+          photoId: suggestion.photoId,
+          field,
+          value: extracted,
+          sourceSuggestionId: suggestion.id,
+          verifiedBy: actor.id
+        }, actor);
+        materialized.push({ field, verificationId: verification.id, value: verification.value });
+      }
+      if (materialized.length > 0) {
+        this.addAudit(suggestion.inspectionId, actor, "identity.verified", {
+          suggestionId: suggestion.id,
+          verifications: materialized
+        });
+      }
+    }
+
     this.recomputeCompleteness(suggestion.inspectionId, actor);
     this.addAudit(suggestion.inspectionId, actor, "suggestion.accepted", {
       suggestionId: suggestion.id,
@@ -708,6 +739,55 @@ export class MemoryStore {
   listDamage(inspectionId: string): DamageItem[] {
     this.getInspection(inspectionId);
     return [...this.damageItems.values()].filter((item) => item.inspectionId === inspectionId);
+  }
+
+  upsertIdentityVerification(input: {
+    inspectionId: string;
+    photoId: string;
+    field: IdentityVerification["field"];
+    value: string;
+    sourceSuggestionId: string;
+    verifiedBy: string;
+  }, actor: Actor): IdentityVerification {
+    this.assertMutableInspection(input.inspectionId, "verify identity evidence");
+    this.getPhoto(input.photoId);
+    const existing = [...this.identityVerifications.values()].find((record) =>
+      record.inspectionId === input.inspectionId && record.field === input.field
+    );
+    const timestamp = now();
+    if (existing) {
+      existing.photoId = input.photoId;
+      existing.value = input.value;
+      existing.sourceSuggestionId = input.sourceSuggestionId;
+      existing.verifiedBy = input.verifiedBy;
+      existing.verifiedAt = timestamp;
+      this.addAudit(input.inspectionId, actor, "identity.verification_updated", {
+        verificationId: existing.id,
+        field: existing.field,
+        value: existing.value,
+        sourceSuggestionId: existing.sourceSuggestionId
+      });
+      return existing;
+    }
+    const verification: IdentityVerification = {
+      id: id(),
+      inspectionId: input.inspectionId,
+      photoId: input.photoId,
+      field: input.field,
+      value: input.value,
+      sourceSuggestionId: input.sourceSuggestionId,
+      verifiedBy: input.verifiedBy,
+      verifiedAt: timestamp
+    };
+    this.identityVerifications.set(verification.id, verification);
+    return verification;
+  }
+
+  listIdentityVerifications(inspectionId: string): IdentityVerification[] {
+    this.getInspection(inspectionId);
+    return [...this.identityVerifications.values()]
+      .filter((record) => record.inspectionId === inspectionId)
+      .sort((a, b) => a.field.localeCompare(b.field));
   }
 
   saveGrade(inspectionId: string, grade: Omit<ConditionGrade, "id" | "inspectionId" | "createdAt">, actor: Actor): ConditionGrade {
@@ -1086,6 +1166,7 @@ export class MemoryStore {
       imageAnalysisJobs: this.imageAnalysisJobsForInspection(inspectionId),
       suggestions: this.listSuggestions(inspectionId),
       damageItems: this.listDamage(inspectionId),
+      identityVerifications: this.listIdentityVerifications(inspectionId),
       conditionGrade: this.latestGrade(inspectionId),
       aiReportJob: this.latestReportJob(inspectionId),
       aiReportDraft: this.latestReportDraft(inspectionId),
@@ -1094,6 +1175,39 @@ export class MemoryStore {
       readinessIssues: this.readinessIssues(inspectionId),
       buyerVisibleReady: this.buyerVisibleReady(inspectionId)
     };
+  }
+
+  private confirmedAngleForPhoto(photo: VehiclePhoto): PhotoAngle | null {
+    const acceptedAngleSuggestion = this.listSuggestions(photo.inspectionId).find((suggestion) =>
+      suggestion.photoId === photo.id &&
+      suggestion.suggestionType === "photo_angle" &&
+      suggestion.status === "accepted"
+    );
+    if (acceptedAngleSuggestion) {
+      const parsed = PhotoAngleSuggestionSchema.safeParse(acceptedAngleSuggestion.suggestedValueJson);
+      if (parsed.success) return parsed.data.photoAngle;
+    }
+    return photo.declaredAngle ?? photo.detectedAngle;
+  }
+
+  private hasCleanReplacementEvidence(photo: VehiclePhoto): boolean {
+    const angle = this.confirmedAngleForPhoto(photo);
+    if (!angle || !requiredPhotoAngles.includes(angle as typeof requiredPhotoAngles[number])) return false;
+    const uploadedAt = Date.parse(photo.uploadedAt);
+    return this.listPhotos(photo.inspectionId).some((candidate) => {
+      if (candidate.id === photo.id) return false;
+      if (Date.parse(candidate.uploadedAt) <= uploadedAt) return false;
+      if (candidate.analysisStatus !== "completed" || candidate.qualityStatus !== "ok") return false;
+      return this.confirmedAngleForPhoto(candidate) === angle;
+    });
+  }
+
+  private qualityWarningLabel(suggestion: VisionSuggestion): string {
+    const photo = this.photos.get(suggestion.photoId);
+    const angle = photo ? this.confirmedAngleForPhoto(photo) : null;
+    return angle
+      ? `Retake ${angle.replaceAll("_", " ")} photo`
+      : "Image quality needs replacement";
   }
 
   readinessIssues(inspectionId: string): ReadinessIssue[] {
@@ -1132,6 +1246,21 @@ export class MemoryStore {
         label: "Image quality needs review",
         detail: suggestion.explanation,
         action: "Accept the retake requirement, reject it with reviewer rationale, or replace the image."
+      });
+    }
+    const acceptedQualityWarnings = suggestions.filter((suggestion) =>
+      suggestion.suggestionType === "quality_warning" &&
+      suggestion.status === "accepted"
+    );
+    for (const suggestion of acceptedQualityWarnings) {
+      const photo = this.photos.get(suggestion.photoId);
+      if (photo && this.hasCleanReplacementEvidence(photo)) continue;
+      issues.push({
+        type: "image_quality_retake",
+        severity: "blocker",
+        label: this.qualityWarningLabel(suggestion),
+        detail: suggestion.explanation,
+        action: "Capture and analyze a replacement image for the same required angle."
       });
     }
     const unreviewed = suggestions.filter((suggestion) =>

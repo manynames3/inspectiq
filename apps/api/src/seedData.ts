@@ -47,6 +47,11 @@ function referenceVisionOutput(input: {
   storageKey: string;
   vin: string;
   mileage: number;
+  referenceAngleConfidence?: number;
+  referenceQualityGrade?: "pass" | "review" | "retake";
+  referenceRetakeRequired?: boolean;
+  referenceQualityWarnings?: string[];
+  referenceQualityNotes?: string[];
 }): VisionOutput {
   const isBlurryRetake = input.storageKey.includes("blurry-front");
   const extractedText: VisionOutput["extractedText"] = {};
@@ -74,18 +79,27 @@ function referenceVisionOutput(input: {
     };
   }
 
+  const qualityWarnings = input.referenceQualityWarnings ?? [];
+  const qualityGrade = input.referenceQualityGrade ?? (input.angle === "interior" ? "review" : "pass");
   return {
     photoAngle: input.angle,
-    confidence: confidenceForAngle(input.angle),
+    confidence: input.referenceAngleConfidence ?? confidenceForAngle(input.angle),
     imageQuality: seedImageQuality({
-      grade: input.angle === "interior" ? "review" : "pass",
-      notes: [`Imported ${input.angle.replaceAll("_", " ")} image matched the required capture slot.`]
+      grade: qualityGrade,
+      retakeRequired: input.referenceRetakeRequired ?? qualityGrade === "retake",
+      notes: input.referenceQualityNotes ?? [`Imported ${input.angle.replaceAll("_", " ")} image matched the required capture slot.`]
     }),
-    qualityWarnings: [],
+    qualityWarnings,
     detectedDamageCandidates: [],
     extractedText,
-    humanReviewRequired: input.angle === "vin_plate" || input.angle === "odometer"
+    humanReviewRequired: qualityWarnings.length > 0 || input.angle === "vin_plate" || input.angle === "odometer"
   };
+}
+
+function qualityStatusFor(output: VisionOutput): VehiclePhoto["qualityStatus"] {
+  if (output.imageQuality.grade === "retake" || output.imageQuality.retakeRequired) return "fail";
+  if (output.imageQuality.grade === "review" || output.qualityWarnings.length > 0) return "warning";
+  return "ok";
 }
 
 function setIfChanged<T extends keyof VehiclePhoto>(photo: VehiclePhoto, key: T, value: VehiclePhoto[T]): boolean {
@@ -127,7 +141,12 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
       angle: sample.angle,
       storageKey,
       vin: inspection?.vin ?? "",
-      mileage: inspection?.mileage ?? 0
+      mileage: inspection?.mileage ?? 0,
+      referenceAngleConfidence: sample.referenceAngleConfidence,
+      referenceQualityGrade: sample.referenceQualityGrade,
+      referenceRetakeRequired: sample.referenceRetakeRequired,
+      referenceQualityWarnings: sample.referenceQualityWarnings,
+      referenceQualityNotes: sample.referenceQualityNotes
     });
 
     changed = setIfChanged(photo, "storageKey", storageKey) || changed;
@@ -140,7 +159,7 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
     changed = setIfChanged(photo, "declaredAngle", sample.angle) || changed;
     changed = setIfChanged(photo, "detectedAngle", output.photoAngle) || changed;
     changed = setIfChanged(photo, "detectedAngleConfidence", output.confidence) || changed;
-    changed = setIfChanged(photo, "qualityStatus", output.qualityWarnings.length > 0 ? "warning" : "ok") || changed;
+    changed = setIfChanged(photo, "qualityStatus", qualityStatusFor(output)) || changed;
     changed = setIfChanged(photo, "analysisStatus", "completed") || changed;
 
     for (const analysis of store.analyses.values()) {
@@ -189,6 +208,25 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
         changed = true;
       }
     }
+
+    for (const warning of output.qualityWarnings) {
+      const existing = [...store.suggestions.values()].find((suggestion) =>
+        suggestion.photoId === photo.id &&
+        suggestion.suggestionType === "quality_warning" &&
+        JSON.stringify((suggestion.suggestedValueJson as { warning?: unknown })?.warning) === JSON.stringify(warning)
+      );
+      if (!existing) {
+        store.createSuggestion({
+          inspectionId: photo.inspectionId,
+          photoId: photo.id,
+          suggestionType: "quality_warning",
+          suggestedValueJson: { warning, imageQuality: output.imageQuality },
+          confidence: Math.min(output.confidence, 0.75),
+          explanation: `${warning} Reviewer confirmation required.`
+        });
+        changed = true;
+      }
+    }
   }
   return changed;
 }
@@ -203,6 +241,7 @@ function analyzeImportedPhoto(store: MemoryStore, input: {
   mileage: number;
 }, actor: Actor): void {
   const photo = store.getPhoto(input.photoId);
+  const sample = sampleImages.find((item) => item.filename === input.originalFilename);
   store.saveAnalysis(photo, {
     provider: "referenceImportProvider",
     promptVersion: "photo-import-v1",
@@ -215,7 +254,12 @@ function analyzeImportedPhoto(store: MemoryStore, input: {
       angle: input.angle,
       storageKey: input.storageKey,
       vin: input.vin,
-      mileage: input.mileage
+      mileage: input.mileage,
+      referenceAngleConfidence: sample?.referenceAngleConfidence,
+      referenceQualityGrade: sample?.referenceQualityGrade,
+      referenceRetakeRequired: sample?.referenceRetakeRequired,
+      referenceQualityWarnings: sample?.referenceQualityWarnings,
+      referenceQualityNotes: sample?.referenceQualityNotes
     })
   }, actor);
 

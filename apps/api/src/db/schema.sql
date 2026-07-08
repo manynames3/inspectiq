@@ -127,6 +127,18 @@ create table if not exists damage_items (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists identity_verifications (
+  id text primary key default gen_random_uuid()::text,
+  inspection_id text not null references inspections(id) on delete cascade,
+  photo_id text not null references vehicle_photos(id) on delete cascade,
+  field text not null check (field in ('vin', 'odometer')),
+  value text not null,
+  source_suggestion_id text not null references vision_suggestions(id) on delete cascade,
+  verified_by text not null references users(id),
+  verified_at timestamptz not null default now(),
+  unique (inspection_id, field)
+);
+
 create table if not exists condition_grades (
   id text primary key default gen_random_uuid()::text,
   inspection_id text not null references inspections(id) on delete cascade,
@@ -197,6 +209,9 @@ create index if not exists idx_suggestions_reviewed_by on vision_suggestions(rev
 create index if not exists idx_damage_inspection_id on damage_items(inspection_id);
 create index if not exists idx_damage_photo_id on damage_items(photo_id);
 create index if not exists idx_damage_confirmed_by on damage_items(confirmed_by);
+create index if not exists idx_identity_verifications_inspection_id on identity_verifications(inspection_id);
+create index if not exists idx_identity_verifications_photo_id on identity_verifications(photo_id);
+create index if not exists idx_identity_verifications_source_suggestion on identity_verifications(source_suggestion_id);
 create index if not exists idx_condition_grades_inspection_id on condition_grades(inspection_id);
 create index if not exists idx_report_jobs_inspection_status on ai_report_jobs(inspection_id, status);
 create unique index if not exists idx_report_jobs_idempotency on ai_report_jobs(inspection_id, idempotency_key) where idempotency_key is not null;

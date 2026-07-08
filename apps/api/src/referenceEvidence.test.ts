@@ -32,16 +32,16 @@ describe("reference evidence reconciliation", () => {
 
     passengerPhoto!.storageKey = "https://carfax-img.vast.com/carfax/v2/866048677535386941/8/640x480";
     passengerPhoto!.thumbnailStorageKey = passengerPhoto!.storageKey;
-    passengerPhoto!.detectedAngleConfidence = 0.82;
-    passengerPhoto!.qualityStatus = "warning";
+    passengerPhoto!.detectedAngleConfidence = 0.94;
+    passengerPhoto!.qualityStatus = "ok";
 
     expect(reconcileReferenceEvidence(store)).toBe(true);
 
     expect(passengerPhoto!.storageKey).toBe("https://carfax-img.vast.com/carfax/v2/866048677535386941/1/640x480");
     expect(passengerPhoto!.declaredAngle).toBe("passenger_side");
     expect(passengerPhoto!.detectedAngle).toBe("passenger_side");
-    expect(passengerPhoto!.detectedAngleConfidence).toBe(0.94);
-    expect(passengerPhoto!.qualityStatus).toBe("ok");
+    expect(passengerPhoto!.detectedAngleConfidence).toBe(0.82);
+    expect(passengerPhoto!.qualityStatus).toBe("warning");
   });
 
   it("repairs stale uploaded reference-evidence rows from the current manifest", () => {
@@ -79,14 +79,14 @@ describe("reference evidence reconciliation", () => {
     expect(driverPhoto!.storageKey).toBe("https://carfax-img.vast.com/carfax/v2/866048677535386941/8/640x480");
     expect(driverPhoto!.declaredAngle).toBe("driver_side");
     expect(driverPhoto!.detectedAngle).toBe("driver_side");
-    expect(driverPhoto!.detectedAngleConfidence).toBe(0.94);
-    expect(driverPhoto!.qualityStatus).toBe("ok");
+    expect(driverPhoto!.detectedAngleConfidence).toBe(0.86);
+    expect(driverPhoto!.qualityStatus).toBe("warning");
 
     expect(passengerPhoto!.storageKey).toBe("https://carfax-img.vast.com/carfax/v2/866048677535386941/1/640x480");
     expect(passengerPhoto!.declaredAngle).toBe("passenger_side");
     expect(passengerPhoto!.detectedAngle).toBe("passenger_side");
-    expect(passengerPhoto!.detectedAngleConfidence).toBe(0.94);
-    expect(passengerPhoto!.qualityStatus).toBe("ok");
+    expect(passengerPhoto!.detectedAngleConfidence).toBe(0.82);
+    expect(passengerPhoto!.qualityStatus).toBe("warning");
   });
 
   it("repairs stale Toyota Camry front reference evidence to the direct front image", () => {
@@ -113,7 +113,7 @@ describe("reference evidence reconciliation", () => {
     expect(frontPhoto!.storageKey).toBe("https://pictures.dealer.com/a/autonationhondaofrenton/0484/002c87ec96ae6c3cb575e0ce2e4029f0x.jpg");
     expect(frontPhoto!.declaredAngle).toBe("front");
     expect(frontPhoto!.detectedAngle).toBe("front");
-    expect(frontPhoto!.detectedAngleConfidence).toBe(0.95);
-    expect(frontPhoto!.qualityStatus).toBe("ok");
+    expect(frontPhoto!.detectedAngleConfidence).toBe(0.78);
+    expect(frontPhoto!.qualityStatus).toBe("warning");
   });
 });

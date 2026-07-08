@@ -1264,6 +1264,16 @@ export function InspectionDetailPage() {
                     <strong>Condition Summary</strong>
                     <p>{reportSummary}</p>
                   </div>
+                  {(bundle.identityVerifications?.length ?? 0) > 0 ? (
+                    <div className="summary-section">
+                      <strong>Verified Vehicle Data</strong>
+                      <ul className="summary-list">
+                        {bundle.identityVerifications?.map((item) => (
+                          <li key={item.id}>{item.field === "vin" ? "VIN" : "Odometer"}: {item.field === "odometer" ? `${Number(item.value.replace(/[^0-9]/g, "") || item.value).toLocaleString()} mi` : item.value}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                   <div className="summary-section">
                     <strong>Notable Items</strong>
                     {notableDefects.length > 0 ? (

@@ -102,6 +102,17 @@ export type DamageItem = {
   source: string;
 };
 
+export type IdentityVerification = {
+  id: string;
+  inspectionId: string;
+  photoId: string;
+  field: "vin" | "odometer";
+  value: string;
+  sourceSuggestionId: string;
+  verifiedBy: string;
+  verifiedAt: string;
+};
+
 export type ConditionGrade = {
   id: string;
   score: number;
@@ -133,6 +144,7 @@ export type InspectionBundle = {
   imageAnalysisJobs: ImageAnalysisJob[];
   suggestions: VisionSuggestion[];
   damageItems: DamageItem[];
+  identityVerifications?: IdentityVerification[];
   conditionGrade: ConditionGrade | null;
   aiReportJob: any;
   aiReportDraft: any;

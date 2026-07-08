@@ -31,6 +31,7 @@ const mutableEnvKeys = [
   "DEFAULT_AUTH_ROLE",
   "OIDC_DEFAULT_ROLE",
   "REQUIRE_JWT_ROLE_CLAIM",
+  "ALLOW_JWT_DEFAULT_ROLE",
   "AUTH_ADMIN_EMAILS",
   "AUTH_REVIEWER_EMAILS",
   "AUTH_INSPECTOR_EMAILS",
@@ -469,6 +470,13 @@ describe("InspectIQ API", () => {
       .get("/api/inspections")
       .expect(401);
 
+    const missingRoleSession = await request(jwtApi)
+      .get("/api/auth/session")
+      .set("authorization", `Bearer ${defaultInspectorToken}`)
+      .expect(401);
+    expect(missingRoleSession.body.error.message).toContain("InspectIQ role claim");
+
+    process.env.ALLOW_JWT_DEFAULT_ROLE = "true";
     const defaultSession = await request(jwtApi)
       .get("/api/auth/session")
       .set("authorization", `Bearer ${defaultInspectorToken}`)
@@ -754,6 +762,24 @@ describe("InspectIQ API", () => {
     expect(qualitySuggestion.resolvedAt).toBeNull();
     expect(qualitySuggestion.suggestedValueJson.imageQuality.blurScore).toBeLessThan(0.6);
 
+    await request(api)
+      .post(`/api/vision-suggestions/${qualitySuggestion.id}/accept`)
+      .set(reviewerHeaders)
+      .send({})
+      .expect(200);
+
+    const bundleAfterAccept = await request(api)
+      .get(`/api/inspections/${inspectionId}`)
+      .set(reviewerHeaders)
+      .expect(200);
+    expect(bundleAfterAccept.body.data.readinessIssues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "image_quality_retake",
+        label: expect.stringContaining("Retake front"),
+        action: expect.stringContaining("replacement image")
+      })
+    ]));
+
     const audit = await request(api).get(`/api/inspections/${inspectionId}/audit-events`).set(inspectorHeaders).expect(200);
     const analyzedEvent = audit.body.data.find((event: { eventType: string }) => event.eventType === "photo.analyzed");
     expect(analyzedEvent.detailsJson.imageQuality.retakeRequired).toBe(true);
@@ -767,6 +793,88 @@ describe("InspectIQ API", () => {
     expect(health.body.data.runtimeProof.visionProvider).toBeTruthy();
     expect(health.body.data.evidencePack.vehicleSets.length).toBeGreaterThanOrEqual(3);
     expect(health.body.data.roleProof.map((item: { role: string }) => item.role)).toEqual(["inspector", "reviewer", "admin"]);
+  });
+
+  it("materializes accepted VIN and odometer OCR findings as identity verifications", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+    const attached = await request(api)
+      .post(`/api/inspections/${inspectionId}/photos/sample`)
+      .set(inspectorHeaders)
+      .send({ sampleKey: "odometer-closeup-64231" })
+      .expect(201);
+    const [photo] = attached.body.data;
+
+    const analyzed = await request(api)
+      .post(`/api/photos/${photo.id}/analyze`)
+      .set(inspectorHeaders)
+      .send({})
+      .expect(200);
+    const extractedText = analyzed.body.data.suggestions.find((item: { suggestionType: string }) => item.suggestionType === "extracted_text");
+    expect(extractedText).toBeTruthy();
+
+    await request(api)
+      .post(`/api/vision-suggestions/${extractedText.id}/accept`)
+      .set(reviewerHeaders)
+      .send({})
+      .expect(200);
+
+    const bundle = await request(api)
+      .get(`/api/inspections/${inspectionId}`)
+      .set(reviewerHeaders)
+      .expect(200);
+    expect(bundle.body.data.identityVerifications).toEqual([
+      expect.objectContaining({
+        field: "odometer",
+        value: "64231",
+        sourceSuggestionId: extractedText.id,
+        verifiedBy: "test-reviewer"
+      })
+    ]);
+
+    const audit = await request(api).get(`/api/inspections/${inspectionId}/audit-events`).set(reviewerHeaders).expect(200);
+    expect(audit.body.data.map((event: { eventType: string }) => event.eventType)).toContain("identity.verified");
+  });
+
+  it("retries failed report jobs by creating a new draft job", async () => {
+    const inspector = store.addUser({ id: "test-inspector", name: "Test Inspector", role: "inspector" });
+    const reviewer = store.addUser({ id: "test-reviewer", name: "Test Reviewer", role: "reviewer" });
+    const inspection = store.createInspection({
+      vin: "JM3KFBDM7R0123456",
+      year: 2024,
+      make: "Mazda",
+      model: "CX-5",
+      trim: "Touring",
+      mileage: 18420,
+      exteriorColor: "Red",
+      sellerSource: "Portfolio inspection",
+      inspectorName: "Test Inspector"
+    }, inspector);
+    inspection.status = "READY_FOR_GRADING";
+    inspection.completenessPercentage = 100;
+    store.saveGrade(inspection.id, {
+      score: 88,
+      grade: "B",
+      explanationJson: { deductions: [] },
+      gradingVersion: "test-grader"
+    }, reviewer);
+    const failedJob = store.createReportJob(inspection.id, "test-failed-report", reviewer);
+    store.markJobRunning(failedJob.id);
+    store.failReportJob(failedJob.id, "Provider timeout", reviewer);
+
+    const retried = await request(api)
+      .post(`/api/ai-report-jobs/${failedJob.id}/retry`)
+      .set(reviewerHeaders)
+      .send({})
+      .expect(200);
+
+    expect(retried.body.data.job.id).not.toBe(failedJob.id);
+    expect(retried.body.data.job.status).toBe("completed");
+    expect(retried.body.data.draft).toEqual(expect.objectContaining({
+      inspectionId: inspection.id,
+      validationStatus: "valid"
+    }));
+    expect(store.getInspection(inspection.id).status).toBe("HUMAN_REVIEW_REQUIRED");
   });
 
   it("lets admins simulate and recover failed image jobs for the operations drill", async () => {
