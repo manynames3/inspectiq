@@ -44,3 +44,15 @@ test("the Android release build compiles shared contracts before Expo prebuild",
   assert.ok(sharedBuildIndex >= 0, "Android release builds require @inspectiq/shared/dist");
   assert.ok(sharedBuildIndex < expoPrebuildIndex, "shared output must exist before Expo invokes Metro");
 });
+
+test("the Android emulator enables KVM before Maestro starts", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/mobile-android-e2e.yml", import.meta.url),
+    "utf8",
+  );
+  const kvmPermissionIndex = workflow.indexOf("sudo chmod 0666 /dev/kvm");
+  const emulatorRunnerIndex = workflow.indexOf("uses: reactivecircus/android-emulator-runner@v2");
+
+  assert.ok(kvmPermissionIndex >= 0, "GitHub's runner user needs access to /dev/kvm");
+  assert.ok(kvmPermissionIndex < emulatorRunnerIndex, "KVM access must be configured before emulator startup");
+});
