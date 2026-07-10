@@ -91,6 +91,11 @@ test("the Maestro flow dismisses the API 35 Quickstep ANR before app assertions"
     /optional: true/,
     "real devices without the emulator-only dialog must continue immediately",
   );
+  assert.ok(
+    (flow.match(/text: "Wait"/g) ?? []).length >= 2,
+    "Quickstep can report its delayed ANR after the evaluation workspace opens",
+  );
+  assert.match(flow, /text: "\^Review\$"/, "tab navigation must not match the Review queue heading");
 });
 
 test("visual regression freezes browser time before capturing SLA-sensitive views", async () => {

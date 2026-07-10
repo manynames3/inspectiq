@@ -10,11 +10,19 @@ appId: com.aidenrhaa.inspectiq
 - tapOn: "Open Evaluation Workspace"
 - assertVisible: "Review queue"
 - assertVisible: "Evaluation"
-- tapOn: "Review"
+- tapOn:
+    text: "Wait"
+    optional: true
+- assertVisible: "InspectIQ"
+- tapOn:
+    text: "^Review$"
 - assertVisible: "Review queue"
-- tapOn: "Damage"
+- tapOn:
+    text: "^Damage$"
 - assertVisible: "Confirmed damage"
-- tapOn: "Reports"
+- tapOn:
+    text: "^Reports$"
 - assertVisible: "Condition reports"
-- tapOn: "Sign out"
+- tapOn:
+    text: "^Sign out$"
 - assertVisible: "Open Evaluation Workspace"
