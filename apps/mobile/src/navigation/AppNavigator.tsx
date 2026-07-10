@@ -3,6 +3,7 @@ import { NavigationContainer, DefaultTheme } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { Activity, AlertTriangle, ClipboardCheck, FileText, Home, ListChecks, LogOut, ShieldCheck, UploadCloud } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../auth/AuthContext";
 import { AuditScreen } from "../screens/AuditScreen";
 import { CaptureScreen } from "../screens/CaptureScreen";
@@ -17,6 +18,7 @@ import { ReportsScreen } from "../screens/ReportsScreen";
 import { ReviewScreen } from "../screens/ReviewScreen";
 import { UploadsScreen } from "../screens/UploadsScreen";
 import { colors } from "../theme";
+import { tabBarLayout } from "./layout";
 import type { MainTabParamList, RootStackParamList } from "./types";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -29,13 +31,14 @@ const appTheme = {
 
 function MainTabs() {
   const { session } = useAuth();
+  const insets = useSafeAreaInsets();
   if (!session) return null;
   const commonOptions = {
     headerShown: false,
     tabBarActiveTintColor: colors.blue,
     tabBarInactiveTintColor: colors.muted,
     tabBarLabelStyle: styles.tabLabel,
-    tabBarStyle: styles.tabBar
+    tabBarStyle: [styles.tabBar, tabBarLayout(insets.bottom)]
   };
   return (
     <Tabs.Navigator screenOptions={commonOptions}>
@@ -97,7 +100,7 @@ export function AppNavigator() {
 }
 
 const styles = StyleSheet.create({
-  tabBar: { height: 62, paddingTop: 5, paddingBottom: 7, borderTopColor: colors.line },
+  tabBar: { paddingTop: 5, borderTopColor: colors.line },
   tabLabel: { fontSize: 10, fontWeight: "700" },
   signOut: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 38 },
   roleCopy: { alignItems: "flex-end" },
