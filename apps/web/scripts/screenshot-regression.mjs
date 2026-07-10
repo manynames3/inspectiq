@@ -12,6 +12,7 @@ const baselinePlatform = process.platform === "darwin" ? "macos" : "linux";
 const baselineDir = process.env.SCREENSHOT_BASELINE_DIR ?? `apps/web/tests/visual-baselines/${baselinePlatform}`;
 const updateBaselines = process.env.UPDATE_SCREENSHOT_BASELINES === "true";
 const maxDiffRatio = Number(process.env.VISUAL_DIFF_MAX_RATIO ?? "0.03");
+const fixedBrowserTime = process.env.INSPECTIQ_FIXED_NOW;
 const chromePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
   ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const executablePath = existsSync(chromePath) ? chromePath : undefined;
@@ -224,6 +225,9 @@ const context = await browser.newContext({
   timezoneId: "America/New_York"
 });
 const page = await context.newPage();
+if (fixedBrowserTime) {
+  await page.clock.setFixedTime(fixedBrowserTime);
+}
 const consoleIssues = [];
 page.on("console", (message) => {
   if (message.type() === "error") consoleIssues.push(message.text());

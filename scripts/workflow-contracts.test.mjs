@@ -78,3 +78,15 @@ test("the Maestro flow dismisses the API 35 Quickstep ANR before app assertions"
     "real devices without the emulator-only dialog must continue immediately",
   );
 });
+
+test("visual regression freezes browser time before capturing SLA-sensitive views", async () => {
+  const screenshotHarness = await readFile(
+    new URL("../apps/web/scripts/screenshot-regression.mjs", import.meta.url),
+    "utf8",
+  );
+  const fixedTimeIndex = screenshotHarness.indexOf("page.clock.setFixedTime");
+  const firstCaptureIndex = screenshotHarness.indexOf('capture(page, "dashboard"');
+
+  assert.ok(fixedTimeIndex >= 0, "SLA labels and session expiry must not depend on CI wall-clock time");
+  assert.ok(fixedTimeIndex < firstCaptureIndex, "browser time must be frozen before any screenshot is captured");
+});
