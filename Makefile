@@ -8,6 +8,7 @@ PROJECTOR_VENV ?= /tmp/inspectiq-projector-venv
 LIVE_BASE_URL ?= https://inspectiq.pages.dev
 LOCAL_APP_LOG ?= /tmp/inspectiq-dev.log
 LOCAL_APP_PID ?= /tmp/inspectiq-dev.pid
+SCREENSHOT_FIXED_NOW ?= 2026-07-10T16:25:18.000Z
 PYTHON ?= python3
 
 diagram:
@@ -67,7 +68,7 @@ e2e-local:
 	LOCAL_APP_LOG=$(LOCAL_APP_LOG) LOCAL_APP_PID=$(LOCAL_APP_PID) bash scripts/run-local-check.sh npm run test:e2e
 
 screenshots-local:
-	LOCAL_APP_LOG=$(LOCAL_APP_LOG) LOCAL_APP_PID=$(LOCAL_APP_PID) bash scripts/run-local-check.sh npm run test:screenshots
+	TZ=America/New_York INSPECTIQ_FIXED_NOW=$(SCREENSHOT_FIXED_NOW) LOCAL_APP_LOG=$(LOCAL_APP_LOG) LOCAL_APP_PID=$(LOCAL_APP_PID) bash scripts/run-local-check.sh npm run test:screenshots
 
 live-smoke:
 	E2E_BASE_URL=$${E2E_BASE_URL:-$(LIVE_BASE_URL)} npm run test:live

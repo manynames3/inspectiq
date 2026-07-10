@@ -45,7 +45,11 @@ type CreateVisionSuggestionInput = Omit<
   "id" | "status" | "reviewedBy" | "reviewedAt" | "resolvedAt" | "createdAt" | "assignedToRole" | "assignedToUserId" | "dueAt" | "version"
 > & Partial<Pick<VisionSuggestion, "assignedToRole" | "assignedToUserId" | "dueAt">>;
 
-const now = () => new Date().toISOString();
+const now = () => {
+  const fixedNow = process.env.INSPECTIQ_FIXED_NOW;
+  if (fixedNow && !Number.isNaN(Date.parse(fixedNow))) return new Date(fixedNow).toISOString();
+  return new Date().toISOString();
+};
 const id = () => crypto.randomUUID();
 const mutableInspectionFields = [
   "vin",
@@ -193,7 +197,11 @@ export class MemoryStore {
   }
 
   listInspections(): Inspection[] {
-    return [...this.inspections.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return [...this.inspections.values()].sort((a, b) => (
+      b.updatedAt.localeCompare(a.updatedAt) ||
+      a.vin.localeCompare(b.vin) ||
+      a.id.localeCompare(b.id)
+    ));
   }
 
   getInspection(idValue: string): Inspection {

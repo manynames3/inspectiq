@@ -204,7 +204,8 @@ const browser = await chromium.launch({
 });
 
 const context = await browser.newContext({
-  viewport: { width: 1440, height: 1000 }
+  viewport: { width: 1440, height: 1000 },
+  timezoneId: "America/New_York"
 });
 const page = await context.newPage();
 const consoleIssues = [];

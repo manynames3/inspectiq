@@ -20,3 +20,15 @@ test("Expo Android jobs do not initialize Gradle caching before prebuild", async
     );
   }
 });
+
+test("the standalone mobile verification builds shared contracts first", async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  );
+
+  assert.match(
+    packageJson.scripts["test:mobile"],
+    /^npm run build -w @inspectiq\/shared && /,
+    "a clean CI runner has no compiled @inspectiq/shared output before mobile typecheck",
+  );
+});
