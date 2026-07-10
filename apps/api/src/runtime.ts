@@ -15,6 +15,15 @@ export type Runtime = {
 
 let runtimePromise: Promise<Runtime> | null = null;
 
+export function shouldPersistInitialStore(
+  persistenceMode: string,
+  loadedStore: boolean,
+  reconciledReferenceEvidence: boolean,
+): boolean {
+  if (persistenceMode === "postgres") return !loadedStore;
+  return !loadedStore || reconciledReferenceEvidence;
+}
+
 export async function createRuntime(): Promise<Runtime> {
   if (runtimePromise) return runtimePromise;
   runtimePromise = (async () => {
@@ -57,10 +66,10 @@ export async function createRuntime(): Promise<Runtime> {
           : undefined
     });
 
-    if (persistPostgres && pool && (!loadedStore || reconciledReferenceEvidence)) {
+    if (persistPostgres && pool && shouldPersistInitialStore(persistenceMode, loadedStore, reconciledReferenceEvidence)) {
       await savePostgresRows(store, pool);
     }
-    if (persistLocally && (!loadedStore || reconciledReferenceEvidence)) {
+    if (persistLocally && shouldPersistInitialStore(persistenceMode, loadedStore, reconciledReferenceEvidence)) {
       await saveStoreSnapshot(store);
     }
 
