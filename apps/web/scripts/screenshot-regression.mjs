@@ -132,13 +132,23 @@ async function compareScreenshot(name, outputPath) {
     return { name, diffRatio: 0, updated: true };
   }
   if (!existsSync(baselinePath)) {
-    throw new Error(`Missing visual baseline ${baselinePath}. Run UPDATE_SCREENSHOT_BASELINES=true npm run test:screenshots after reviewing the UI.`);
+    return {
+      name,
+      diffRatio: 1,
+      updated: false,
+      error: `Missing visual baseline ${baselinePath}. Review ${outputPath} before accepting it.`
+    };
   }
   const [actualBytes, baselineBytes] = await Promise.all([readFile(outputPath), readFile(baselinePath)]);
   const actual = PNG.sync.read(actualBytes);
   const baseline = PNG.sync.read(baselineBytes);
   if (actual.width !== baseline.width || actual.height !== baseline.height) {
-    throw new Error(`${name} dimensions changed from ${baseline.width}x${baseline.height} to ${actual.width}x${actual.height}.`);
+    return {
+      name,
+      diffRatio: 1,
+      updated: false,
+      error: `${name} dimensions changed from ${baseline.width}x${baseline.height} to ${actual.width}x${actual.height}.`
+    };
   }
   const diff = new PNG({ width: actual.width, height: actual.height });
   const changedPixels = pixelmatch(actual.data, baseline.data, diff.data, actual.width, actual.height, {
@@ -149,7 +159,12 @@ async function compareScreenshot(name, outputPath) {
   if (diffRatio > maxDiffRatio) {
     const diffPath = path.join(outputDir, `${name}.diff.png`);
     await writeFile(diffPath, PNG.sync.write(diff));
-    throw new Error(`${name} visual drift ${(diffRatio * 100).toFixed(2)}% exceeds ${(maxDiffRatio * 100).toFixed(2)}%. See ${diffPath}.`);
+    return {
+      name,
+      diffRatio,
+      updated: false,
+      error: `${name} visual drift ${(diffRatio * 100).toFixed(2)}% exceeds ${(maxDiffRatio * 100).toFixed(2)}%. See ${diffPath}.`
+    };
   }
   return { name, diffRatio, updated: false };
 }
@@ -213,6 +228,9 @@ page.on("console", (message) => {
   if (message.type() === "error") consoleIssues.push(message.text());
 });
 page.on("pageerror", (error) => consoleIssues.push(error.message));
+page.on("requestfailed", (request) => {
+  consoleIssues.push(`${request.resourceType()} request failed: ${request.url()} (${request.failure()?.errorText ?? "unknown error"})`);
+});
 
 try {
   const inspectionId = await resolveScreenshotInspection();
@@ -228,19 +246,23 @@ try {
   results.push(await capture(page, "tablet-workbench", `/inspections/${inspectionId}`, "reviewer", "Workflow status", { width: 1024, height: 768 }));
   results.push(await capture(page, "mobile-capture", `/inspections/${inspectionId}`, "inspector", "Required photo checklist", { width: 390, height: 844 }));
 
-  const relevantIssues = consoleIssues.filter((issue) => !issue.includes("Download the React DevTools"));
-  if (relevantIssues.length > 0) {
-    throw new Error(`Console errors during screenshot regression:\n${relevantIssues.join("\n")}`);
-  }
-
   console.log(JSON.stringify({
-    ok: true,
+    ok: results.every((result) => !result.error),
     outputDir,
     baselineDir,
     updatedBaselines: updateBaselines,
     maxDiffRatio,
     screenshots: results
   }, null, 2));
+
+  const relevantIssues = consoleIssues.filter((issue) => !issue.includes("Download the React DevTools"));
+  if (relevantIssues.length > 0) {
+    throw new Error(`Console errors during screenshot regression:\n${relevantIssues.join("\n")}`);
+  }
+  const visualFailures = results.flatMap((result) => result.error ? [result.error] : []);
+  if (visualFailures.length > 0) {
+    throw new Error(`Visual regression failed:\n${visualFailures.join("\n")}`);
+  }
 } finally {
   await context.close();
   await browser.close();

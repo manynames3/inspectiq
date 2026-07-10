@@ -12,6 +12,7 @@ esac
 
 export NODE_ENV="${NODE_ENV:-production}"
 
+npm run build -w @inspectiq/shared
 npx expo prebuild --platform android --clean
 
 (

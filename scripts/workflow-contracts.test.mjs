@@ -32,3 +32,15 @@ test("the standalone mobile verification builds shared contracts first", async (
     "a clean CI runner has no compiled @inspectiq/shared output before mobile typecheck",
   );
 });
+
+test("the Android release build compiles shared contracts before Expo prebuild", async () => {
+  const buildScript = await readFile(
+    new URL("../apps/mobile/scripts/build-android-apk.sh", import.meta.url),
+    "utf8",
+  );
+  const sharedBuildIndex = buildScript.indexOf("npm run build -w @inspectiq/shared");
+  const expoPrebuildIndex = buildScript.indexOf("npx expo prebuild");
+
+  assert.ok(sharedBuildIndex >= 0, "Android release builds require @inspectiq/shared/dist");
+  assert.ok(sharedBuildIndex < expoPrebuildIndex, "shared output must exist before Expo invokes Metro");
+});

@@ -623,15 +623,14 @@ resource "aws_lambda_function" "image_worker" {
 }
 
 resource "aws_lambda_function" "operations_projector" {
-  function_name                  = "${var.project_name}-operations-projector"
-  role                           = aws_iam_role.operations_projector.arn
-  runtime                        = "python3.12"
-  handler                        = "handler.handler"
-  filename                       = local.projector_zip
-  source_code_hash               = filebase64sha256(local.projector_zip)
-  timeout                        = 20
-  memory_size                    = 256
-  reserved_concurrent_executions = 2
+  function_name    = "${var.project_name}-operations-projector"
+  role             = aws_iam_role.operations_projector.arn
+  runtime          = "python3.12"
+  handler          = "handler.handler"
+  filename         = local.projector_zip
+  source_code_hash = filebase64sha256(local.projector_zip)
+  timeout          = 20
+  memory_size      = 256
 
   environment {
     variables = {
