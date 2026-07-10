@@ -37,7 +37,6 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
       - run: npm ci
       - name: Build x86_64 release APK for emulator
         working-directory: apps/mobile
@@ -85,7 +84,6 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
       - run: npm ci
       - name: Build arm64 internal-distribution APK
         working-directory: apps/mobile
