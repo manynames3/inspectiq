@@ -1,7 +1,7 @@
 import { findSampleImageByObjectKey, sampleBundles, sampleImages, type SampleImage } from "./sampleImages.js";
 import type { Actor, DamageItem, VehiclePhoto } from "./domain.js";
 import { MemoryStore } from "./store.js";
-import type { DamageSeverity, DamageType, PhotoAngle, VisionOutput } from "@inspectiq/shared";
+import type { PhotoAngle, VisionOutput } from "@inspectiq/shared";
 
 const systemActor: Actor = { id: "queue-import", name: "Queue Import", role: "admin" };
 export const identitySourceName = "Reference identity capture";
@@ -45,8 +45,6 @@ function confidenceForAngle(angle: PhotoAngle | null | undefined): number {
 function referenceVisionOutput(input: {
   angle: PhotoAngle;
   storageKey: string;
-  vin: string;
-  mileage: number;
   referenceAngleConfidence?: number;
   referenceQualityGrade?: "pass" | "review" | "retake";
   referenceRetakeRequired?: boolean;
@@ -55,8 +53,6 @@ function referenceVisionOutput(input: {
 }): VisionOutput {
   const isBlurryRetake = input.storageKey.includes("blurry-front");
   const extractedText: VisionOutput["extractedText"] = {};
-  if (input.angle === "vin_plate") extractedText.vin = input.vin;
-  if (input.angle === "odometer") extractedText.odometer = String(input.mileage);
 
   if (isBlurryRetake) {
     return {
@@ -135,13 +131,16 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
     const sample = findReferenceSampleForPhoto(photo);
     if (!sample) continue;
 
-    const inspection = store.inspections.get(photo.inspectionId);
     const storageKey = sample.storageKey ?? `/sample-images/${sample.filename}`;
+    const photoAnalyses = [...store.analyses.values()].filter((analysis) => analysis.photoId === photo.id);
+    const hasModelAnalysis = photoAnalyses.some((analysis) =>
+      analysis.provider !== "referenceManifestProvider" &&
+      analysis.provider !== "referenceImportProvider" &&
+      analysis.provider !== "seededImportProvider"
+    );
     const output = referenceVisionOutput({
       angle: sample.angle,
       storageKey,
-      vin: inspection?.vin ?? "",
-      mileage: inspection?.mileage ?? 0,
       referenceAngleConfidence: sample.referenceAngleConfidence,
       referenceQualityGrade: sample.referenceQualityGrade,
       referenceRetakeRequired: sample.referenceRetakeRequired,
@@ -157,24 +156,36 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
     changed = setIfChanged(photo, "sourceUrl", sample.sourceUrl ?? null) || changed;
     changed = setIfChanged(photo, "sourceLicense", sample.sourceLicense ?? null) || changed;
     changed = setIfChanged(photo, "declaredAngle", sample.angle) || changed;
-    changed = setIfChanged(photo, "detectedAngle", output.photoAngle) || changed;
-    changed = setIfChanged(photo, "detectedAngleConfidence", output.confidence) || changed;
-    changed = setIfChanged(photo, "qualityStatus", qualityStatusFor(output)) || changed;
-    changed = setIfChanged(photo, "analysisStatus", "completed") || changed;
+    changed = setIfChanged(photo, "captureSource", "reference") || changed;
+    if (!hasModelAnalysis) {
+      changed = setIfChanged(photo, "detectedAngle", output.photoAngle) || changed;
+      changed = setIfChanged(photo, "detectedAngleConfidence", output.confidence) || changed;
+      changed = setIfChanged(photo, "qualityStatus", qualityStatusFor(output)) || changed;
+      changed = setIfChanged(photo, "analysisStatus", "completed") || changed;
+    }
 
-    for (const analysis of store.analyses.values()) {
+    for (const analysis of photoAnalyses) {
       if (analysis.photoId !== photo.id || analysis.status !== "completed") continue;
+      const rawSource = typeof analysis.rawModelOutputJson === "object" && analysis.rawModelOutputJson !== null && "source" in analysis.rawModelOutputJson
+        ? String((analysis.rawModelOutputJson as { source?: unknown }).source ?? "")
+        : "";
+      const isReferenceAnalysis = analysis.provider === "referenceManifestProvider" ||
+        analysis.provider === "referenceImportProvider" ||
+        analysis.provider === "seededImportProvider" ||
+        rawSource === "reference-import" ||
+        rawSource === "reference-manifest";
+      if (!isReferenceAnalysis) continue;
       const raw = {
-        source: "reference-import",
+        source: "reference-manifest",
         filename: sample.filename,
         angle: sample.angle
       };
-      if (analysis.provider !== "referenceImportProvider") {
-        analysis.provider = "referenceImportProvider";
+      if (analysis.provider !== "referenceManifestProvider") {
+        analysis.provider = "referenceManifestProvider";
         changed = true;
       }
-      if (analysis.promptVersion !== "photo-import-v1") {
-        analysis.promptVersion = "photo-import-v1";
+      if (analysis.promptVersion !== "reference-manifest-v1") {
+        analysis.promptVersion = "reference-manifest-v1";
         changed = true;
       }
       if (!sameJson(analysis.rawModelOutputJson, raw)) {
@@ -192,9 +203,9 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
     }
 
     for (const suggestion of store.suggestions.values()) {
-      if (suggestion.photoId !== photo.id || suggestion.suggestionType !== "photo_angle") continue;
+      if (hasModelAnalysis || suggestion.photoId !== photo.id || suggestion.suggestionType !== "photo_angle") continue;
       const suggestedValue = { photoAngle: output.photoAngle };
-      const explanation = `Likely photo angle: ${output.photoAngle}. Reviewer confirmation required.`;
+      const explanation = `Reference manifest maps this image to the ${output.photoAngle} checklist slot. Reviewer confirmation required.`;
       if (!sameJson(suggestion.suggestedValueJson, suggestedValue)) {
         suggestion.suggestedValueJson = suggestedValue;
         changed = true;
@@ -209,7 +220,7 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
       }
     }
 
-    for (const warning of output.qualityWarnings) {
+    for (const warning of hasModelAnalysis ? [] : output.qualityWarnings) {
       const existing = [...store.suggestions.values()].find((suggestion) =>
         suggestion.photoId === photo.id &&
         suggestion.suggestionType === "quality_warning" &&
@@ -222,12 +233,14 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
           suggestionType: "quality_warning",
           suggestedValueJson: { warning, imageQuality: output.imageQuality },
           confidence: Math.min(output.confidence, 0.75),
-          explanation: `${warning} Reviewer confirmation required.`
+          explanation: `Reference-source QA note: ${warning} Reviewer confirmation required.`
         });
         changed = true;
       }
     }
   }
+  changed = removeUnsupportedReferenceClaims(store) || changed;
+  changed = removeReferenceMetadataOcrClaims(store) || changed;
   return changed;
 }
 
@@ -237,24 +250,18 @@ function analyzeImportedPhoto(store: MemoryStore, input: {
   storageKey: string;
   originalFilename: string;
   angle: PhotoAngle;
-  vin: string;
-  mileage: number;
 }, actor: Actor): void {
   const photo = store.getPhoto(input.photoId);
   const sample = sampleImages.find((item) => item.filename === input.originalFilename);
-  store.saveAnalysis(photo, {
-    provider: "referenceImportProvider",
-    promptVersion: "photo-import-v1",
+  store.saveReferenceMapping(photo, {
     raw: {
-      source: "reference-import",
+      source: "reference-manifest",
       filename: input.originalFilename,
       angle: input.angle
     },
     validated: referenceVisionOutput({
       angle: input.angle,
       storageKey: input.storageKey,
-      vin: input.vin,
-      mileage: input.mileage,
       referenceAngleConfidence: sample?.referenceAngleConfidence,
       referenceQualityGrade: sample?.referenceQualityGrade,
       referenceRetakeRequired: sample?.referenceRetakeRequired,
@@ -273,14 +280,6 @@ function analyzeImportedPhoto(store: MemoryStore, input: {
   if (angleSuggestion) store.acceptSuggestion(angleSuggestion.id, actor);
 }
 
-type ReferenceConfirmedDamage = {
-  angle: PhotoAngle;
-  location: string;
-  damageType: DamageType;
-  severity: DamageSeverity;
-  notes: string;
-};
-
 type ReferenceReportState = "draft_human_review" | "finalized";
 
 type ReferenceInspectionInput = {
@@ -294,7 +293,6 @@ type ReferenceInspectionInput = {
   sellerSource: string;
   inspectorName: string;
   sampleKeys: string[];
-  confirmedDamage?: ReferenceConfirmedDamage[];
   reportState?: ReferenceReportState;
 };
 
@@ -350,6 +348,169 @@ function referenceReportBody(output: ReferenceReportOutput): string {
   ].join("\n");
 }
 
+const unsupportedReferenceClaims = [
+  {
+    vin: "1FMCU9H6XNUB81389",
+    filename: "2022-ford-escape-driver-side.jpg",
+    location: "Driver-side front door",
+    damageType: "scratch",
+    severity: "minor",
+    notes: "Reviewer confirmed a light scratch on the driver-side front door from uploaded side evidence."
+  },
+  {
+    vin: "KNMAT2MV6KP514068",
+    filename: "2019-nissan-rogue-rear.jpg",
+    location: "Rear bumper",
+    damageType: "dent",
+    severity: "moderate",
+    notes: "Reviewer confirmed rear bumper deformation visible in the rear evidence image."
+  },
+  {
+    vin: "1HGCV1F49LA129627",
+    filename: "2020-honda-accord-rear.jpg",
+    location: "rear bumper",
+    damageType: "dent",
+    severity: "moderate",
+    notes: "Source listing photo appears to show rear bumper deformation; reviewer confirmation required."
+  }
+] as const;
+
+function repairReferenceReport(store: MemoryStore, inspectionId: string): void {
+  const inspection = store.getInspection(inspectionId);
+  const grade = store.latestGrade(inspection.id);
+  if (grade && typeof grade.explanationJson === "object" && grade.explanationJson !== null) {
+    const explanation = grade.explanationJson as { deductions?: Array<{ reason?: string }> };
+    if (Array.isArray(explanation.deductions)) {
+      const unsupportedReasons = unsupportedReferenceClaims.map((claim) => `${claim.damageType} at ${claim.location}`.toLowerCase());
+      explanation.deductions = explanation.deductions.filter((deduction) => {
+        const reason = deduction.reason?.toLowerCase() ?? "";
+        return !unsupportedReasons.some((unsupportedReason) => reason.includes(unsupportedReason));
+      });
+    }
+  }
+
+  if (grade) {
+    const input: ReferenceInspectionInput = {
+      vin: inspection.vin,
+      year: inspection.year,
+      make: inspection.make,
+      model: inspection.model,
+      trim: inspection.trim,
+      mileage: inspection.mileage,
+      exteriorColor: inspection.exteriorColor,
+      sellerSource: inspection.sellerSource,
+      inspectorName: "John Smith",
+      sampleKeys: []
+    };
+    const humanReviewRequired = store.latestReportDraft(inspection.id)?.humanReviewRequired ?? false;
+    const output = referenceReportOutput(input, grade, store.listDamage(inspection.id), humanReviewRequired);
+    const reportBody = referenceReportBody(output);
+
+    for (const draft of store.reportDrafts.values()) {
+      if (draft.inspectionId !== inspection.id) continue;
+      draft.outputJson = output;
+      draft.inputSummaryJson = {
+        ...(typeof draft.inputSummaryJson === "object" && draft.inputSummaryJson !== null ? draft.inputSummaryJson : {}),
+        damageItemCount: store.listDamage(inspection.id).length
+      };
+      draft.confidence = output.confidence;
+      draft.humanReviewRequired = output.humanReviewRequired;
+    }
+    for (const report of store.finalReports.values()) {
+      if (report.inspectionId === inspection.id) report.reportBody = reportBody;
+    }
+    for (const version of store.reportVersions.values()) {
+      if (version.inspectionId === inspection.id) version.reportBody = reportBody;
+    }
+  }
+
+}
+
+function removeUnsupportedReferenceClaims(store: MemoryStore): boolean {
+  let changed = false;
+  for (const claim of unsupportedReferenceClaims) {
+    const inspection = [...store.inspections.values()].find((item) => item.vin === claim.vin);
+    if (!inspection) continue;
+    const matchingPhotoIds = new Set(
+      store.listPhotos(inspection.id)
+        .filter((photo) => photo.originalFilename === claim.filename)
+        .map((photo) => photo.id)
+    );
+    const removedDamageIds: string[] = [];
+    for (const item of store.listDamage(inspection.id)) {
+      if (
+        item.source === "vision_suggestion" &&
+        matchingPhotoIds.has(item.photoId ?? "") &&
+        item.location.toLowerCase() === claim.location.toLowerCase() &&
+        item.damageType === claim.damageType &&
+        item.severity === claim.severity &&
+        item.notes === claim.notes
+      ) {
+        store.damageItems.delete(item.id);
+        removedDamageIds.push(item.id);
+      }
+    }
+
+    const removedSuggestionIds: string[] = [];
+    for (const suggestion of store.listSuggestions(inspection.id)) {
+      if (suggestion.suggestionType !== "damage_candidate" || !matchingPhotoIds.has(suggestion.photoId)) continue;
+      const value = suggestion.suggestedValueJson as { location?: unknown; damageType?: unknown; severityEstimate?: unknown; explanation?: unknown };
+      if (
+        String(value.location ?? "").toLowerCase() === claim.location.toLowerCase() &&
+        value.damageType === claim.damageType &&
+        value.severityEstimate === claim.severity &&
+        value.explanation === claim.notes
+      ) {
+        store.suggestions.delete(suggestion.id);
+        removedSuggestionIds.push(suggestion.id);
+      }
+    }
+
+    if (removedDamageIds.length === 0 && removedSuggestionIds.length === 0) continue;
+    if (removedDamageIds.length > 0) repairReferenceReport(store, inspection.id);
+    store.addAudit(inspection.id, systemActor, "reference_evidence.corrected", {
+      correction: "unsupported_damage_removed",
+      removedDamageItemIds: removedDamageIds,
+      removedSuggestionIds,
+      sourceFilename: claim.filename,
+      reason: "The vehicle-specific source image does not visibly support this damage claim."
+    });
+    changed = true;
+  }
+  return changed;
+}
+
+function removeReferenceMetadataOcrClaims(store: MemoryStore): boolean {
+  let changed = false;
+  for (const photo of store.photos.values()) {
+    if (photo.captureSource !== "reference") continue;
+    const analyses = [...store.analyses.values()].filter((analysis) => analysis.photoId === photo.id);
+    const hasModelAnalysis = analyses.some((analysis) => analysis.provider !== "referenceManifestProvider" && analysis.provider !== "referenceImportProvider");
+    if (hasModelAnalysis) continue;
+
+    const removedSuggestionIds: string[] = [];
+    for (const suggestion of store.suggestions.values()) {
+      if (suggestion.photoId !== photo.id || suggestion.suggestionType !== "extracted_text") continue;
+      store.suggestions.delete(suggestion.id);
+      removedSuggestionIds.push(suggestion.id);
+    }
+    if (removedSuggestionIds.length === 0) continue;
+    for (const verification of store.identityVerifications.values()) {
+      if (removedSuggestionIds.includes(verification.sourceSuggestionId)) {
+        store.identityVerifications.delete(verification.id);
+      }
+    }
+    store.addAudit(photo.inspectionId, systemActor, "reference_evidence.corrected", {
+      correction: "metadata_ocr_claim_removed",
+      photoId: photo.id,
+      removedSuggestionIds,
+      reason: "VIN and odometer values from reference metadata must not be presented as image OCR."
+    });
+    changed = true;
+  }
+  return changed;
+}
+
 function acceptAllOpenSuggestions(store: MemoryStore, inspectionId: string, actor: Actor): void {
   for (const suggestion of store.listSuggestions(inspectionId)) {
     if (suggestion.status === "pending" || suggestion.status === "edited") {
@@ -403,7 +564,10 @@ function createReferenceReport(store: MemoryStore, input: ReferenceInspectionInp
 
   if (input.reportState === "finalized") {
     const report = store.latestFinalReport(inspectionId);
-    if (report) store.finalizeReport(report.id, actor);
+    if (report) {
+      const approved = store.approveReport(report.id, actor, report.version, "Reference report reviewed against the complete evidence set.");
+      store.finalizeReport(approved.id, actor, approved.version);
+    }
   }
 }
 
@@ -468,15 +632,6 @@ export function seedStore(store: MemoryStore): void {
       sellerSource: "Dealer listing intake",
       inspectorName: "John Smith",
       sampleKeys: sampleBundles["ford-escape-sel-set"],
-      confirmedDamage: [
-        {
-          angle: "driver_side",
-          location: "Driver-side front door",
-          damageType: "scratch",
-          severity: "minor",
-          notes: "Reviewer confirmed a light scratch on the driver-side front door from uploaded side evidence."
-        }
-      ],
       reportState: "finalized"
     },
     {
@@ -490,15 +645,6 @@ export function seedStore(store: MemoryStore): void {
       sellerSource: "Dealer listing intake",
       inspectorName: "Maria Lee",
       sampleKeys: sampleBundles["nissan-rogue-sv-set"],
-      confirmedDamage: [
-        {
-          angle: "rear",
-          location: "Rear bumper",
-          damageType: "dent",
-          severity: "moderate",
-          notes: "Reviewer confirmed rear bumper deformation visible in the rear evidence image."
-        }
-      ],
       reportState: "draft_human_review"
     },
     {
@@ -518,7 +664,6 @@ export function seedStore(store: MemoryStore): void {
   for (const input of referenceInspections) {
     const actor = inspectorActors[input.inspectorName] ?? inspectorActors["John Smith"];
     const inspection = store.createInspection(input, actor);
-    const photoByAngle = new Map<PhotoAngle, string>();
     const importSamples = input.sampleKeys.flatMap((sampleKey) => {
       const sample = sampleImages.find((item) => item.key === sampleKey);
       return sample ? [sample] : [];
@@ -541,18 +686,16 @@ export function seedStore(store: MemoryStore): void {
         sourceUrl: sample.sourceUrl ?? null,
         sourceLicense: sample.sourceLicense ?? null,
         uploadedBy: actor.id,
-        declaredAngle: sample.angle
+        declaredAngle: sample.angle,
+        captureSource: "reference"
       }, actor);
-      photoByAngle.set(sample.angle, photo.id);
       analyzeImportedPhoto(store, {
         inspectionId: inspection.id,
         photoId: photo.id,
         storageKey,
         originalFilename: sample.filename,
-        angle: sample.angle,
-        vin: input.vin,
-        mileage: input.mileage
-      }, actor);
+        angle: sample.angle
+      }, reviewerActor);
     }
 
     if (!importedAngles.has("vin_plate")) {
@@ -570,18 +713,16 @@ export function seedStore(store: MemoryStore): void {
         sourceUrl: null,
         sourceLicense: identitySourceLicense,
         uploadedBy: actor.id,
-        declaredAngle: "vin_plate"
+        declaredAngle: "vin_plate",
+        captureSource: "reference"
       }, actor);
-      photoByAngle.set("vin_plate", vinPhoto.id);
       analyzeImportedPhoto(store, {
         inspectionId: inspection.id,
         photoId: vinPhoto.id,
         storageKey: vinPhoto.storageKey,
         originalFilename: vinPhoto.originalFilename,
-        angle: "vin_plate",
-        vin: input.vin,
-        mileage: input.mileage
-      }, actor);
+        angle: "vin_plate"
+      }, reviewerActor);
     }
 
     if (!importedAngles.has("odometer")) {
@@ -599,30 +740,15 @@ export function seedStore(store: MemoryStore): void {
         sourceUrl: null,
         sourceLicense: identitySourceLicense,
         uploadedBy: actor.id,
-        declaredAngle: "odometer"
+        declaredAngle: "odometer",
+        captureSource: "reference"
       }, actor);
-      photoByAngle.set("odometer", odometerPhoto.id);
       analyzeImportedPhoto(store, {
         inspectionId: inspection.id,
         photoId: odometerPhoto.id,
         storageKey: odometerPhoto.storageKey,
         originalFilename: odometerPhoto.originalFilename,
-        angle: "odometer",
-        vin: input.vin,
-        mileage: input.mileage
-      }, actor);
-    }
-
-    for (const damage of input.confirmedDamage ?? []) {
-      store.addDamage({
-        inspectionId: inspection.id,
-        photoId: photoByAngle.get(damage.angle) ?? null,
-        location: damage.location,
-        damageType: damage.damageType,
-        severity: damage.severity,
-        notes: damage.notes,
-        source: "vision_suggestion",
-        confirmedBy: reviewer.id
+        angle: "odometer"
       }, reviewerActor);
     }
 

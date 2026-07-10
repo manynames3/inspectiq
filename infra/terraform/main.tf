@@ -1,5 +1,12 @@
 terraform {
   required_version = ">= 1.6.0"
+  backend "s3" {
+    bucket       = "inspectiq-terraform-state-636305658578"
+    key          = "inspectiq/live/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -16,6 +23,7 @@ data "aws_caller_identity" "current" {}
 
 locals {
   lambda_zip                   = "${path.module}/../../dist/inspectiq-lambda.zip"
+  projector_zip                = "${path.module}/../../dist/inspectiq-operations-projector.zip"
   api_lambda_name              = "${var.project_name}-api"
   worker_lambda_name           = "${var.project_name}-image-worker"
   allowed_origins              = distinct(concat(var.allowed_web_origins, ["http://localhost:5173"]))
@@ -28,6 +36,7 @@ locals {
     ] : [
     "arn:aws:bedrock:${var.aws_region}::foundation-model/${local.bedrock_foundation_model_id}"
   ]
+  alarm_actions = var.alarm_email == "" ? [] : [aws_sns_topic.operations_alerts.arn]
 }
 
 resource "aws_s3_bucket" "vehicle_images" {
@@ -62,6 +71,19 @@ resource "aws_s3_bucket_cors_configuration" "vehicle_images" {
   }
 }
 
+resource "aws_s3_bucket_lifecycle_configuration" "vehicle_images" {
+  bucket = aws_s3_bucket.vehicle_images.id
+
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
+  }
+}
+
 resource "aws_sqs_queue" "image_analysis_dlq" {
   name                      = "${var.project_name}-image-analysis-dlq"
   message_retention_seconds = 1209600
@@ -75,6 +97,58 @@ resource "aws_sqs_queue" "image_analysis" {
     deadLetterTargetArn = aws_sqs_queue.image_analysis_dlq.arn
     maxReceiveCount     = 3
   })
+}
+
+resource "aws_sqs_queue" "domain_event_dlq" {
+  name                      = "${var.project_name}-domain-events-dlq"
+  message_retention_seconds = 1209600
+}
+
+resource "aws_dynamodb_table" "operations" {
+  name         = "${var.project_name}-operations"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "pk"
+  range_key    = "sk"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi1pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi1sk"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "gsi1"
+    hash_key        = "gsi1pk"
+    range_key       = "gsi1sk"
+    projection_type = "ALL"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+}
+
+resource "aws_cloudwatch_event_bus" "domain" {
+  name = "${var.project_name}-domain"
 }
 
 resource "aws_secretsmanager_secret" "database_url" {
@@ -291,12 +365,153 @@ resource "aws_iam_role_policy" "lambda_app" {
       {
         Effect = "Allow"
         Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes"
+        ]
+        Resource = aws_sqs_queue.domain_event_dlq.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "bedrock:InvokeModel",
           "bedrock:InvokeModelWithResponseStream"
         ]
         Resource = local.bedrock_model_resources
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "events:PutEvents"
+        ]
+        Resource = aws_cloudwatch_event_bus.domain.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:Query",
+          "dynamodb:TransactWriteItems"
+        ]
+        Resource = [
+          aws_dynamodb_table.operations.arn,
+          "${aws_dynamodb_table.operations.arn}/index/*"
+        ]
       }
     ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_xray" {
+  role       = aws_iam_role.lambda.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+}
+
+resource "aws_iam_role" "github_deploy" {
+  name = "${var.project_name}-github-deploy"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Principal = {
+        Federated = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
+      }
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:environment:production"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "github_deploy_power_user" {
+  role       = aws_iam_role.github_deploy.name
+  policy_arn = "arn:aws:iam::aws:policy/PowerUserAccess"
+}
+
+resource "aws_iam_role_policy" "github_deploy_iam" {
+  name = "${var.project_name}-github-deploy-iam"
+  role = aws_iam_role.github_deploy.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:CreateRole",
+          "iam:DeleteRole",
+          "iam:GetRole",
+          "iam:TagRole",
+          "iam:UntagRole",
+          "iam:UpdateAssumeRolePolicy",
+          "iam:PutRolePolicy",
+          "iam:GetRolePolicy",
+          "iam:DeleteRolePolicy",
+          "iam:AttachRolePolicy",
+          "iam:DetachRolePolicy",
+          "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies",
+          "iam:PassRole"
+        ]
+        Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:GetOpenIDConnectProvider",
+          "iam:ListOpenIDConnectProviders"
+        ]
+        Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["budgets:ViewBudget", "budgets:ModifyBudget"]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "operations_projector" {
+  name = "${var.project_name}-operations-projector-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "operations_projector_basic" {
+  role       = aws_iam_role.operations_projector.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "operations_projector_xray" {
+  role       = aws_iam_role.operations_projector.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+}
+
+resource "aws_iam_role_policy" "operations_projector" {
+  name = "${var.project_name}-operations-projector"
+  role = aws_iam_role.operations_projector.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:TransactWriteItems"
+      ]
+      Resource = aws_dynamodb_table.operations.arn
+    }]
   })
 }
 
@@ -307,6 +522,11 @@ resource "aws_cloudwatch_log_group" "api" {
 
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/aws/lambda/${local.worker_lambda_name}"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "operations_projector" {
+  name              = "/aws/lambda/${var.project_name}-operations-projector"
   retention_in_days = 30
 }
 
@@ -327,6 +547,7 @@ resource "aws_lambda_function" "api" {
       PERSISTENCE_MODE                    = "postgres"
       DATABASE_SECRET_ARN                 = aws_secretsmanager_secret.database_url.arn
       DB_SCHEMA_PATH                      = "/var/task/schema.sql"
+      DB_MIGRATIONS_PATH                  = "/var/task/migrations"
       IMAGE_BUCKET                        = aws_s3_bucket.vehicle_images.bucket
       IMAGE_UPLOAD_MODE                   = "presigned"
       IMAGE_ANALYSIS_MODE                 = "queue"
@@ -336,6 +557,12 @@ resource "aws_lambda_function" "api" {
       VISION_PROVIDER                     = "bedrock"
       REPORT_PROVIDER                     = "bedrock"
       BEDROCK_MODEL_ID                    = var.bedrock_model_id
+      BEDROCK_MONTHLY_IMAGE_LIMIT         = tostring(var.bedrock_monthly_image_limit)
+      BEDROCK_MONTHLY_REPORT_LIMIT        = tostring(var.bedrock_monthly_report_limit)
+      OPERATIONS_TABLE_NAME               = aws_dynamodb_table.operations.name
+      DOMAIN_EVENT_BUS_NAME               = aws_cloudwatch_event_bus.domain.name
+      DOMAIN_EVENT_SOURCE                 = "inspectiq.api"
+      DOMAIN_EVENT_DLQ_URL                = aws_sqs_queue.domain_event_dlq.url
       BEDROCK_VISION_FALLBACK             = "fail"
       MIN_DAMAGE_CONFIDENCE               = "0.80"
       AUTH_MODE                           = "jwt"
@@ -350,6 +577,10 @@ resource "aws_lambda_function" "api" {
   }
 
   depends_on = [aws_cloudwatch_log_group.api]
+
+  tracing_config {
+    mode = "Active"
+  }
 }
 
 resource "aws_lambda_function" "image_worker" {
@@ -369,10 +600,15 @@ resource "aws_lambda_function" "image_worker" {
       PERSISTENCE_MODE                    = "postgres"
       DATABASE_SECRET_ARN                 = aws_secretsmanager_secret.database_url.arn
       DB_SCHEMA_PATH                      = "/var/task/schema.sql"
+      DB_MIGRATIONS_PATH                  = "/var/task/migrations"
       IMAGE_BUCKET                        = aws_s3_bucket.vehicle_images.bucket
       IMAGE_UPLOAD_MODE                   = "presigned"
       VISION_PROVIDER                     = "bedrock"
       BEDROCK_MODEL_ID                    = var.bedrock_model_id
+      BEDROCK_MONTHLY_IMAGE_LIMIT         = tostring(var.bedrock_monthly_image_limit)
+      OPERATIONS_TABLE_NAME               = aws_dynamodb_table.operations.name
+      DOMAIN_EVENT_BUS_NAME               = aws_cloudwatch_event_bus.domain.name
+      DOMAIN_EVENT_SOURCE                 = "inspectiq.worker"
       BEDROCK_VISION_FALLBACK             = "fail"
       MIN_DAMAGE_CONFIDENCE               = "0.80"
       PG_POOL_SIZE                        = "2"
@@ -380,6 +616,90 @@ resource "aws_lambda_function" "image_worker" {
   }
 
   depends_on = [aws_cloudwatch_log_group.worker]
+
+  tracing_config {
+    mode = "Active"
+  }
+}
+
+resource "aws_lambda_function" "operations_projector" {
+  function_name                  = "${var.project_name}-operations-projector"
+  role                           = aws_iam_role.operations_projector.arn
+  runtime                        = "python3.12"
+  handler                        = "handler.handler"
+  filename                       = local.projector_zip
+  source_code_hash               = filebase64sha256(local.projector_zip)
+  timeout                        = 20
+  memory_size                    = 256
+  reserved_concurrent_executions = 2
+
+  environment {
+    variables = {
+      OPERATIONS_TABLE_NAME = aws_dynamodb_table.operations.name
+    }
+  }
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  depends_on = [aws_cloudwatch_log_group.operations_projector]
+}
+
+resource "aws_cloudwatch_event_rule" "domain_projection" {
+  name           = "${var.project_name}-domain-projection"
+  event_bus_name = aws_cloudwatch_event_bus.domain.name
+  event_pattern = jsonencode({
+    source = ["inspectiq.api", "inspectiq.worker"]
+    "detail-type" = [
+      "inspection.created",
+      "photo.uploaded",
+      "image.analysis.completed",
+      "image.analysis.failed",
+      "image.retake.required",
+      "suggestion.reviewed",
+      "report.finalized"
+    ]
+  })
+}
+
+resource "aws_cloudwatch_event_target" "operations_projector" {
+  rule           = aws_cloudwatch_event_rule.domain_projection.name
+  event_bus_name = aws_cloudwatch_event_bus.domain.name
+  arn            = aws_lambda_function.operations_projector.arn
+
+  dead_letter_config {
+    arn = aws_sqs_queue.domain_event_dlq.arn
+  }
+
+  retry_policy {
+    maximum_event_age_in_seconds = 3600
+    maximum_retry_attempts       = 3
+  }
+}
+
+resource "aws_lambda_permission" "eventbridge_projector" {
+  statement_id  = "AllowEventBridgeOperationsProjection"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.operations_projector.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.domain_projection.arn
+}
+
+resource "aws_sqs_queue_policy" "domain_event_dlq" {
+  queue_url = aws_sqs_queue.domain_event_dlq.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "events.amazonaws.com" }
+      Action    = "sqs:SendMessage"
+      Resource  = aws_sqs_queue.domain_event_dlq.arn
+      Condition = {
+        ArnEquals = { "aws:SourceArn" = aws_cloudwatch_event_rule.domain_projection.arn }
+      }
+    }]
+  })
 }
 
 resource "aws_lambda_event_source_mapping" "image_worker" {
@@ -478,6 +798,50 @@ resource "aws_lambda_permission" "api_gateway" {
   source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
 }
 
+resource "aws_sns_topic" "operations_alerts" {
+  name = "${var.project_name}-operations-alerts"
+}
+
+resource "aws_sns_topic_subscription" "operations_email" {
+  count     = var.alarm_email == "" ? 0 : 1
+  topic_arn = aws_sns_topic.operations_alerts.arn
+  protocol  = "email"
+  endpoint  = var.alarm_email
+}
+
+resource "aws_budgets_budget" "monthly" {
+  count        = var.alarm_email == "" ? 0 : 1
+  name         = "${var.project_name}-monthly-cost"
+  budget_type  = "COST"
+  limit_amount = tostring(var.monthly_budget_usd)
+  limit_unit   = "USD"
+  time_unit    = "MONTHLY"
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 50
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "FORECASTED"
+    subscriber_email_addresses = [var.alarm_email]
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 80
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = [var.alarm_email]
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 100
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = [var.alarm_email]
+  }
+}
+
 resource "aws_cloudwatch_metric_alarm" "api_errors" {
   alarm_name          = "${var.project_name}-api-errors"
   comparison_operator = "GreaterThanOrEqualToThreshold"
@@ -487,6 +851,7 @@ resource "aws_cloudwatch_metric_alarm" "api_errors" {
   period              = 60
   statistic           = "Sum"
   threshold           = 1
+  alarm_actions       = local.alarm_actions
   treat_missing_data  = "notBreaching"
   dimensions = {
     FunctionName = aws_lambda_function.api.function_name
@@ -502,6 +867,7 @@ resource "aws_cloudwatch_metric_alarm" "worker_errors" {
   period              = 60
   statistic           = "Sum"
   threshold           = 1
+  alarm_actions       = local.alarm_actions
   treat_missing_data  = "notBreaching"
   dimensions = {
     FunctionName = aws_lambda_function.image_worker.function_name
@@ -517,6 +883,7 @@ resource "aws_cloudwatch_metric_alarm" "image_dlq_visible" {
   period              = 60
   statistic           = "Maximum"
   threshold           = 1
+  alarm_actions       = local.alarm_actions
   treat_missing_data  = "notBreaching"
   dimensions = {
     QueueName = aws_sqs_queue.image_analysis_dlq.name
@@ -532,6 +899,7 @@ resource "aws_cloudwatch_metric_alarm" "image_queue_age" {
   period              = 60
   statistic           = "Maximum"
   threshold           = 300
+  alarm_actions       = local.alarm_actions
   treat_missing_data  = "notBreaching"
   dimensions = {
     QueueName = aws_sqs_queue.image_analysis.name
@@ -547,11 +915,83 @@ resource "aws_cloudwatch_metric_alarm" "api_p95_latency" {
   period              = 60
   extended_statistic  = "p95"
   threshold           = 2000
+  alarm_actions       = local.alarm_actions
   treat_missing_data  = "notBreaching"
   dimensions = {
     ApiId = aws_apigatewayv2_api.http.id
     Stage = aws_apigatewayv2_stage.default.name
   }
+}
+
+resource "aws_cloudwatch_metric_alarm" "operations_projector_errors" {
+  alarm_name          = "${var.project_name}-operations-projector-errors"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_actions       = local.alarm_actions
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    FunctionName = aws_lambda_function.operations_projector.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "domain_event_dlq_visible" {
+  alarm_name          = "${var.project_name}-domain-event-dlq-visible"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 1
+  alarm_actions       = local.alarm_actions
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    QueueName = aws_sqs_queue.domain_event_dlq.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "pending_outbox_age" {
+  alarm_name          = "${var.project_name}-pending-outbox-age"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "PendingOutboxAgeSeconds"
+  namespace           = "InspectIQ"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 300
+  alarm_actions       = local.alarm_actions
+  treat_missing_data  = "notBreaching"
+}
+
+resource "aws_cloudwatch_metric_alarm" "bedrock_throttles" {
+  alarm_name          = "${var.project_name}-bedrock-throttles"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "BedrockThrottles"
+  namespace           = "InspectIQ"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_actions       = local.alarm_actions
+  treat_missing_data  = "notBreaching"
+}
+
+resource "aws_cloudwatch_metric_alarm" "cost_guard_rejections" {
+  alarm_name          = "${var.project_name}-cost-guard-rejections"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "CostGuardRejections"
+  namespace           = "InspectIQ"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_actions       = local.alarm_actions
+  treat_missing_data  = "notBreaching"
 }
 
 resource "aws_cloudwatch_dashboard" "inspectiq" {
@@ -569,7 +1009,8 @@ resource "aws_cloudwatch_dashboard" "inspectiq" {
           region = var.aws_region
           metrics = [
             ["AWS/Lambda", "Errors", "FunctionName", aws_lambda_function.api.function_name],
-            [".", ".", ".", aws_lambda_function.image_worker.function_name]
+            [".", ".", ".", aws_lambda_function.image_worker.function_name],
+            [".", ".", ".", aws_lambda_function.operations_projector.function_name]
           ]
           stat   = "Sum"
           period = 60
@@ -604,7 +1045,8 @@ resource "aws_cloudwatch_dashboard" "inspectiq" {
           metrics = [
             ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", aws_sqs_queue.image_analysis.name],
             [".", "ApproximateNumberOfMessagesVisible", ".", aws_sqs_queue.image_analysis.name],
-            [".", "ApproximateNumberOfMessagesVisible", ".", aws_sqs_queue.image_analysis_dlq.name]
+            [".", "ApproximateNumberOfMessagesVisible", ".", aws_sqs_queue.image_analysis_dlq.name],
+            [".", "ApproximateNumberOfMessagesVisible", ".", aws_sqs_queue.domain_event_dlq.name]
           ]
           stat   = "Maximum"
           period = 60
@@ -628,6 +1070,24 @@ resource "aws_cloudwatch_dashboard" "inspectiq" {
           period = 60
           view   = "timeSeries"
         }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 12
+        width  = 24
+        height = 5
+        properties = {
+          title  = "Event delivery and AI cost controls"
+          region = var.aws_region
+          metrics = [
+            ["InspectIQ", "PendingOutboxAgeSeconds", { stat = "Maximum", label = "Oldest pending outbox event" }],
+            [".", "BedrockThrottles", { stat = "Sum", label = "Bedrock throttles" }],
+            [".", "CostGuardRejections", { stat = "Sum", label = "Cost guard rejections" }]
+          ]
+          period = 60
+          view   = "timeSeries"
+        }
       }
     ]
   })
@@ -647,6 +1107,22 @@ output "image_analysis_queue_url" {
 
 output "database_secret_arn" {
   value = aws_secretsmanager_secret.database_url.arn
+}
+
+output "domain_event_bus_name" {
+  value = aws_cloudwatch_event_bus.domain.name
+}
+
+output "operations_table_name" {
+  value = aws_dynamodb_table.operations.name
+}
+
+output "operations_projector_function_name" {
+  value = aws_lambda_function.operations_projector.function_name
+}
+
+output "github_deploy_role_arn" {
+  value = aws_iam_role.github_deploy.arn
 }
 
 output "cognito_user_pool_id" {

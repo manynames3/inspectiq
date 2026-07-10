@@ -17,3 +17,6 @@ tfplan-*
 .venv-diagrams/
 apps/api/uploads/
 apps/web/.vite/
+apps/mobile/android/
+apps/mobile/ios/
+output/

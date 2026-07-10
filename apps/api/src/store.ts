@@ -21,6 +21,7 @@ import type {
   AuditEvent,
   ConditionGrade,
   DamageItem,
+  DomainEventOutbox,
   FinalReport,
   ImageAnalysisJob,
   IdentityVerification,
@@ -28,18 +29,20 @@ import type {
   InspectionBundle,
   OperationalMetric,
   PhotoAnalysisResult,
+  ReportVersion,
   User,
   VehiclePhoto,
   VisionSuggestion
 } from "./domain.js";
-import { conflict, notFound } from "./errors.js";
+import { conflict, notFound, versionConflict } from "./errors.js";
+import { currentCorrelationId } from "./requestContext.js";
 import { assertTransition, canTransition } from "./stateMachine.js";
 
 type CreateInspectionInput = z.infer<typeof CreateInspectionSchema>;
 type SuggestionAssignmentRole = Extract<UserRole, "inspector" | "reviewer">;
 type CreateVisionSuggestionInput = Omit<
   VisionSuggestion,
-  "id" | "status" | "reviewedBy" | "reviewedAt" | "resolvedAt" | "createdAt" | "assignedToRole" | "assignedToUserId" | "dueAt"
+  "id" | "status" | "reviewedBy" | "reviewedAt" | "resolvedAt" | "createdAt" | "assignedToRole" | "assignedToUserId" | "dueAt" | "version"
 > & Partial<Pick<VisionSuggestion, "assignedToRole" | "assignedToUserId" | "dueAt">>;
 
 const now = () => new Date().toISOString();
@@ -132,8 +135,10 @@ export class MemoryStore {
   reportJobs = new Map<string, AiReportJob>();
   reportDrafts = new Map<string, AiReportDraft>();
   finalReports = new Map<string, FinalReport>();
+  reportVersions = new Map<string, ReportVersion>();
   identityVerifications = new Map<string, IdentityVerification>();
   auditEvents = new Map<string, AuditEvent>();
+  domainEvents = new Map<string, DomainEventOutbox>();
 
   assertMutableInspection(inspectionId: string, action: string): Inspection {
     const inspection = this.getInspection(inspectionId);
@@ -155,8 +160,10 @@ export class MemoryStore {
     this.reportJobs.clear();
     this.reportDrafts.clear();
     this.finalReports.clear();
+    this.reportVersions.clear();
     this.identityVerifications.clear();
     this.auditEvents.clear();
+    this.domainEvents.clear();
   }
 
   addUser(input: Pick<User, "name" | "role"> & { id?: string }): User {
@@ -211,17 +218,30 @@ export class MemoryStore {
       status: "DRAFT",
       completenessPercentage: 0,
       createdBy: actor.id,
+      assignedToUserId: actor.id,
+      version: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
       finalizedAt: null
     };
     this.inspections.set(inspection.id, inspection);
     this.addAudit(inspection.id, actor, "inspection.created", { status: inspection.status, vin: inspection.vin });
+    this.emitDomainEvent("inspection.created", inspection.id, actor, {
+      status: inspection.status,
+      year: inspection.year,
+      make: inspection.make,
+      model: inspection.model
+    });
     return inspection;
   }
 
-  patchInspection(idValue: string, patch: Partial<CreateInspectionInput> & { status?: InspectionStatus }, actor: Actor): Inspection {
+  patchInspection(idValue: string, patch: Partial<CreateInspectionInput> & {
+    status?: InspectionStatus;
+    assignedToUserId?: string | null;
+    expectedVersion?: number;
+  }, actor: Actor): Inspection {
     const inspection = this.getInspection(idValue);
+    this.assertExpectedVersion("Inspection", patch.expectedVersion, inspection.version);
     const hasFieldPatch = mutableInspectionFields.some((field) => Object.prototype.hasOwnProperty.call(patch, field));
     if (patch.status === "FINALIZED") {
       throw conflict("Finalize inspections through the report finalization endpoint.");
@@ -247,6 +267,8 @@ export class MemoryStore {
       exteriorColor: patch.exteriorColor ?? current.exteriorColor,
       sellerSource: patch.sellerSource ?? current.sellerSource,
       inspectorName: patch.inspectorName ?? current.inspectorName,
+      assignedToUserId: patch.assignedToUserId === undefined ? current.assignedToUserId : patch.assignedToUserId,
+      version: current.version + 1,
       updatedAt: now()
     });
     this.addAudit(idValue, actor, "inspection.updated", { before, after: current });
@@ -259,6 +281,7 @@ export class MemoryStore {
     assertTransition(inspection.status, nextStatus);
     const beforeStatus = inspection.status;
     inspection.status = nextStatus;
+    inspection.version += 1;
     inspection.updatedAt = now();
     if (nextStatus === "FINALIZED") inspection.finalizedAt = inspection.updatedAt;
     this.addAudit(inspectionId, actor, eventType, { beforeStatus, afterStatus: nextStatus });
@@ -280,8 +303,16 @@ export class MemoryStore {
     sourceLicense?: string | null;
     uploadedBy: string;
     declaredAngle?: PhotoAngle | null;
+    operationId?: string | null;
+    capturedAt?: string | null;
+    deviceId?: string | null;
+    captureSource?: VehiclePhoto["captureSource"];
   }, actor: Actor): VehiclePhoto {
     const inspection = this.assertMutableInspection(input.inspectionId, "upload photos");
+    if (input.operationId) {
+      const existing = [...this.photos.values()].find((photo) => photo.operationId === input.operationId);
+      if (existing) return existing;
+    }
     const photo: VehiclePhoto = {
       id: id(),
       inspectionId: inspection.id,
@@ -303,7 +334,11 @@ export class MemoryStore {
       detectedAngle: null,
       detectedAngleConfidence: null,
       qualityStatus: "unknown",
-      analysisStatus: "not_analyzed"
+      analysisStatus: "not_analyzed",
+      operationId: input.operationId ?? null,
+      capturedAt: input.capturedAt ?? null,
+      deviceId: input.deviceId ?? null,
+      captureSource: input.captureSource ?? "web"
     };
     this.photos.set(photo.id, photo);
     this.maybeProgressFromDraft(inspection.id, actor);
@@ -316,6 +351,11 @@ export class MemoryStore {
       declaredAngle: photo.declaredAngle,
       sourceName: photo.sourceName,
       sourceUrl: photo.sourceUrl
+    });
+    this.emitDomainEvent("photo.uploaded", inspection.id, actor, {
+      photoId: photo.id,
+      declaredAngle: photo.declaredAngle,
+      captureSource: photo.captureSource
     });
     return photo;
   }
@@ -393,6 +433,17 @@ export class MemoryStore {
     promptVersion: string;
     raw: unknown;
     validated: VisionOutput;
+    metadata?: {
+      modelId: string;
+      latencyMs: number;
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      estimatedCostUsd: number;
+      schemaValid: boolean;
+      fallbackUsed: boolean;
+      failureCategory: string | null;
+    };
     jobId?: string | null;
     force?: boolean;
   }, actor: Actor): PhotoAnalysisResult {
@@ -426,6 +477,15 @@ export class MemoryStore {
       confidence: input.validated.confidence,
       status: "completed",
       errorMessage: null,
+      modelId: input.metadata?.modelId ?? null,
+      latencyMs: input.metadata?.latencyMs ?? null,
+      inputTokens: input.metadata?.inputTokens ?? null,
+      outputTokens: input.metadata?.outputTokens ?? null,
+      totalTokens: input.metadata?.totalTokens ?? null,
+      estimatedCostUsd: input.metadata?.estimatedCostUsd ?? null,
+      schemaValid: input.metadata?.schemaValid ?? true,
+      fallbackUsed: input.metadata?.fallbackUsed ?? false,
+      failureCategory: input.metadata?.failureCategory ?? null,
       createdAt: now()
     };
     this.analyses.set(analysis.id, analysis);
@@ -499,7 +559,90 @@ export class MemoryStore {
       schema: "VisionOutputSchema",
       confidence: input.validated.confidence,
       imageQuality: input.validated.imageQuality,
-      humanReviewRequired: input.validated.humanReviewRequired
+      humanReviewRequired: input.validated.humanReviewRequired,
+      modelId: input.metadata?.modelId ?? null,
+      latencyMs: input.metadata?.latencyMs ?? null,
+      totalTokens: input.metadata?.totalTokens ?? null,
+      estimatedCostUsd: input.metadata?.estimatedCostUsd ?? null,
+      fallbackUsed: input.metadata?.fallbackUsed ?? false
+    });
+    this.emitDomainEvent("image.analysis.completed", photo.inspectionId, actor, {
+      photoId: photo.id,
+      provider: input.provider,
+      confidence: input.validated.confidence
+    });
+    if (input.validated.imageQuality.retakeRequired) {
+      this.emitDomainEvent("image.retake.required", photo.inspectionId, actor, {
+        photoId: photo.id,
+        declaredAngle: photo.declaredAngle,
+        qualityGrade: input.validated.imageQuality.grade
+      });
+    }
+    return analysis;
+  }
+
+  saveReferenceMapping(photo: VehiclePhoto, input: {
+    raw: unknown;
+    validated: VisionOutput;
+  }, actor: Actor): PhotoAnalysisResult {
+    this.assertMutableInspection(photo.inspectionId, "map reference evidence");
+    const analysis: PhotoAnalysisResult = {
+      id: id(),
+      photoId: photo.id,
+      provider: "referenceManifestProvider",
+      promptVersion: "reference-manifest-v1",
+      rawModelOutputJson: input.raw,
+      validatedOutputJson: input.validated,
+      confidence: input.validated.confidence,
+      status: "completed",
+      errorMessage: null,
+      modelId: null,
+      latencyMs: null,
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      estimatedCostUsd: null,
+      schemaValid: true,
+      fallbackUsed: false,
+      failureCategory: null,
+      createdAt: now()
+    };
+    this.analyses.set(analysis.id, analysis);
+
+    photo.captureSource = "reference";
+    photo.detectedAngle = input.validated.photoAngle;
+    photo.detectedAngleConfidence = input.validated.confidence;
+    photo.qualityStatus = input.validated.imageQuality.retakeRequired || input.validated.imageQuality.grade === "retake"
+      ? "fail"
+      : input.validated.qualityWarnings.length > 0 || input.validated.imageQuality.grade === "review"
+        ? "warning"
+        : "ok";
+    photo.analysisStatus = "completed";
+
+    this.createSuggestion({
+      inspectionId: photo.inspectionId,
+      photoId: photo.id,
+      suggestionType: "photo_angle",
+      suggestedValueJson: { photoAngle: input.validated.photoAngle },
+      confidence: input.validated.confidence,
+      explanation: `Reference manifest maps this image to the ${input.validated.photoAngle} checklist slot. Reviewer confirmation required.`
+    });
+    for (const warning of input.validated.qualityWarnings) {
+      this.createSuggestion({
+        inspectionId: photo.inspectionId,
+        photoId: photo.id,
+        suggestionType: "quality_warning",
+        suggestedValueJson: { warning, imageQuality: input.validated.imageQuality },
+        confidence: Math.min(input.validated.confidence, 0.75),
+        explanation: `Reference-source QA note: ${warning} Reviewer confirmation required.`
+      });
+    }
+    this.addAudit(photo.inspectionId, actor, "reference_evidence.mapped", {
+      photoId: photo.id,
+      declaredAngle: photo.declaredAngle,
+      sourceName: photo.sourceName,
+      sourceUrl: photo.sourceUrl,
+      qualityStatus: photo.qualityStatus
     });
     return analysis;
   }
@@ -526,10 +669,24 @@ export class MemoryStore {
       confidence: 0,
       status: "failed",
       errorMessage,
+      modelId: null,
+      latencyMs: null,
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      estimatedCostUsd: null,
+      schemaValid: false,
+      fallbackUsed: false,
+      failureCategory: "provider_or_schema",
       createdAt: now()
     };
     this.analyses.set(analysis.id, analysis);
     this.addAudit(photo.inspectionId, actor, "photo.analysis_failed", { jobId: jobId ?? null, photoId: photo.id, provider, errorMessage });
+    this.emitDomainEvent("image.analysis.failed", photo.inspectionId, actor, {
+      photoId: photo.id,
+      provider,
+      failureCategory: "provider_or_schema"
+    });
     return analysis;
   }
 
@@ -552,6 +709,7 @@ export class MemoryStore {
       reviewedAt: null,
       resolvedAt: null,
       createdAt,
+      version: 1,
       ...suggestionInput
     };
     this.suggestions.set(suggestion.id, suggestion);
@@ -571,8 +729,9 @@ export class MemoryStore {
     return suggestion;
   }
 
-  editSuggestion(idValue: string, patch: { suggestedValue: unknown; explanation?: string }, actor: Actor): VisionSuggestion {
+  editSuggestion(idValue: string, patch: { suggestedValue: unknown; explanation?: string; expectedVersion?: number }, actor: Actor): VisionSuggestion {
     const suggestion = this.getSuggestion(idValue);
+    this.assertExpectedVersion("Suggestion", patch.expectedVersion, suggestion.version);
     this.assertMutableInspection(suggestion.inspectionId, "edit suggestions");
     if (suggestion.status === "accepted" || suggestion.status === "rejected") {
       throw conflict("Reviewed suggestions cannot be edited.");
@@ -583,6 +742,7 @@ export class MemoryStore {
     suggestion.status = "edited";
     suggestion.reviewedBy = actor.id;
     suggestion.reviewedAt = now();
+    suggestion.version += 1;
     this.addAudit(suggestion.inspectionId, actor, "suggestion.edited", {
       suggestionId: suggestion.id,
       suggestionType: suggestion.suggestionType,
@@ -591,8 +751,9 @@ export class MemoryStore {
     return suggestion;
   }
 
-  acceptSuggestion(idValue: string, actor: Actor): VisionSuggestion {
+  acceptSuggestion(idValue: string, actor: Actor, expectedVersion?: number): VisionSuggestion {
     const suggestion = this.getSuggestion(idValue);
+    this.assertExpectedVersion("Suggestion", expectedVersion, suggestion.version);
     this.assertMutableInspection(suggestion.inspectionId, "accept suggestions");
     if (suggestion.status === "accepted") return suggestion;
     if (suggestion.status === "rejected") throw conflict("Rejected suggestions cannot be accepted without a new review.");
@@ -602,6 +763,7 @@ export class MemoryStore {
     suggestion.reviewedBy = actor.id;
     suggestion.reviewedAt = now();
     suggestion.resolvedAt = suggestion.reviewedAt;
+    suggestion.version += 1;
 
     if (suggestion.suggestionType === "photo_angle") {
       const angleValue = value as { photoAngle: PhotoAngle };
@@ -660,20 +822,82 @@ export class MemoryStore {
       value: suggestion.suggestedValueJson,
       materializedDamageItemId
     });
+    this.emitDomainEvent("suggestion.reviewed", suggestion.inspectionId, actor, {
+      suggestionId: suggestion.id,
+      suggestionType: suggestion.suggestionType,
+      decision: "accepted"
+    });
     return suggestion;
   }
 
-  rejectSuggestion(idValue: string, actor: Actor): VisionSuggestion {
+  rejectSuggestion(idValue: string, actor: Actor, expectedVersion?: number): VisionSuggestion {
     const suggestion = this.getSuggestion(idValue);
+    this.assertExpectedVersion("Suggestion", expectedVersion, suggestion.version);
     this.assertMutableInspection(suggestion.inspectionId, "reject suggestions");
     if (suggestion.status === "accepted") throw conflict("Accepted suggestions cannot be rejected.");
     suggestion.status = "rejected";
     suggestion.reviewedBy = actor.id;
     suggestion.reviewedAt = now();
     suggestion.resolvedAt = suggestion.reviewedAt;
+    suggestion.version += 1;
     this.addAudit(suggestion.inspectionId, actor, "suggestion.rejected", {
       suggestionId: suggestion.id,
       suggestionType: suggestion.suggestionType
+    });
+    this.emitDomainEvent("suggestion.reviewed", suggestion.inspectionId, actor, {
+      suggestionId: suggestion.id,
+      suggestionType: suggestion.suggestionType,
+      decision: "rejected"
+    });
+    return suggestion;
+  }
+
+  assignSuggestion(idValue: string, assignment: {
+    assignedToRole: SuggestionAssignmentRole;
+    assignedToUserId?: string | null;
+    dueAt?: string;
+    expectedVersion?: number;
+  }, actor: Actor): VisionSuggestion {
+    const suggestion = this.getSuggestion(idValue);
+    this.assertExpectedVersion("Suggestion", assignment.expectedVersion, suggestion.version);
+    if (suggestion.status === "accepted" || suggestion.status === "rejected") {
+      throw conflict("Closed suggestions cannot be reassigned.");
+    }
+    suggestion.assignedToRole = assignment.assignedToRole;
+    suggestion.assignedToUserId = assignment.assignedToUserId ?? null;
+    suggestion.dueAt = assignment.dueAt ?? suggestion.dueAt;
+    suggestion.version += 1;
+    this.addAudit(suggestion.inspectionId, actor, "suggestion.assigned", {
+      suggestionId: suggestion.id,
+      assignedToRole: suggestion.assignedToRole,
+      assignedToUserId: suggestion.assignedToUserId,
+      dueAt: suggestion.dueAt
+    });
+    return suggestion;
+  }
+
+  requestSuggestionRetake(suggestionId: string, reason: string, actor: Actor): VisionSuggestion {
+    const suggestion = this.getSuggestion(suggestionId);
+    this.assertMutableInspection(suggestion.inspectionId, "request an image retake");
+    if (suggestion.suggestionType !== "quality_warning" && suggestion.suggestionType !== "photo_angle") {
+      throw conflict("Only image quality and angle findings can be converted to retake work.");
+    }
+    suggestion.assignedToRole = "inspector";
+    suggestion.assignedToUserId = null;
+    suggestion.dueAt = new Date(Date.now() + 60 * 60_000).toISOString();
+    suggestion.explanation = `${reason} Inspector retake required.`;
+    suggestion.version += 1;
+    this.addAudit(suggestion.inspectionId, actor, "suggestion.retake_requested", {
+      suggestionId: suggestion.id,
+      photoId: suggestion.photoId,
+      reason,
+      dueAt: suggestion.dueAt
+    });
+    this.emitDomainEvent("image.retake.required", suggestion.inspectionId, actor, {
+      suggestionId: suggestion.id,
+      photoId: suggestion.photoId,
+      reason,
+      dueAt: suggestion.dueAt
     });
     return suggestion;
   }
@@ -863,20 +1087,32 @@ export class MemoryStore {
     job.updatedAt = now();
 
     const existingReport = this.latestFinalReport(job.inspectionId);
+    let currentReport: FinalReport;
     if (existingReport) {
       existingReport.reportBody = reportBody;
       existingReport.version += 1;
+      existingReport.approvalStatus = "draft";
+      existingReport.reviewerComment = "";
+      existingReport.approvedBy = null;
+      existingReport.approvedAt = null;
+      currentReport = existingReport;
     } else {
       const reportId = id();
-      this.finalReports.set(reportId, {
+      currentReport = {
         id: reportId,
         inspectionId: job.inspectionId,
         reportBody,
         finalizedBy: null,
         finalizedAt: null,
-        version: 1
-      });
+        version: 1,
+        approvalStatus: "draft",
+        reviewerComment: "",
+        approvedBy: null,
+        approvedAt: null
+      };
+      this.finalReports.set(reportId, currentReport);
     }
+    this.recordReportVersion(currentReport, actor, "generated");
 
     const nextStatus = savedDraft.humanReviewRequired ? "HUMAN_REVIEW_REQUIRED" : "AI_DRAFTED";
     this.transition(job.inspectionId, nextStatus, actor, "inspection.status_changed");
@@ -934,6 +1170,30 @@ export class MemoryStore {
     return report;
   }
 
+  reportVersionsFor(reportId: string): ReportVersion[] {
+    this.getFinalReport(reportId);
+    return [...this.reportVersions.values()]
+      .filter((version) => version.reportId === reportId)
+      .sort((left, right) => right.version - left.version);
+  }
+
+  private recordReportVersion(report: FinalReport, actor: Actor, changeType: ReportVersion["changeType"]): ReportVersion {
+    const version: ReportVersion = {
+      id: id(),
+      reportId: report.id,
+      inspectionId: report.inspectionId,
+      version: report.version,
+      reportBody: report.reportBody,
+      approvalStatus: report.approvalStatus,
+      reviewerComment: report.reviewerComment,
+      changedBy: actor.id,
+      changeType,
+      createdAt: now()
+    };
+    this.reportVersions.set(version.id, version);
+    return version;
+  }
+
   buyerReportExport(reportId: string): { filename: string; body: string } {
     const report = this.getFinalReport(reportId);
     const inspection = this.getInspection(report.inspectionId);
@@ -977,19 +1237,48 @@ export class MemoryStore {
     };
   }
 
-  patchReport(reportId: string, reportBody: string, actor: Actor): FinalReport {
+  patchReport(reportId: string, reportBody: string, actor: Actor, options: { expectedVersion?: number; reviewerComment?: string } = {}): FinalReport {
     const report = this.getFinalReport(reportId);
+    this.assertExpectedVersion("Report", options.expectedVersion, report.version);
     if (report.finalizedAt) throw conflict("Finalized reports cannot be edited.");
     report.reportBody = reportBody;
     report.version += 1;
+    report.approvalStatus = "in_review";
+    if (options.reviewerComment !== undefined) report.reviewerComment = options.reviewerComment;
+    this.recordReportVersion(report, actor, "edited");
     this.addAudit(report.inspectionId, actor, "report.edited", { reportId, version: report.version });
     return report;
   }
 
-  finalizeReport(reportId: string, actor: Actor): FinalReport {
+  approveReport(reportId: string, actor: Actor, expectedVersion: number, reviewerComment?: string): FinalReport {
     const report = this.getFinalReport(reportId);
+    this.assertExpectedVersion("Report", expectedVersion, report.version);
+    if (report.finalizedAt) throw conflict("Finalized reports cannot be approved again.");
+    report.version += 1;
+    report.approvalStatus = "approved";
+    report.reviewerComment = reviewerComment ?? report.reviewerComment;
+    report.approvedBy = actor.id;
+    report.approvedAt = now();
+    this.recordReportVersion(report, actor, "approved");
+    this.addAudit(report.inspectionId, actor, "report.approved", {
+      reportId,
+      version: report.version,
+      reviewerComment: report.reviewerComment
+    });
+    return report;
+  }
+
+  finalizeReport(reportId: string, actor: Actor, expectedVersion?: number): FinalReport {
+    const report = this.getFinalReport(reportId);
+    this.assertExpectedVersion("Report", expectedVersion, report.version);
     const inspection = this.getInspection(report.inspectionId);
     if (report.finalizedAt) return report;
+    if (report.approvalStatus !== "approved") {
+      throw conflict("Approve the reviewed report before finalization.", {
+        approvalStatus: report.approvalStatus,
+        reportVersion: report.version
+      });
+    }
     if (inspection.completenessPercentage < 100) {
       throw conflict("Cannot finalize until required photo evidence is complete.", {
         completenessPercentage: inspection.completenessPercentage
@@ -1006,8 +1295,15 @@ export class MemoryStore {
     }
     report.finalizedAt = now();
     report.finalizedBy = actor.id;
+    report.approvalStatus = "finalized";
+    report.version += 1;
+    this.recordReportVersion(report, actor, "finalized");
     this.transition(inspection.id, "FINALIZED", actor, "inspection.status_changed");
     this.addAudit(inspection.id, actor, "report.finalized", { reportId, version: report.version });
+    this.emitDomainEvent("report.finalized", inspection.id, actor, {
+      reportId,
+      version: report.version
+    });
     return report;
   }
 
@@ -1034,6 +1330,38 @@ export class MemoryStore {
     return event;
   }
 
+  emitDomainEvent(eventType: DomainEventOutbox["eventType"], inspectionId: string, actor: Actor, payloadJson: Record<string, unknown>): DomainEventOutbox {
+    const event: DomainEventOutbox = {
+      id: id(),
+      eventType,
+      schemaVersion: "1.0",
+      inspectionId,
+      actorId: actor.id,
+      actorRole: actor.role,
+      correlationId: currentCorrelationId(),
+      payloadJson,
+      status: "pending",
+      deliveryAttempts: 0,
+      lastError: null,
+      createdAt: now(),
+      deliveredAt: null
+    };
+    this.domainEvents.set(event.id, event);
+    return event;
+  }
+
+  pendingDomainEvents(): DomainEventOutbox[] {
+    return [...this.domainEvents.values()]
+      .filter((event) => event.status === "pending" || event.status === "failed")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  private assertExpectedVersion(resource: string, expectedVersion: number | undefined, actualVersion: number): void {
+    if (expectedVersion !== undefined && expectedVersion !== actualVersion) {
+      throw versionConflict(resource, expectedVersion, actualVersion);
+    }
+  }
+
   operationalMetrics(): OperationalMetric[] {
     const inspections = [...this.inspections.values()];
     const analyses = [...this.analyses.values()];
@@ -1042,10 +1370,17 @@ export class MemoryStore {
     const grades = [...this.conditionGrades.values()];
     const reports = [...this.finalReports.values()];
 
-    const completedAnalysisRows = analyses.filter((analysis) => analysis.status === "completed");
+    const modelAnalyses = analyses.filter((analysis) =>
+      analysis.provider !== "referenceManifestProvider" &&
+      analysis.provider !== "referenceImportProvider" &&
+      analysis.provider !== "seededImportProvider"
+    );
+    const modelPhotoIds = new Set(modelAnalyses.map((analysis) => analysis.photoId));
+    const modelSuggestions = suggestions.filter((suggestion) => modelPhotoIds.has(suggestion.photoId));
+    const completedAnalysisRows = modelAnalyses.filter((analysis) => analysis.status === "completed");
     const completedAnalyses = completedAnalysisRows.length;
-    const failedAnalyses = analyses.filter((analysis) => analysis.status === "failed").length;
-    const analysisRate = rateValue(completedAnalyses, analyses.length, 1);
+    const failedAnalyses = modelAnalyses.filter((analysis) => analysis.status === "failed").length;
+    const analysisRate = rateValue(completedAnalyses, modelAnalyses.length, 1);
     const retakeRequiredAnalyses = completedAnalysisRows.filter(analysisRequiresRetake).length;
     const retakeRate = rateValue(retakeRequiredAnalyses, completedAnalyses, 0);
 
@@ -1053,8 +1388,8 @@ export class MemoryStore {
     const missingRequiredAngles = inspections.reduce((total, inspection) => total + this.missingRequiredEvidence(inspection.id).length, 0);
     const missingRate = rateValue(missingRequiredAngles, totalRequiredAngles, 0);
 
-    const reviewRequired = suggestions.filter((suggestion) => suggestion.status === "pending" || suggestion.status === "edited").length;
-    const reviewRate = rateValue(reviewRequired, suggestions.length, 0);
+    const reviewRequired = modelSuggestions.filter((suggestion) => suggestion.status === "pending" || suggestion.status === "edited").length;
+    const reviewRate = rateValue(reviewRequired, modelSuggestions.length, 0);
 
     const gradeLatencies = grades
       .map((grade) => {
@@ -1070,7 +1405,7 @@ export class MemoryStore {
 
     const finalizedReports = reports.filter((report) => report.finalizedAt).length;
     const finalizationRate = rateValue(finalizedReports, reports.length, 0);
-    const reviewedSuggestions = suggestions.filter((suggestion) => suggestion.status === "accepted" || suggestion.status === "rejected");
+    const reviewedSuggestions = modelSuggestions.filter((suggestion) => suggestion.status === "accepted" || suggestion.status === "rejected");
     const acceptedSuggestions = reviewedSuggestions.filter((suggestion) => suggestion.status === "accepted").length;
     const acceptanceRate = rateValue(acceptedSuggestions, reviewedSuggestions.length, 0);
     const finishedImageJobs = imageJobs.filter((job) => job.status === "completed" || job.status === "failed" || job.status === "dead_letter");
@@ -1091,9 +1426,9 @@ export class MemoryStore {
       {
         metric: "image_analysis_success_rate",
         label: "Image analysis success",
-        value: percentLabel(completedAnalyses, analyses.length, 100),
+        value: modelAnalyses.length === 0 ? "No model runs" : percentLabel(completedAnalyses, modelAnalyses.length, 100),
         status: analysisRate >= 0.98 ? "healthy" : analysisRate >= 0.9 ? "watch" : "blocked",
-        evidence: `${completedAnalyses} completed, ${failedAnalyses} failed analyses.`
+        evidence: `${completedAnalyses} completed, ${failedAnalyses} failed model analyses. Reference manifest mappings are excluded.`
       },
       {
         metric: "image_quality_retake_rate",
@@ -1119,9 +1454,9 @@ export class MemoryStore {
       {
         metric: "human_review_rate",
         label: "Human review rate",
-        value: percentLabel(reviewRequired, suggestions.length, 0),
+        value: modelSuggestions.length === 0 ? "No model findings" : percentLabel(reviewRequired, modelSuggestions.length, 0),
         status: reviewRate <= 0.45 ? "healthy" : reviewRate <= 0.75 ? "watch" : "blocked",
-        evidence: `${reviewRequired} suggestions still need accept, edit, or reject decisions.`
+        evidence: `${reviewRequired} model findings still need accept, edit, or reject decisions. Reference mappings are excluded.`
       },
       {
         metric: "grade_generation_latency",
@@ -1140,9 +1475,9 @@ export class MemoryStore {
       {
         metric: "suggestion_acceptance_rate",
         label: "Suggestion acceptance rate",
-        value: percentLabel(acceptedSuggestions, reviewedSuggestions.length, 0),
+        value: reviewedSuggestions.length === 0 ? "No model decisions" : percentLabel(acceptedSuggestions, reviewedSuggestions.length, 0),
         status: reviewedSuggestions.length === 0 || acceptanceRate >= 0.65 ? "healthy" : acceptanceRate >= 0.45 ? "watch" : "blocked",
-        evidence: `${acceptedSuggestions} accepted decisions out of ${reviewedSuggestions.length} reviewed suggestions.`
+        evidence: `${acceptedSuggestions} accepted model findings out of ${reviewedSuggestions.length} reviewed model findings.`
       },
       {
         metric: "buyer_visible_ready_rate",
@@ -1271,8 +1606,8 @@ export class MemoryStore {
       issues.push({
         type: "unreviewed_ai_suggestion",
         severity: "blocker",
-        label: `${unreviewed.length} AI suggestion${unreviewed.length === 1 ? "" : "s"} need review`,
-        detail: "AI findings are advisory and must be accepted, edited, or rejected before release.",
+        label: `${unreviewed.length} evidence finding${unreviewed.length === 1 ? "" : "s"} need review`,
+        detail: "Model findings and reference mappings are advisory until accepted, edited, or rejected.",
         action: "Complete the human review queue."
       });
     }

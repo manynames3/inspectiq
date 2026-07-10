@@ -1,0 +1,81 @@
+name: Plan or Deploy AWS
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Create a plan only, or apply the reviewed plan"
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - apply
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: inspectiq-aws-production
+  cancel-in-progress: false
+
+jobs:
+  plan-apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: production
+      url: https://inspectiq.pages.dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.12.2"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - run: npm ci
+      - name: Verify application and infrastructure inputs
+        run: |
+          make verify-fast
+          make verify-grading
+          make verify-projector
+          npm run eval:vision > /tmp/inspectiq-contract-eval.json
+          npm run build:lambda
+          npm run build:projector
+      - name: Terraform plan
+        env:
+          TF_VAR_alarm_email: ${{ vars.INSPECTIQ_ALARM_EMAIL }}
+        run: |
+          terraform -chdir=infra/terraform init
+          terraform -chdir=infra/terraform fmt -check
+          terraform -chdir=infra/terraform validate
+          terraform -chdir=infra/terraform plan -input=false -out=tfplan
+          terraform -chdir=infra/terraform show -no-color tfplan > infra/terraform/tfplan.txt
+      - name: Upload reviewed plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: inspectiq-terraform-plan-${{ github.run_id }}
+          retention-days: 14
+          path: |
+            infra/terraform/tfplan
+            infra/terraform/tfplan.txt
+            /tmp/inspectiq-contract-eval.json
+      - name: Apply reviewed plan
+        if: inputs.action == 'apply'
+        run: terraform -chdir=infra/terraform apply -input=false -auto-approve tfplan
+      - name: Live API smoke after apply
+        if: inputs.action == 'apply'
+        run: |
+          API_URL=$(terraform -chdir=infra/terraform output -raw api_endpoint)
+          curl --fail --silent --show-error --retry 5 --retry-all-errors "$API_URL/api/health"
+          curl --fail --silent --show-error --retry 5 --retry-all-errors -H "x-inspectiq-evaluation-mode: true" "$API_URL/api/evaluation/inspections"

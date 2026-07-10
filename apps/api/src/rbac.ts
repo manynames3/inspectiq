@@ -34,7 +34,7 @@ export function isEvaluationActor(actor: Actor): boolean {
 
 export function canAccessInspection(actor: Actor, inspection: Inspection): boolean {
   if (actor.role === "admin" || actor.role === "reviewer") return true;
-  return inspection.createdBy === actor.id || inspection.inspectorName === actor.name;
+  return inspection.assignedToUserId === actor.id || inspection.createdBy === actor.id || inspection.inspectorName === actor.name;
 }
 
 export function requireInspectionAccess(actor: Actor, inspection: Inspection, action = "access this inspection"): void {
@@ -45,6 +45,7 @@ export function requireInspectionAccess(actor: Actor, inspection: Inspection, ac
       actorId: actor.id,
       actorRole: actor.role,
       inspectionId: inspection.id,
+      assignedToUserId: inspection.assignedToUserId,
       createdBy: inspection.createdBy,
       inspectorName: inspection.inspectorName
     }

@@ -16,5 +16,7 @@ Controls:
 - Low confidence, missing evidence, or severe damage routes to human review.
 - Retake-required quality warnings hold buyer-visible release until a reviewer resolves them.
 - Buyer-visible release is blocked while required evidence, failed analysis, unreviewed suggestions, missing grade, or missing final report remain.
-- AI never finalizes a report.
-- Audit events preserve provider, prompt version, schema, confidence, review action, and finalization.
+- AI never approves or finalizes a report; Reviewer approval is bound to an exact optimistic version before finalization.
+- Audit events preserve provider/model, prompt version, schema, latency, token/cost metadata, confidence, review action, approval, and finalization.
+- Monthly model operations are idempotently reserved in DynamoDB before invocation; limits preserve evidence and return `COST_GUARD_REACHED` rather than spending silently.
+- Model/prompt promotion requires the no-fallback Bedrock evaluation; deterministic CI proves only contract mechanics.

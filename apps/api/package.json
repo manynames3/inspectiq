@@ -11,10 +11,13 @@
     "seed": "tsx scripts/seed.ts",
     "start": "node dist/src/server.js",
     "test": "vitest run",
+    "test:postgres": "vitest run src/postgresPersistence.integration.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "@aws-sdk/client-dynamodb": "^3.1083.0",
+    "@aws-sdk/client-eventbridge": "^3.1083.0",
     "@aws-sdk/client-s3": "^3.1079.0",
     "@aws-sdk/client-secrets-manager": "^3.1079.0",
     "@aws-sdk/client-sqs": "^3.1079.0",
@@ -35,6 +38,7 @@
     "@types/node": "^24.3.0",
     "@types/pg": "^8.15.5",
     "@types/supertest": "^6.0.3",
+    "sharp": "^0.34.5",
     "supertest": "^7.1.4",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",

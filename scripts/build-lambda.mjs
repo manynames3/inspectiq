@@ -36,6 +36,7 @@ await Promise.all([
 ]);
 
 await copyFile("apps/api/src/db/schema.sql", `${outdir}/schema.sql`);
+await cp("apps/api/src/db/migrations", `${outdir}/migrations`, { recursive: true });
 await cp("sample-data/images", `${outdir}/sample-images`, { recursive: true });
 
 await rm("dist/inspectiq-lambda.zip", { force: true });

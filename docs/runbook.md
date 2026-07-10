@@ -2,11 +2,12 @@
 
 Local checks:
 
-1. `npm install`
-2. `npm test`
-3. `npm run eval:vision`
-4. `npm run build`
-5. `npm run dev`
+1. `npm ci`
+2. `make verify-fast`
+3. `make verify-grading verify-projector`
+4. `npm run eval:vision`
+5. `npm run build`
+6. `npm run dev`
 
 Bedrock model gate:
 
@@ -38,8 +39,11 @@ Common failures:
 - Image analysis stuck pending: inspect `image_analysis_jobs` for queued/running/failed/dead_letter status and retry or request retake.
 - Python grading service unavailable: the API falls back to identical local grading rules for workflow continuity.
 - Report generation failed: check provider env vars and retry the job endpoint.
+- Version conflict: reload the authoritative inspection/suggestion/report and reapply the human decision; never silently overwrite another reviewer.
+- Cost guard reached: do not discard evidence; ask an Admin to review the monthly usage/limit before changing deployment configuration.
+- Domain projection stale: compare Postgres audit/outbox truth to Platform Health, replay pending outbox or EventBridge DLQ entries, and verify duplicate suppression.
 - Incomplete inspection: accept photo-angle suggestions for all required photo angles.
-- Finalization blocked: call `/api/inspections/:id/readiness` and resolve blocker issues before releasing the buyer-visible report.
+- Finalization blocked: resolve readiness issues, approve the current report version with a reviewer comment, then confirm finalization.
 - Buyer report export fails: verify a report record exists and call `/api/reports/:id/export`.
 
 Failed image-analysis job recovery:
@@ -57,5 +61,6 @@ Production readiness drill:
 2. Confirm private object metadata, byte size, checksum, and protected preview URL.
 3. Trigger image analysis and verify SQS job creation, worker completion, Bedrock provider metadata, and audit events.
 4. Sign in as Reviewer and accept, reject, or edit the resulting suggestions.
-5. Generate grade and report, then finalize only after readiness blockers clear.
-6. Simulate provider throttling or a failed image job in staging, recover it, and confirm Platform Health and audit trail show the recovery path.
+5. Generate the grade/report, approve the exact report version, and finalize only after blockers clear.
+6. Confirm the related EventBridge event appears in the DynamoDB operational timeline and shares the correlation ID with the Postgres audit trail.
+7. Simulate a failed image job and a failed domain-event delivery in a safe environment, recover each, and confirm Platform Health records recovery without duplicate business facts.

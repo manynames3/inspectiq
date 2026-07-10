@@ -1,0 +1,58 @@
+name: Bedrock Model Promotion Evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_id:
+        description: "Bedrock inference profile or model ID"
+        required: true
+        default: us.anthropic.claude-sonnet-4-6
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: inspectiq-bedrock-evaluation
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - run: npm ci
+      - run: npm run build -w @inspectiq/shared
+      - name: Evaluate the real Bedrock provider
+        id: evaluation
+        continue-on-error: true
+        env:
+          AWS_REGION: us-east-1
+          VISION_PROVIDER: bedrock
+          BEDROCK_MODEL_ID: ${{ inputs.model_id }}
+          BEDROCK_VISION_FALLBACK: fail
+          VISION_EVAL_OUTPUT: output/model-evaluation/bedrock-report.json
+        run: npm run eval:vision
+      - name: Upload model evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inspectiq-bedrock-evaluation-${{ github.run_id }}
+          retention-days: 30
+          if-no-files-found: error
+          path: output/model-evaluation/bedrock-report.json
+      - name: Enforce promotion gates
+        if: steps.evaluation.outcome != 'success'
+        run: |
+          echo "Bedrock model or prompt did not pass the checked-in promotion gates."
+          exit 1

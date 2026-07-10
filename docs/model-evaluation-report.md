@@ -1,10 +1,23 @@
 # Model Evaluation Report
 
-Last updated: July 5, 2026
+Last updated: July 9, 2026
 
-InspectIQ treats vehicle image analysis as a measurable contract, not a black-box feature. The evaluation command runs the same `VisionOutputSchema` contract used by the API and reviewer workflow.
+InspectIQ evaluates vision providers through the same `VisionOutputSchema` used by the image worker and reviewer workflow. The checked-in suite is a promotion gate, not a claim of production automotive model accuracy.
 
-## Current Run
+## Corpus
+
+| Field | Value |
+| --- | --- |
+| Evaluation set | `inspectiq-rights-cleared-vision-challenge-v2` |
+| Independent source images | 12 |
+| Pixel-distinct image instances | 108 |
+| Variants per source | 9 |
+| Rights status | Rights-cleared local evidence |
+| Coverage | Eight required angles, readable/partial OCR, damage positives, clean controls, blur, darkness, rotation, compression, resize, and occlusion |
+
+Each source is rendered as baseline, JPEG-compressed, resized, mildly darkened, mildly brightened, rotated, heavily blurred, low-light, and occluded variants. This gives 108 actual image inputs while honestly preserving the independent-source count.
+
+## Fresh Deterministic Run
 
 Command:
 
@@ -12,60 +25,51 @@ Command:
 npm run eval:vision
 ```
 
-Provider tested:
-
 | Field | Value |
 | --- | --- |
-| Eval set | `inspectiq-vision-contract-v1` |
 | Provider | `localVisionProvider` |
+| Model | `deterministic-local-v2` |
 | Prompt version | `photo-analysis-v2` |
-| Dataset size | 24 labeled cases |
+| Mode | `deterministic-contract-ci` |
 | Result | Pass |
+| Token usage / estimated cost | 0 / $0 |
 
-## Metrics
-
-| Metric | Threshold | Current |
+| Metric | Promotion gate | Current deterministic result |
 | --- | ---: | ---: |
-| Angle accuracy | >= 0.90 | 1.00 |
-| OCR accuracy | >= 0.90 | 1.00 |
-| Damage recall | >= 0.90 | 1.00 |
-| Damage type accuracy | >= 0.85 | 1.00 |
-| Damage false-positive rate | <= 0.10 | 0.00 |
-| Retake precision | >= 0.80 | 1.00 |
-| Retake recall | >= 0.80 | 1.00 |
+| Schema-valid responses | 100% | 100% |
+| Macro angle accuracy | >= 90% | 100% |
+| Minimum per-angle accuracy | >= 85% | 100% |
+| Normalized VIN/odometer accuracy on readable evidence | >= 95% | 100% |
+| Damage precision | >= 90% | 100% |
+| Damage recall | >= 80% | 100% |
+| Damage type/severity accuracy | >= 85% | 100% |
+| Retake precision | >= 90% | 100% |
+| Retake recall | >= 90% | 100% |
 
-## Dataset Coverage
+These values prove that the deterministic provider, dataset expansion, scoring code, and schema gates agree. They do **not** measure Bedrock accuracy because the local provider is intentionally keyed to controlled fixtures.
 
-The current set covers:
+## Real Bedrock Promotion Run
 
-- Required photo-angle classification: front, rear, driver/passenger side, interior, engine bay, odometer, and VIN plate.
-- Damage-positive cases: rear bumper dent and driver-side scratch.
-- Damage-negative cases: clean front, passenger side, interior, engine bay, and auction-lane front images.
-- OCR cases: odometer and VIN plate extraction.
-- Retake cases: blur, glare, bad side angle, dark interior, partial VIN plate, and dirty odometer.
+The manually approved `Bedrock Model Promotion Evaluation` GitHub Actions workflow runs all 108 images with fallback disabled and writes provider/model/prompt, latency, input/output tokens, estimated cost, schema failures, and per-case outcomes to an artifact.
 
-## Known Failure Cases To Keep Expanding
+```bash
+AWS_REGION=us-east-1 \
+VISION_PROVIDER=bedrock \
+BEDROCK_VISION_FALLBACK=fail \
+VISION_EVAL_OUTPUT=output/model-evaluation/bedrock-report.json \
+npm run eval:vision
+```
 
-The next production-quality dataset should add more real-world auction/offsite conditions:
+No Bedrock accuracy numbers are asserted in this document until that workflow produces a passing artifact for the exact model and prompt version under review.
 
-- Wet vehicles, reflective paint, chrome glare, and harsh sun.
-- Motion blur from mobile/offsite capture.
-- Dirty odometers and partially occluded VIN plates.
-- Dark interiors, night captures, and tinted glass.
-- Cropped bumper corners and partial side panels.
-- Auction-lane background clutter and adjacent vehicles.
-- Damage that is cosmetic but near arbitration-sensitive locations.
+## Known Limits
 
-## Promotion Standard
+- Twelve independent sources are not statistically representative of auction/offsite traffic.
+- Synthetic transforms approximate capture failure modes but do not replace distinct field images from multiple devices, operators, locations, vehicle classes, paint finishes, and weather conditions.
+- Damage labels need independent adjudication, severity guidelines, and inter-rater agreement before buyer-dispute use.
+- OCR needs more dirty displays, partial VINs, glare, digital/analog odometers, and nonstandard instrument clusters.
+- Reviewer override rates and calibration drift require production sampling over time.
 
-A model or prompt version should not be promoted unless it:
+## Promotion Policy
 
-- passes the thresholds above on the checked-in suite;
-- passes a larger source-documented real-photo corpus;
-- stores provider, prompt version, confidence, raw output, validated output, and schema failures;
-- keeps all AI output advisory until a reviewer accepts, edits, or rejects it;
-- avoids leaking schema/internal payloads into buyer-visible reports.
-
-## Honest Boundary
-
-The default local evaluation uses a deterministic provider so CI and interviews do not depend on model credentials or provider latency. The deployed production-shaped path uses Bedrock through the same schema contract. A true production launch would require a larger labeled corpus, confidence calibration, regression tracking by model version, and periodic sampling of reviewer overrides.
+A model/prompt version may be considered for advisory rollout only when it passes every checked-in gate with fallback disabled, records its cost/latency metadata, and has no schema-invalid response. Buyer-visible facts still require reviewer acceptance, and production promotion additionally requires a larger independently labeled field corpus, security review, cost approval, and rollback criteria.

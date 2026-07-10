@@ -8,6 +8,6 @@ Boundary: The local provider is not a claim of production model quality. It is a
 
 Production replacement implemented in this repo: S3 image object -> SQS job -> image worker -> Bedrock multimodal provider -> `VisionOutputSchema` validation -> pending suggestions -> reviewer decision -> audit trail.
 
-Deferred options: EventBridge is useful for publishing broader business events, Step Functions is useful for long-running orchestration with waits and branches, and Rekognition is useful as a narrow OCR/label fallback. They are intentionally not part of the current runtime path.
+EventBridge now publishes versioned business events independently of the selected AI provider. Step Functions remains deferred until orchestration needs durable waits/branches/compensation; Rekognition remains a possible narrow OCR/label fallback rather than part of the current provider path.
 
 Exit criteria: replace the deterministic provider when model credentials, evaluation data, latency budget, retry policy, and reviewer QA metrics are available.

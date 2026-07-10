@@ -12,7 +12,8 @@ function acceptedAngleSuggestions(): VisionSuggestion[] {
     suggestedValueJson: { photoAngle: angle },
     confidence: 0.95,
     explanation: `Detected ${angle}.`,
-    status: "accepted"
+    status: "accepted",
+    version: 1
   }));
 }
 
@@ -72,7 +73,11 @@ function baseBundle(extraSuggestions: VisionSuggestion[] = []): InspectionBundle
       reportBody: "Final condition report.",
       finalizedBy: "review-lead",
       finalizedAt: "2026-07-03T18:00:00.000Z",
-      version: 1
+      version: 1,
+      approvalStatus: "finalized",
+      reviewerComment: "Evidence reviewed.",
+      approvedBy: "review-lead",
+      approvedAt: "2026-07-03T17:55:00.000Z"
     },
     auditEvents: [],
     readinessIssues: [],
@@ -90,7 +95,8 @@ describe("deriveMarketplaceReadiness", () => {
       suggestedValueJson: { warning: "Image appears blurry; reviewer accepted as usable." },
       confidence: 0.88,
       explanation: "Reviewer accepted image quality as sufficient.",
-      status: "accepted"
+      status: "accepted",
+      version: 1
     }]));
 
     expect(readiness.crStatus).toBe("CR ready");
@@ -112,7 +118,8 @@ describe("deriveMarketplaceReadiness", () => {
       suggestedValueJson: { warning: "Image appears blurry; retake recommended." },
       confidence: 0.88,
       explanation: "Image quality warning needs reviewer decision.",
-      status: "pending"
+      status: "pending",
+      version: 1
     }]));
 
     expect(readiness.crStatus).toBe("CR blocked");

@@ -91,7 +91,7 @@ export function DamagePage() {
       <div className="page-heading">
         <div>
           <h1>Damage</h1>
-          <p>Confirmed condition issues from manual review and accepted AI suggestions.</p>
+          <p>Confirmed condition issues from manual review and accepted model findings.</p>
         </div>
         <button className="secondary-button" onClick={() => void load()}>
           <RefreshCw size={16} /> Refresh
@@ -153,7 +153,7 @@ export function DamagePage() {
           Source
           <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as SourceFilter)}>
             <option value="all">All sources</option>
-            <option value="vision_suggestion">AI-confirmed</option>
+            <option value="vision_suggestion">Model-assisted</option>
             <option value="manual">Manual</option>
           </select>
         </label>
@@ -220,7 +220,7 @@ export function DamagePage() {
                   <td>{titleCase(item.damageType)}</td>
                   <td><span className={`queue-status severity-${item.severity}`}>{item.severity}</span></td>
                   <td>{estimateDamageRepairCost(item.damageType, item.severity).label}</td>
-                  <td>{item.source === "vision_suggestion" ? "AI-suggested" : "Manual"}</td>
+                  <td>{item.source === "vision_suggestion" ? "Model-assisted, reviewer-confirmed" : "Manual"}</td>
                   <td>{item.notes || "No notes"}</td>
                   <td><Link className="row-link" to={`/inspections/${record.inspection.id}`}>Open</Link></td>
                 </tr>

@@ -1,6 +1,6 @@
 # Architecture
 
-InspectIQ is a production-shaped inspection workflow implemented as a monorepo with a React/Vite workbench, TypeScript Express API, shared Zod schemas, Neon Postgres persistence for the deployed backend, and a narrow Python grading service boundary.
+InspectIQ is a production-shaped inspection workflow implemented as a monorepo with React/Vite web, Expo/React Native mobile, a TypeScript Express Lambda API/worker, shared Zod schemas, Neon Postgres, a Python operations-projector Lambda, and a narrow optional Python grading boundary.
 
 The architecture is intentionally boring where reliability matters: explicit state transitions, schema-validated model output, append-style audit events, deterministic grading, role-aware actions, and backend-derived readiness blockers. The AI path is advisory by design; it accelerates review without silently becoming the source of truth.
 
@@ -26,6 +26,11 @@ flowchart LR
   Report --> LocalReport[Deterministic local report provider]
   Report --> BedrockReport[Bedrock report provider]
   API --> Audit[Audit trail]
+  API --> Outbox[Postgres domain outbox]
+  Worker --> Outbox
+  Outbox --> Events[EventBridge custom bus]
+  Events --> Projector[Python operations projector]
+  Projector --> DDB[DynamoDB idempotency and operations state]
 ```
 
 ## Product Flow
@@ -40,7 +45,8 @@ Create inspection
 -> confirmed damage and evidence update readiness
 -> deterministic grade
 -> AI-assisted report draft from confirmed facts
--> reviewer finalization
+-> reviewer version approval
+-> explicit finalization confirmation
 -> buyer-ready report export
 -> audit trail and metrics
 ```
@@ -55,6 +61,7 @@ Create inspection
 | Python grading service | Show how deterministic condition rules can be versioned and owned separately when justified. |
 | Readiness blockers | Keep CR/VDP/buyer-visible release decisions backend-derived instead of UI-only. |
 | Audit events | Preserve a defensible chain of custody for AI suggestions, human decisions, grading, and finalization. |
+| Domain events + projection | Publish minimal versioned non-PII events after commit; suppress duplicate delivery and keep operational reads separate from relational truth. |
 
 ## Data Ownership
 
@@ -66,7 +73,9 @@ Postgres tables are shaped around operational facts rather than UI screens:
 - `photo_analysis_results` store raw and validated provider output separately.
 - `vision_suggestions` remain advisory until a reviewer accepts or edits them.
 - `damage_items`, `condition_grades`, `ai_report_drafts`, and `final_reports` represent confirmed downstream facts.
+- `identity_verifications` store accepted VIN/odometer cross-checks; `report_versions` preserve reviewer-visible report history.
 - `audit_events` record reviewer and system decisions.
+- `domain_events` are the transactional outbox; DynamoDB stores only idempotency, short-lived timelines, latest projected state, and monthly model usage.
 
 ## Production Deployment Shape
 
@@ -83,9 +92,12 @@ React workbench
 -> VisionOutputSchema validation
 -> suggestions + audit trail
 -> reviewer workflow
+-> EventBridge domain events
+-> Python projector
+-> DynamoDB operations projection
 ```
 
-The local workflow uses deterministic providers so it works without model credentials. The deployed backend uses Cloudflare Pages, Cognito hosted OIDC, API Gateway JWT enforcement, Lambda-side JWT/JWKS validation, Neon Postgres, S3, SQS, Bedrock, Secrets Manager, CloudWatch logs, alarms, and a dashboard. The remaining production hardening is to expand the model evaluation corpus with labeled production-like images, move hot paths to DB-first repositories as concurrency grows, and add environment promotion/rollback automation.
+The local workflow uses deterministic providers so it works without model credentials. The deployed backend uses Cloudflare Pages/mobile clients, Cognito OIDC/PKCE, Lambda-side JWT/JWKS validation, Neon, S3, SQS, Bedrock, EventBridge, Python/Lambda projection, DynamoDB, Secrets Manager, CloudWatch/X-Ray, alarms, and a budget. The remaining production work is independent field-data evaluation, DB-first aggregate repositories, real-user iteration, and sustained SLO/cost evidence.
 
 ## Failure Posture
 
@@ -97,4 +109,4 @@ The system is designed around recoverable workflow failures:
 - retake-required image quality blocks buyer-visible release;
 - unreviewed suggestions block release;
 - finalization is terminal for normal workflow users;
-- E2E tests prove the rendered app can complete create -> analyze -> review -> grade -> finalize -> export.
+- E2E tests prove the rendered app can complete create -> analyze -> review -> grade -> draft -> approve -> finalize -> export, and optimistic versions reject stale reviewer writes.

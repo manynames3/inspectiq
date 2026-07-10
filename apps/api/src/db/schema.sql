@@ -1,5 +1,10 @@
 create extension if not exists "pgcrypto";
 
+create table if not exists schema_migrations (
+  version text primary key,
+  applied_at timestamptz not null default now()
+);
+
 create table if not exists users (
   id text primary key default gen_random_uuid()::text,
   name text not null,
@@ -21,10 +26,15 @@ create table if not exists inspections (
   status text not null check (status in ('DRAFT', 'NEEDS_PHOTOS', 'READY_FOR_GRADING', 'GRADED', 'AI_DRAFT_PENDING', 'AI_DRAFTED', 'HUMAN_REVIEW_REQUIRED', 'FINALIZED', 'REPORT_FAILED')),
   completeness_percentage integer not null default 0,
   created_by text references users(id),
+  assigned_to_user_id text references users(id),
+  version integer not null default 1 check (version > 0),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   finalized_at timestamptz
 );
+
+alter table inspections add column if not exists assigned_to_user_id text references users(id);
+alter table inspections add column if not exists version integer not null default 1;
 
 create table if not exists vehicle_photos (
   id text primary key default gen_random_uuid()::text,
@@ -48,6 +58,10 @@ create table if not exists vehicle_photos (
   detected_angle_confidence numeric,
   quality_status text not null default 'unknown' check (quality_status in ('unknown', 'ok', 'warning', 'fail')),
   analysis_status text not null default 'not_analyzed' check (analysis_status in ('not_analyzed', 'pending', 'completed', 'failed'))
+  ,operation_id text
+  ,captured_at timestamptz
+  ,device_id text
+  ,capture_source text not null default 'web' check (capture_source in ('web', 'mobile', 'reference'))
 );
 
 alter table vehicle_photos add column if not exists object_bucket text;
@@ -59,6 +73,10 @@ alter table vehicle_photos add column if not exists source_name text;
 alter table vehicle_photos add column if not exists source_url text;
 alter table vehicle_photos add column if not exists source_license text;
 alter table vehicle_photos add column if not exists upload_status text not null default 'uploaded';
+alter table vehicle_photos add column if not exists operation_id text;
+alter table vehicle_photos add column if not exists captured_at timestamptz;
+alter table vehicle_photos add column if not exists device_id text;
+alter table vehicle_photos add column if not exists capture_source text not null default 'web';
 alter table vehicle_photos drop constraint if exists vehicle_photos_checksum_sha256_check;
 alter table vehicle_photos add constraint vehicle_photos_checksum_sha256_check check (checksum_sha256 is null or checksum_sha256 ~* '^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$');
 
@@ -85,6 +103,15 @@ create table if not exists photo_analysis_results (
   confidence numeric not null default 0,
   status text not null check (status in ('completed', 'failed')),
   error_message text,
+  model_id text,
+  latency_ms integer,
+  input_tokens integer,
+  output_tokens integer,
+  total_tokens integer,
+  estimated_cost_usd numeric(12, 6),
+  schema_valid boolean not null default true,
+  fallback_used boolean not null default false,
+  failure_category text,
   created_at timestamptz not null default now()
 );
 
@@ -103,13 +130,15 @@ create table if not exists vision_suggestions (
   reviewed_by text references users(id),
   reviewed_at timestamptz,
   resolved_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  version integer not null default 1 check (version > 0)
 );
 
 alter table vision_suggestions add column if not exists assigned_to_role text not null default 'reviewer';
 alter table vision_suggestions add column if not exists assigned_to_user_id text references users(id);
 alter table vision_suggestions add column if not exists due_at timestamptz not null default now();
 alter table vision_suggestions add column if not exists resolved_at timestamptz;
+alter table vision_suggestions add column if not exists version integer not null default 1;
 alter table vision_suggestions drop constraint if exists vision_suggestions_assigned_to_role_check;
 alter table vision_suggestions add constraint vision_suggestions_assigned_to_role_check check (assigned_to_role in ('inspector', 'reviewer'));
 
@@ -180,7 +209,30 @@ create table if not exists final_reports (
   report_body text not null,
   finalized_by text references users(id),
   finalized_at timestamptz,
-  version integer not null default 1
+  version integer not null default 1,
+  approval_status text not null default 'draft' check (approval_status in ('draft', 'in_review', 'approved', 'finalized')),
+  reviewer_comment text not null default '',
+  approved_by text references users(id),
+  approved_at timestamptz
+);
+
+alter table final_reports add column if not exists approval_status text not null default 'draft';
+alter table final_reports add column if not exists reviewer_comment text not null default '';
+alter table final_reports add column if not exists approved_by text references users(id);
+alter table final_reports add column if not exists approved_at timestamptz;
+
+create table if not exists report_versions (
+  id text primary key,
+  report_id text not null references final_reports(id) on delete cascade,
+  inspection_id text not null references inspections(id) on delete cascade,
+  version integer not null,
+  report_body text not null,
+  approval_status text not null check (approval_status in ('draft', 'in_review', 'approved', 'finalized')),
+  reviewer_comment text not null default '',
+  changed_by text not null references users(id),
+  change_type text not null check (change_type in ('generated', 'edited', 'approved', 'finalized')),
+  created_at timestamptz not null default now(),
+  unique (report_id, version)
 );
 
 create table if not exists audit_events (
@@ -192,12 +244,30 @@ create table if not exists audit_events (
   created_at timestamptz not null default now()
 );
 
+create table if not exists domain_events (
+  id text primary key,
+  event_type text not null,
+  schema_version text not null default '1.0',
+  inspection_id text not null references inspections(id) on delete cascade,
+  actor_id text not null,
+  actor_role text not null check (actor_role in ('inspector', 'reviewer', 'admin')),
+  correlation_id text not null,
+  payload_json jsonb not null,
+  status text not null default 'pending' check (status in ('pending', 'delivered', 'failed')),
+  delivery_attempts integer not null default 0 check (delivery_attempts >= 0),
+  last_error text,
+  created_at timestamptz not null default now(),
+  delivered_at timestamptz
+);
+
 create index if not exists idx_inspections_status on inspections(status);
 create index if not exists idx_inspections_updated_at on inspections(updated_at desc);
 create index if not exists idx_inspections_created_by on inspections(created_by);
+create index if not exists idx_inspections_assigned_to on inspections(assigned_to_user_id, updated_at desc);
 create index if not exists idx_vehicle_photos_inspection_id on vehicle_photos(inspection_id);
 create index if not exists idx_vehicle_photos_uploaded_by on vehicle_photos(uploaded_by);
 create index if not exists idx_vehicle_photos_analysis_status on vehicle_photos(analysis_status);
+create unique index if not exists idx_vehicle_photos_operation_id on vehicle_photos(operation_id) where operation_id is not null;
 create index if not exists idx_image_analysis_jobs_photo_status on image_analysis_jobs(photo_id, status);
 create index if not exists idx_image_analysis_jobs_inspection_status on image_analysis_jobs(inspection_id, status);
 create index if not exists idx_image_analysis_jobs_status_updated on image_analysis_jobs(status, updated_at);
@@ -218,4 +288,7 @@ create unique index if not exists idx_report_jobs_idempotency on ai_report_jobs(
 create index if not exists idx_report_drafts_inspection_id on ai_report_drafts(inspection_id);
 create index if not exists idx_report_drafts_job_id on ai_report_drafts(job_id);
 create index if not exists idx_final_reports_inspection_id on final_reports(inspection_id);
+create index if not exists idx_report_versions_report_version on report_versions(report_id, version desc);
 create index if not exists idx_audit_inspection_created on audit_events(inspection_id, created_at);
+create index if not exists idx_domain_events_status_created on domain_events(status, created_at);
+create index if not exists idx_domain_events_inspection_created on domain_events(inspection_id, created_at);

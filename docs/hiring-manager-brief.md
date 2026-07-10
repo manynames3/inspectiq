@@ -22,35 +22,35 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 
 ## Stack Mapping
 
-- React + TypeScript workbench for inspector/reviewer/admin roles.
+- React/Vite web workbench plus Expo/React Native mobile workflows for Inspector, Reviewer, and Admin.
 - Node + Express REST API with Zod request/output validation.
 - Python FastAPI grading service boundary for deterministic business rules.
 - Postgres schema, Drizzle table definitions, and deployed `PERSISTENCE_MODE=postgres` persistence using Neon and `pg`.
 - S3 presigned upload intent, private object metadata, and photo image redirect flow.
 - SQS-backed image-analysis jobs processed by a Lambda worker.
+- Transactional domain outbox -> EventBridge -> Python 3.12 Lambda -> idempotent DynamoDB operations projection, TTL timeline, and model-usage guard.
 - Deterministic local providers plus deployed Bedrock multimodal provider behind the same schema contract.
 - Vision evaluation command/dataset for angle, OCR, false-positive, and retake metrics.
 - JWT verification path and API object-level authorization tests.
-- Platform Health SLO panels, CloudWatch alarms, dashboard widgets, and failed-job recovery runbook.
+- Platform Health SLO panels, outbox/projector/DLQ state, CloudWatch/X-Ray alarms, SNS notifications, and failed-job/event recovery controls.
 - Cloudflare Pages frontend and AWS API Gateway/Lambda backend.
-- Deployed shape: React -> Cloudflare Pages -> API Gateway/Lambda -> Neon Postgres -> S3 images -> SQS -> Lambda image worker -> Bedrock multimodal model -> validated suggestions -> audit trail.
+- Deployed shape: web/mobile -> Cognito -> API Gateway/Lambda -> Neon/S3 -> SQS/Lambda/Bedrock -> validated suggestions/audit/outbox -> EventBridge/Python projector -> DynamoDB operational state.
 
 ## Intentional Local Tradeoffs
 
 - AI is deterministic locally so tests and local walkthroughs are reliable without model credentials.
 - Deterministic image analysis and Bedrock image analysis use the same production-shaped contract: angle, image quality, damage, OCR, confidence, repair estimate, provider metadata, prompt version, raw output, validated output, and audit event.
 - Local server persists to a JSON snapshot by default; the deployed backend persists normalized rows to Neon Postgres through transactional row-level upserts/deletes. A high-concurrency production version should move the busiest mutation paths to DB-first repositories.
-- Local browser uploads can use small data URLs for preview; deployed uploads use S3 presigned object URLs.
+- Local browser uploads can use small data URLs for preview; deployed web/mobile uploads use stable operation IDs and S3 presigned object URLs. Mobile capture persists assignments/operations in SQLite and photos in the app sandbox until sync succeeds.
 - The Python grading service is optional locally; the API fallback keeps the workflow available while preserving the service boundary.
-- Local auth is role-header based for deterministic testing; the deployed walkthrough uses Cognito hosted OIDC, API Gateway JWT enforcement, Lambda-side JWT/JWKS validation, Cognito groups, and object-level inspection authorization.
+- Local auth is role-header based for deterministic testing; the deployed walkthrough uses Cognito hosted OIDC/PKCE, Lambda-side JWT/JWKS validation, Cognito groups, SecureStore, and object-level inspection authorization.
 
 ## What I Would Build Next In Production
 
-- Move reviewer accept/edit/reject, grading, and finalization from the store bridge to DB-first repository transactions as concurrency grows.
-- Add EXIF stripping, image normalization, thumbnail generation, and object lifecycle policies.
-- Expand queue-backed worker recovery with richer retry classification and DLQ replay tooling.
-- Expand the model evaluation corpus, confidence thresholds, calibration reporting, and rejected-output audit records.
-- Add X-Ray tracing, alarm notification targets, and environment promotion/rollback.
+- Replace the remaining hydrated row-delta store bridge with aggregate-specific DB-first repositories as concurrency grows.
+- Expand 12 independent evaluation sources into a statistically representative, adjudicated field corpus and record real Bedrock promotion artifacts.
+- Add production thumbnail/CDN and evidence retention/legal-hold policy.
+- Collect inspector/reviewer usability data, sustained load evidence, and measured SLO/cost results.
 
 ## Five-Minute Walkthrough
 
@@ -59,8 +59,8 @@ InspectIQ supports wholesale and offsite inspection workflows where buyers, sell
 3. Open the detail workbench: "The model contract validates angle, image quality, damage, OCR, confidence, and repair estimate before creating suggestions; image jobs move through queued/running/completed states."
 4. Switch to Reviewer and accept/edit/reject suggestions: "AI is advisory; accepted suggestions become facts and trigger audit events."
 5. Confirm damage and check recon/arbitration status: "Damage decisions feed reconditioning estimate, seller disclosure, and release blockers."
-6. Calculate grade, draft report, edit, finalize, and export buyer report: "The CR uses confirmed facts, finalization is terminal, and buyer output hides internal schema/model details."
-7. Open Audit and Platform Health: "This is the operations story: schema validation, prompt versions, metrics, RBAC, and failure handling."
+6. Calculate grade, draft, edit, approve the exact version, confirm finalization, and export: "The CR uses confirmed facts; buyer output hides internal schema/model details."
+7. Open Audit and Platform Health: "This is the operations story: correlated audit/outbox events, EventBridge projection, duplicate suppression, cost guard, metrics, RBAC, and recovery."
 
 ## Hiring Manager Signal
 
@@ -73,6 +73,6 @@ What I would expect the candidate to explain clearly:
 - why accepted AI suggestions become facts only through reviewer action;
 - why grading is deterministic and reports are generated from confirmed facts;
 - why local deterministic providers are a reliability choice for review, not a substitute for production CV;
-- how the same contract moves through the implemented S3 -> SQS -> Lambda worker -> Bedrock -> Postgres path, and when EventBridge, Step Functions, or Rekognition would be worth adding.
+- why SQS is the work queue while EventBridge distributes versioned business events, why DynamoDB is a projection rather than the source of truth, and when Step Functions, Kinesis, OpenSearch, or Rekognition would add real value.
 
 See `docs/implementation-boundary.md` for the crisp "real vs deterministic local" explanation.

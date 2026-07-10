@@ -4,6 +4,8 @@
 
 Image analysis is advisory evidence triage. It helps reviewers find missing angles, quality problems, damage candidates, and OCR values faster, but it does not directly change condition report facts until a human accepts or edits the suggestion.
 
+The example payload below describes the dedicated damage challenge fixture, not any VIN-specific reference listing. Reference-manifest mappings bypass model claims: they carry source/checklist provenance, no model confidence presentation, no metadata-derived OCR, and no pre-confirmed damage.
+
 ## Provider Contract
 
 Providers:
@@ -99,7 +101,7 @@ S3 image object
 -> audit trail
 ```
 
-Deferred extensions: EventBridge can publish broader domain events, Step Functions can orchestrate multi-step report workflows if waits/retries/branching justify it, and Rekognition can be added as a narrow OCR/label fallback. They are not part of the implemented runtime path.
+EventBridge now publishes versioned analysis completed/failed and retake-required events to the operations projector. Step Functions remains deferred until waits/branches/compensation justify orchestration; Rekognition remains a possible narrow OCR/label fallback rather than part of the current runtime path.
 
 ## Confidence Policy
 

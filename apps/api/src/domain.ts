@@ -4,6 +4,7 @@ import type {
   ImageAnalysisJobStatus,
   ImageUploadStatus,
   InspectionStatus,
+  DomainEventType,
   PhotoAngle,
   ReadinessIssue,
   SuggestionStatus,
@@ -37,6 +38,8 @@ export type Inspection = {
   status: InspectionStatus;
   completenessPercentage: number;
   createdBy: string;
+  assignedToUserId: string | null;
+  version: number;
   createdAt: string;
   updatedAt: string;
   finalizedAt: string | null;
@@ -64,6 +67,10 @@ export type VehiclePhoto = {
   detectedAngleConfidence: number | null;
   qualityStatus: "unknown" | "ok" | "warning" | "fail";
   analysisStatus: "not_analyzed" | "pending" | "completed" | "failed";
+  operationId: string | null;
+  capturedAt: string | null;
+  deviceId: string | null;
+  captureSource: "web" | "mobile" | "reference";
 };
 
 export type ImageAnalysisJob = {
@@ -89,6 +96,15 @@ export type PhotoAnalysisResult = {
   confidence: number;
   status: "completed" | "failed";
   errorMessage: string | null;
+  modelId: string | null;
+  latencyMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  estimatedCostUsd: number | null;
+  schemaValid: boolean;
+  fallbackUsed: boolean;
+  failureCategory: string | null;
   createdAt: string;
 };
 
@@ -108,6 +124,7 @@ export type VisionSuggestion = {
   reviewedAt: string | null;
   resolvedAt: string | null;
   createdAt: string;
+  version: number;
 };
 
 export type DamageItem = {
@@ -177,6 +194,39 @@ export type FinalReport = {
   finalizedBy: string | null;
   finalizedAt: string | null;
   version: number;
+  approvalStatus: "draft" | "in_review" | "approved" | "finalized";
+  reviewerComment: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+};
+
+export type ReportVersion = {
+  id: string;
+  reportId: string;
+  inspectionId: string;
+  version: number;
+  reportBody: string;
+  approvalStatus: FinalReport["approvalStatus"];
+  reviewerComment: string;
+  changedBy: string;
+  changeType: "generated" | "edited" | "approved" | "finalized";
+  createdAt: string;
+};
+
+export type DomainEventOutbox = {
+  id: string;
+  eventType: DomainEventType;
+  schemaVersion: "1.0";
+  inspectionId: string;
+  actorId: string;
+  actorRole: UserRole;
+  correlationId: string;
+  payloadJson: Record<string, unknown>;
+  status: "pending" | "delivered" | "failed";
+  deliveryAttempts: number;
+  lastError: string | null;
+  createdAt: string;
+  deliveredAt: string | null;
 };
 
 export type AuditEvent = {

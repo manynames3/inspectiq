@@ -1,4 +1,4 @@
-import { AlertTriangle, Camera, CheckCircle2, Database, Gauge, PlayCircle, RefreshCw, RotateCcw, ShieldCheck, Users } from "lucide-react";
+import { Activity, AlertTriangle, Camera, CheckCircle2, Database, Gauge, PlayCircle, RefreshCw, RotateCcw, ShieldCheck, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { useActor } from "../App.js";
@@ -130,6 +130,27 @@ type Health = {
     production: string[];
     gradingBoundary: string;
   };
+  eventDrivenOperations: {
+    bus: string;
+    pendingOutboxEvents: number;
+    deliveredOutboxEvents: number;
+    failedOutboxEvents: number;
+    recentProjectionEvents: Array<{ eventId: string | null; eventType: string | null; inspectionId: string | null; occurredAt: string | null; correlationId: string | null }>;
+    projectionHealth: {
+      configured: boolean;
+      projectedCount: number;
+      duplicateCount: number;
+      lastEventType: string | null;
+      lastCorrelationId: string | null;
+      lastProjectedAt: string | null;
+    };
+    eventDlq: { configured: boolean; visibleMessages: number };
+  };
+  costGuard: {
+    month: string;
+    imageAnalyses: { used: number; limit: number };
+    reportDrafts: { used: number; limit: number };
+  };
 };
 
 function proofStatusClass(status: string): string {
@@ -180,6 +201,26 @@ export function PlatformHealthPage() {
       await load();
     } catch (error) {
       setRecoveryMessage(error instanceof Error ? error.message : "Failure drill could not be created.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function replayEvents(path: "replay-domain-events" | "replay-domain-event-dlq") {
+    setBusy(true);
+    setRecoveryMessage(null);
+    try {
+      const result = await api<{ delivered?: number; replayed?: number; failed: number }>(
+        `/api/platform-health/${path}`,
+        { method: "POST", body: JSON.stringify({ maxMessages: 10 }) },
+        actor
+      );
+      setRecoveryMessage(path === "replay-domain-events"
+        ? `${result.delivered ?? 0} pending outbox event${result.delivered === 1 ? "" : "s"} published.`
+        : `${result.replayed ?? 0} EventBridge DLQ message${result.replayed === 1 ? "" : "s"} replayed.`);
+      await load();
+    } catch (error) {
+      setRecoveryMessage(error instanceof Error ? error.message : "Event replay failed.");
     } finally {
       setBusy(false);
     }
@@ -286,6 +327,55 @@ export function PlatformHealthPage() {
                 </div>
               </article>
             ))}
+          </div>
+        </section>
+      ) : null}
+      {health ? (
+        <section className="event-operations-panel">
+          <div className="proof-header">
+            <div>
+              <span>Event-driven operations</span>
+              <h2>Outbox, EventBridge, and DynamoDB projection</h2>
+            </div>
+            <strong>{health.eventDrivenOperations.bus}</strong>
+          </div>
+          <div className="proof-grid">
+            <article>
+              <CheckCircle2 size={18} />
+              <span>Published</span>
+              <strong>{health.eventDrivenOperations.deliveredOutboxEvents}</strong>
+              <small>{health.eventDrivenOperations.pendingOutboxEvents} pending · {health.eventDrivenOperations.failedOutboxEvents} failed</small>
+            </article>
+            <article>
+              <Activity size={18} />
+              <span>Projected</span>
+              <strong>{health.eventDrivenOperations.projectionHealth.projectedCount}</strong>
+              <small>{health.eventDrivenOperations.projectionHealth.lastEventType ?? "No projected event yet"}</small>
+            </article>
+            <article>
+              <ShieldCheck size={18} />
+              <span>Duplicates suppressed</span>
+              <strong>{health.eventDrivenOperations.projectionHealth.duplicateCount}</strong>
+              <small>DynamoDB conditional transaction</small>
+            </article>
+            <article>
+              <AlertTriangle size={18} />
+              <span>Event DLQ</span>
+              <strong>{health.eventDrivenOperations.eventDlq.visibleMessages}</strong>
+              <small>{health.eventDrivenOperations.eventDlq.configured ? "Replay available" : "Not configured in this runtime"}</small>
+            </article>
+          </div>
+          <div className="event-operation-actions">
+            <button className="secondary-button" disabled={busy || !can("ops:recover") || health.eventDrivenOperations.failedOutboxEvents === 0} onClick={() => void replayEvents("replay-domain-events")}>
+              <RefreshCw size={15} /> Publish failed outbox events
+            </button>
+            <button className="secondary-button" disabled={busy || !can("ops:recover") || health.eventDrivenOperations.eventDlq.visibleMessages === 0} onClick={() => void replayEvents("replay-domain-event-dlq")}>
+              <RotateCcw size={15} /> Replay EventBridge DLQ
+            </button>
+          </div>
+          <div className="cost-guard-row">
+            <span><strong>{health.costGuard.imageAnalyses.used} / {health.costGuard.imageAnalyses.limit}</strong><small>Image analyses · {health.costGuard.month}</small></span>
+            <span><strong>{health.costGuard.reportDrafts.used} / {health.costGuard.reportDrafts.limit}</strong><small>Report drafts · {health.costGuard.month}</small></span>
           </div>
         </section>
       ) : null}

@@ -8,29 +8,39 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @inspectiq/shared && npm run build -w @inspectiq/api && npm run build -w @inspectiq/web",
+    "build": "npm run build -w @inspectiq/shared && npm run build -w @inspectiq/api && npm run build -w @inspectiq/web && npm run typecheck -w @inspectiq/mobile",
     "build:lambda": "node scripts/build-lambda.mjs",
+    "build:projector": "node scripts/build-operations-projector.mjs",
     "dev": "concurrently -n api,web -c cyan,green \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "npm run build -w @inspectiq/shared && npm run dev -w @inspectiq/api",
     "dev:web": "npm run dev -w @inspectiq/web",
     "eval:vision": "npm run eval:vision -w @inspectiq/api",
-    "lint": "npm run build -w @inspectiq/shared && npm run lint -w @inspectiq/api && npm run lint -w @inspectiq/web",
+    "lint": "npm run build -w @inspectiq/shared && npm run lint -w @inspectiq/api && npm run lint -w @inspectiq/web && npm run lint -w @inspectiq/mobile",
     "ops:walkthrough": "node scripts/ops-walkthrough.mjs",
     "prepare:live-photos": "node scripts/prepare-live-photo-set.mjs",
     "seed": "npm run seed -w @inspectiq/api",
-    "test": "npm run build -w @inspectiq/shared && npm run test -w @inspectiq/api && npm run test -w @inspectiq/web",
+    "test": "npm run build -w @inspectiq/shared && npm run test -w @inspectiq/api && npm run test -w @inspectiq/web && npm run test -w @inspectiq/mobile",
     "test:e2e": "node apps/web/scripts/e2e-inspection-flow.mjs",
     "test:live": "node apps/web/scripts/live-readonly-smoke.mjs",
+    "test:mobile": "npm run typecheck -w @inspectiq/mobile && npm run test -w @inspectiq/mobile",
     "test:grading": "cd services/grading-python && python3 -m pytest",
+    "test:projector": "python3 -m pytest services/operations-projector",
+    "test:postgres": "npm run test:postgres -w @inspectiq/api",
     "test:screenshots": "node apps/web/scripts/screenshot-regression.mjs",
     "test:live-upload": "node scripts/live-upload-review-proof.mjs",
     "proof:video": "node apps/web/scripts/proof-video.mjs",
-    "typecheck": "npm run build -w @inspectiq/shared && npm run typecheck -w @inspectiq/api && npm run typecheck -w @inspectiq/web"
+    "typecheck": "npm run build -w @inspectiq/shared && npm run typecheck -w @inspectiq/api && npm run typecheck -w @inspectiq/web && npm run typecheck -w @inspectiq/mobile"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@types/pngjs": "^6.0.5",
     "concurrently": "^9.2.1",
     "esbuild": "^0.28.1",
+    "pixelmatch": "^7.2.0",
     "playwright-core": "^1.61.1",
+    "pngjs": "^7.0.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "typescript": "^5.9.2"
   },
   "engines": {

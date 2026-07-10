@@ -43,7 +43,9 @@ Optional:
   LIVE_REQUIRE_BEDROCK=false                Allow non-Bedrock provider for nonproduction validation
   LIVE_REQUIRE_OBJECT_STORAGE=false         Allow inline/local upload mode for nonproduction validation
   LIVE_REQUIRE_SEPARATE_ROLES=true          Require Inspector capture token and Reviewer review token
+  LIVE_REQUIRE_EVENT_PROJECTION=false       Skip EventBridge/DynamoDB convergence proof
   LIVE_ANALYSIS_TIMEOUT_MS=300000
+  LIVE_EVENT_TIMEOUT_MS=60000
 
 Example:
   LIVE_API_BASE_URL=https://imml0cczh7.execute-api.us-east-1.amazonaws.com \\
@@ -273,17 +275,19 @@ async function reviewSuggestions(baseUrl, reviewerToken, bundle, declaredAnglesB
 
   for (const suggestion of bundle.suggestions ?? []) {
     if (suggestion.status !== "pending" && suggestion.status !== "edited") continue;
+    let currentSuggestion = suggestion;
 
     if (suggestion.suggestionType === "photo_angle") {
       const expectedAngle = declaredAnglesByPhotoId.get(suggestion.photoId);
       const currentAngle = suggestionValue(suggestion).photoAngle;
       if (expectedAngle && currentAngle !== expectedAngle) {
-        await api(baseUrl, `/api/vision-suggestions/${suggestion.id}`, {
+        currentSuggestion = await api(baseUrl, `/api/vision-suggestions/${suggestion.id}`, {
           token: reviewerToken,
           method: "PATCH",
           body: {
             suggestedValue: { photoAngle: expectedAngle },
-            explanation: "Reviewer corrected the photo angle from live capture metadata before acceptance."
+            explanation: "Reviewer corrected the photo angle from live capture metadata before acceptance.",
+            expectedVersion: suggestion.version
           }
         });
         editedAngles += 1;
@@ -293,12 +297,32 @@ async function reviewSuggestions(baseUrl, reviewerToken, bundle, declaredAnglesB
     await api(baseUrl, `/api/vision-suggestions/${suggestion.id}/accept`, {
       token: reviewerToken,
       method: "POST",
-      body: {}
+      body: { expectedVersion: currentSuggestion.version }
     });
     reviewed += 1;
   }
 
   return { reviewed, editedAngles };
+}
+
+async function waitForOperationalProjection(baseUrl, token, inspectionId) {
+  if (process.env.LIVE_REQUIRE_EVENT_PROJECTION === "false") return null;
+  const timeoutMs = Number(process.env.LIVE_EVENT_TIMEOUT_MS ?? "60000");
+  const startedAt = Date.now();
+  let lastHealth = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    lastHealth = await api(baseUrl, "/api/platform-health", { token });
+    const operations = lastHealth.eventDrivenOperations ?? {};
+    const matches = (operations.recentProjectionEvents ?? []).filter((event) =>
+      event.inspectionId === inspectionId && event.eventType === "report.finalized"
+    );
+    if (matches.length === 1) {
+      return { event: matches[0], projector: operations.projectionHealth, eventDlq: operations.eventDlq };
+    }
+    if (matches.length > 1) throw new Error("DynamoDB projection contains duplicate report.finalized events for this inspection.");
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  throw new Error(`Timed out waiting for report.finalized EventBridge projection. Last health: ${JSON.stringify(lastHealth?.eventDrivenOperations ?? null)}`);
 }
 
 async function findInspectionByVin(baseUrl, token, vin) {
@@ -425,10 +449,19 @@ async function main() {
   });
   if (!reportResponse.finalReport?.id) throw new Error("Report draft did not create a final report record.");
 
+  const approvedReport = await api(baseUrl, `/api/reports/${reportResponse.finalReport.id}/approve`, {
+    token: reviewerToken,
+    method: "POST",
+    body: {
+      expectedVersion: reportResponse.finalReport.version,
+      reviewerComment: "Live proof reviewer approved the evidence-backed buyer report."
+    }
+  });
+
   await api(baseUrl, `/api/reports/${reportResponse.finalReport.id}/finalize`, {
     token: reviewerToken,
     method: "POST",
-    body: {}
+    body: { expectedVersion: approvedReport.version }
   });
 
   bundle = await api(baseUrl, `/api/inspections/${inspection.id}`, { token: reviewerToken });
@@ -453,13 +486,14 @@ async function main() {
   }
 
   const events = auditEventTypes(bundle);
-  for (const requiredEvent of ["inspection.created", "photo.uploaded", "image_analysis.queued", "photo.analyzed", "suggestion.accepted", "condition.grade_generated", "ai_report.generated", "report.finalized"]) {
+  for (const requiredEvent of ["inspection.created", "photo.uploaded", "image_analysis.queued", "photo.analyzed", "suggestion.accepted", "condition.grade_generated", "ai_report.generated", "report.approved", "report.finalized"]) {
     if (!events.has(requiredEvent)) throw new Error(`Missing audit event: ${requiredEvent}`);
   }
   if (!bundle.finalReport?.finalizedAt) throw new Error("Final report was not finalized.");
   if (!bundle.buyerVisibleReady) {
     throw new Error(`Buyer-visible release is still blocked: ${(bundle.readinessIssues ?? []).map((issue) => issue.label).join(", ")}`);
   }
+  const operationalProjection = await waitForOperationalProjection(baseUrl, reviewerToken, inspection.id);
 
   console.log(JSON.stringify({
     ok: true,
@@ -478,6 +512,7 @@ async function main() {
     grade: `${grade.grade} ${grade.score}`,
     reportFinalizedAt: bundle.finalReport.finalizedAt,
     buyerVisibleReady: bundle.buyerVisibleReady,
+    operationalProjection,
     auditEvents: [...events].sort()
   }, null, 2));
 }

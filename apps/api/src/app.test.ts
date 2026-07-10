@@ -155,7 +155,7 @@ describe("InspectIQ API", () => {
     };
   }
 
-  it("loads confirmed damage for the reference reviewer queue", async () => {
+  it("loads only evidence-supported confirmed damage for the reference reviewer queue", async () => {
     const listed = await request(api).get("/api/inspections").set(reviewerHeaders).expect(200);
     const details = await Promise.all(
       listed.body.data.map((inspection: { id: string }) =>
@@ -165,21 +165,12 @@ describe("InspectIQ API", () => {
 
     const damageItems = details.flatMap((response) => response.body.data.damageItems);
 
-    expect(damageItems.length).toBeGreaterThanOrEqual(2);
-    expect(damageItems).toEqual(expect.arrayContaining([
+    expect(damageItems).toEqual([]);
+    expect(damageItems).not.toEqual(expect.arrayContaining([
       expect.objectContaining({
+        inspectionId: details.find((response) => response.body.data.inspection.vin === "1FMCU9H6XNUB81389")?.body.data.inspection.id,
         location: "Driver-side front door",
-        damageType: "scratch",
-        severity: "minor",
-        source: "vision_suggestion",
-        confirmedBy: "review-lead"
-      }),
-      expect.objectContaining({
-        location: "Rear bumper",
-        damageType: "dent",
-        severity: "moderate",
-        source: "vision_suggestion",
-        confirmedBy: "review-lead"
+        damageType: "scratch"
       })
     ]));
   });
@@ -320,10 +311,19 @@ describe("InspectIQ API", () => {
       .send({})
       .expect(200);
 
+    const approved = await request(api)
+      .post(`/api/reports/${report.body.data.finalReport.id}/approve`)
+      .set(reviewerHeaders)
+      .send({
+        expectedVersion: report.body.data.finalReport.version,
+        reviewerComment: "Reviewed against confirmed evidence."
+      })
+      .expect(200);
+
     await request(api)
       .post(`/api/reports/${report.body.data.finalReport.id}/finalize`)
       .set(reviewerHeaders)
-      .send({})
+      .send({ expectedVersion: approved.body.data.version })
       .expect(200);
 
     return { inspectionId, photos, suggestions, report: report.body.data };
@@ -716,10 +716,16 @@ describe("InspectIQ API", () => {
     expect(report.body.data.draft.outputJson.summary).toContain("Mazda");
     expect(report.body.data.finalReport.id).toBeTruthy();
 
+    const approved = await request(api)
+      .post(`/api/reports/${report.body.data.finalReport.id}/approve`)
+      .set(reviewerHeaders)
+      .send({ expectedVersion: report.body.data.finalReport.version, reviewerComment: "Evidence reviewed." })
+      .expect(200);
+
     const finalized = await request(api)
       .post(`/api/reports/${report.body.data.finalReport.id}/finalize`)
       .set(reviewerHeaders)
-      .send({})
+      .send({ expectedVersion: approved.body.data.version })
       .expect(200);
     expect(finalized.body.data.finalizedAt).toBeTruthy();
 
@@ -931,6 +937,43 @@ describe("InspectIQ API", () => {
     expect(intent.body.data.objectBucket).toBeTruthy();
     expect(intent.body.data.objectKey).toContain(`inspections/${inspectionId}/photos/`);
     expect(intent.body.data.requiredHeaders["x-amz-checksum-sha256"]).toBe("a".repeat(64));
+  });
+
+  it("uses one stable object key for retried mobile upload operations", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+    const operationId = crypto.randomUUID();
+    const body = {
+      inspectionId,
+      originalFilename: "front.jpg",
+      mimeType: "image/jpeg",
+      byteSize: 120000,
+      checksumSha256: "b".repeat(64),
+      operationId,
+      captureSource: "mobile"
+    };
+
+    const first = await request(api).post("/api/uploads/intent").set(inspectorHeaders).send(body).expect(201);
+    const retried = await request(api).post("/api/uploads/intent").set(inspectorHeaders).send(body).expect(201);
+    expect(first.body.data.objectKey).toBe(retried.body.data.objectKey);
+    expect(first.body.data.objectKey).toContain(operationId);
+
+    await request(api)
+      .post("/api/uploads/intent")
+      .set(inspectorHeaders)
+      .send({ ...body, operationId: undefined })
+      .expect(400);
+  });
+
+  it("limits operational projections to administrators", async () => {
+    await request(api).get("/api/operations/projections").set(reviewerHeaders).expect(403);
+    const response = await request(api).get("/api/operations/projections?limit=10").set(adminHeaders).expect(200);
+    expect(response.body.data).toEqual(expect.objectContaining({
+      health: expect.any(Object),
+      events: expect.any(Array),
+      usage: expect.any(Object),
+      eventDlq: expect.any(Object)
+    }));
   });
 
   it("rejects unsafe production upload metadata", async () => {
@@ -1164,5 +1207,111 @@ describe("InspectIQ API", () => {
     expect(exported.text).toContain("Confirmed Damage");
     expect(exported.text).not.toContain("VisionOutputSchema");
     expect(exported.text).not.toContain("validated schema");
+  });
+
+  it("rejects stale inspection updates with an explicit version conflict", async () => {
+    const created = await createInspection();
+    const response = await request(api)
+      .patch(`/api/inspections/${created.body.data.id}`)
+      .set(adminHeaders)
+      .send({ mileage: 20000, expectedVersion: created.body.data.version + 1 })
+      .expect(409);
+
+    expect(response.body.error.code).toBe("VERSION_CONFLICT");
+    expect(response.body.error.details.actualVersion).toBe(created.body.data.version);
+  });
+
+  it("deduplicates mobile photo confirmation by operation id", async () => {
+    const created = await createInspection();
+    const operationId = crypto.randomUUID();
+    const payload = {
+      originalFilename: "mobile-front.jpg",
+      mimeType: "image/jpeg",
+      declaredAngle: "front",
+      storageKey: "data:image/jpeg;base64,AA==",
+      operationId,
+      capturedAt: new Date().toISOString(),
+      deviceId: "field-device-1",
+      captureSource: "mobile"
+    };
+    const first = await request(api)
+      .post(`/api/inspections/${created.body.data.id}/photos/upload`)
+      .set(inspectorHeaders)
+      .send(payload)
+      .expect(201);
+    const second = await request(api)
+      .post(`/api/inspections/${created.body.data.id}/photos/upload`)
+      .set(inspectorHeaders)
+      .send(payload)
+      .expect(201);
+
+    expect(second.body.data.id).toBe(first.body.data.id);
+    expect(store.listPhotos(created.body.data.id)).toHaveLength(1);
+  });
+
+  it("assigns actionable suggestions and records a versioned audit update", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+    await analyzeSamplePhoto(inspectionId, "front-clean");
+    const [suggestion] = store.listSuggestions(inspectionId);
+    const initialVersion = suggestion.version;
+    const assigned = await request(api)
+      .patch(`/api/vision-suggestions/${suggestion.id}/assignment`)
+      .set(reviewerHeaders)
+      .send({
+        assignedToRole: "reviewer",
+        assignedToUserId: "test-reviewer",
+        expectedVersion: initialVersion
+      })
+      .expect(200);
+
+    expect(assigned.body.data.assignedToUserId).toBe("test-reviewer");
+    expect(assigned.body.data.version).toBe(initialVersion + 1);
+    expect(store.auditForInspection(inspectionId).some((event) => event.eventType === "suggestion.assigned")).toBe(true);
+  });
+
+  it("converts only quality and angle findings into bulk retake work", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+    await analyzeSamplePhoto(inspectionId, "front-clean");
+    const angleSuggestion = store.listSuggestions(inspectionId).find((item) => item.suggestionType === "photo_angle");
+    expect(angleSuggestion).toBeTruthy();
+
+    const response = await request(api)
+      .post("/api/vision-suggestions/bulk-retake")
+      .set(reviewerHeaders)
+      .send({ suggestionIds: [angleSuggestion?.id], reason: "Angle needs direct framing." })
+      .expect(200);
+
+    expect(response.body.data[0].assignedToRole).toBe("inspector");
+    expect(response.body.data[0].explanation).toContain("Inspector retake required");
+    expect(store.auditForInspection(inspectionId).some((event) => event.eventType === "suggestion.retake_requested")).toBe(true);
+  });
+
+  it("records immutable report versions for generation, approval, and finalization", async () => {
+    const { report } = await finalizeCompleteInspection();
+    const versions = await request(api)
+      .get(`/api/reports/${report.finalReport.id}/versions`)
+      .set(reviewerHeaders)
+      .expect(200);
+
+    expect(versions.body.data.map((version: { changeType: string }) => version.changeType)).toEqual([
+      "finalized",
+      "approved",
+      "generated"
+    ]);
+    expect(new Set(versions.body.data.map((version: { version: number }) => version.version)).size).toBe(3);
+  });
+
+  it("creates versioned domain events without VIN or image URLs in the payload", async () => {
+    const created = await createInspection();
+    const event = [...store.domainEvents.values()].find((row) =>
+      row.eventType === "inspection.created" && row.inspectionId === created.body.data.id
+    );
+    expect(event).toBeTruthy();
+    expect(event?.inspectionId).toBe(created.body.data.id);
+    expect(event?.schemaVersion).toBe("1.0");
+    expect(JSON.stringify(event?.payloadJson)).not.toContain(created.body.data.vin);
+    expect(JSON.stringify(event?.payloadJson)).not.toContain("http");
   });
 });

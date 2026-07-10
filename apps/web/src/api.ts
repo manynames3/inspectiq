@@ -15,6 +15,17 @@ export const assetUrl = (storageKey: string): string => {
   return `${API_BASE}${evaluationApiPath(migratedStorageKey)}`;
 };
 
+export class ApiClientError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    public details?: unknown
+  ) {
+    super(message);
+  }
+}
+
 export function requestHeaders(actor?: Actor, headers: HeadersInit = {}): Record<string, string> {
   const merged = new Headers(headers);
   if (!merged.has("content-type")) merged.set("content-type", "application/json");
@@ -40,7 +51,12 @@ export async function api<T>(path: string, options: RequestInit = {}, actor?: Ac
   });
   const body = await response.json();
   if (!response.ok) {
-    throw new Error(body?.error?.message ?? body?.message ?? "API request failed.");
+    throw new ApiClientError(
+      response.status,
+      body?.error?.code ?? "API_REQUEST_FAILED",
+      body?.error?.message ?? body?.message ?? "API request failed.",
+      body?.error?.details
+    );
   }
   return body.data as T;
 }

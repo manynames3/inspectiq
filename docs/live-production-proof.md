@@ -8,7 +8,7 @@ This proof path is separate from the browser walkthrough. It exists to prove the
 
 - Cognito/OIDC JWT authentication and role permissions.
 - Inspector-created inspection intake.
-- Optional separate-role proof where an Inspector captures evidence and a Reviewer reviews/finalizes.
+- Separate-role proof where an Inspector captures evidence and a Reviewer reviews, approves a report version, and finalizes.
 - Presigned upload intents for required vehicle photos.
 - S3/object-storage photo registration and protected preview intents.
 - SQS-backed image-analysis job completion.
@@ -16,9 +16,10 @@ This proof path is separate from the browser walkthrough. It exists to prove the
 - Reviewer accept/edit decisions for AI suggestions.
 - Required-photo checklist completion from human-confirmed photo angles.
 - Deterministic condition grading.
-- AI report draft creation and reviewer finalization.
+- AI report draft creation, reviewer version approval/comment, and explicit finalization.
 - Buyer-visible readiness.
-- Audit events for intake, upload, analysis, review, grade, report, and finalization.
+- Audit events for intake, upload, analysis, review, grade, report approval, and finalization.
+- EventBridge projection of `report.finalized` into DynamoDB with duplicate-safe event identity and visible DLQ/projector health.
 
 ## Inputs
 
@@ -101,7 +102,7 @@ The manual workflow `.github/workflows/live-smoke.yml` runs the same proof again
 | Secret | Purpose |
 | --- | --- |
 | `LIVE_ID_TOKEN` | Inspector or Admin Cognito/OIDC JWT for inspection creation, upload, and analysis. |
-| `LIVE_REVIEWER_TOKEN` | Reviewer or Admin Cognito/OIDC JWT for suggestion review, grade, draft, and finalize. |
+| `LIVE_REVIEWER_TOKEN` | Reviewer or Admin Cognito/OIDC JWT for suggestion review, grade, draft, approval, and finalization. |
 | `LIVE_PHOTO_SET_ZIP_BASE64` | Base64-encoded zip containing the required-angle real photo set. |
 
 Create the photo secret from a local required-angle folder:
@@ -137,17 +138,23 @@ The command prints a JSON proof artifact:
     "inspection.created",
     "photo.analyzed",
     "photo.uploaded",
+    "report.approved",
     "report.finalized",
     "suggestion.accepted"
-  ]
+  ],
+  "operationalProjection": {
+    "event": { "eventType": "report.finalized", "inspectionId": "<uuid>" },
+    "projector": { "configured": true },
+    "eventDlq": { "visibleMessages": 0 }
+  }
 }
 ```
 
 Keep this output with the interview notes after running a live walkthrough. It is stronger evidence than screenshots because it proves the authenticated storage, analysis, review, and audit path.
 
-## Last Verified Live
+## Last Verified Live (Pre-Event-Projection Baseline)
 
-Last verified against `https://imml0cczh7.execute-api.us-east-1.amazonaws.com` on July 5, 2026 using the prepared Ford photo set:
+The following historical run was verified on July 5, 2026 before report approval and the EventBridge projector were added. It proves the earlier S3/SQS/Bedrock/Neon role-separated path, not the new projection gate. Replace it with a fresh artifact after deployment:
 
 ```json
 {

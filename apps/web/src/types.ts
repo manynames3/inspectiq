@@ -18,6 +18,8 @@ export type Inspection = {
   sellerSource: string;
   inspectorName: string;
   status: InspectionStatus;
+  assignedToUserId?: string | null;
+  version?: number;
   completenessPercentage: number;
   updatedAt: string;
   finalizedAt: string | null;
@@ -47,6 +49,7 @@ export type VehiclePhoto = {
   detectedAngleConfidence: number | null;
   qualityStatus: string;
   analysisStatus: string;
+  captureSource?: "web" | "mobile" | "reference";
 };
 
 export type ImageAnalysisJob = {
@@ -70,6 +73,15 @@ export type PhotoAnalysisResult = {
   confidence: number;
   status: string;
   errorMessage: string | null;
+  modelId: string | null;
+  latencyMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  estimatedCostUsd: number | null;
+  schemaValid: boolean;
+  fallbackUsed: boolean;
+  failureCategory: string | null;
   createdAt: string;
 };
 
@@ -89,6 +101,7 @@ export type VisionSuggestion = {
   reviewedAt?: string | null;
   resolvedAt?: string | null;
   createdAt?: string;
+  version: number;
 };
 
 export type DamageItem = {
@@ -123,10 +136,28 @@ export type ConditionGrade = {
 
 export type FinalReport = {
   id: string;
+  inspectionId?: string;
   reportBody: string;
   finalizedBy: string | null;
   finalizedAt: string | null;
   version: number;
+  approvalStatus: "draft" | "in_review" | "approved" | "finalized";
+  reviewerComment: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+};
+
+export type ReportVersion = {
+  id: string;
+  reportId: string;
+  inspectionId: string;
+  version: number;
+  reportBody: string;
+  approvalStatus: FinalReport["approvalStatus"];
+  reviewerComment: string;
+  changedBy: string;
+  changeType: "generated" | "edited" | "approved" | "finalized";
+  createdAt: string;
 };
 
 export type AuditEvent = {

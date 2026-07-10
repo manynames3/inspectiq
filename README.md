@@ -27,22 +27,22 @@ The core value is workflow reliability. AI can suggest required photo angles, im
 | Live app | https://inspectiq.pages.dev |
 | No-login review | https://inspectiq.pages.dev/?review=1 starts the read-only Evaluation Workspace directly. |
 | Architecture | ![AWS Architecture](docs/architecture_aws.png) |
-| Real vs deterministic boundary | Live uses Cognito, API Gateway, Lambda, Neon, S3, SQS, Bedrock, and CloudWatch. Local defaults to deterministic providers for repeatable CI and interviews. |
-| Role separation | Inspector captures/analyzes, Reviewer accepts/grades/finalizes, Admin monitors/recovers. See `docs/role-separated-proof.md`. |
+| Real vs deterministic boundary | Live uses Cognito, Lambda, Neon, S3, SQS, Bedrock, EventBridge, a Python projector, DynamoDB, and CloudWatch. Local defaults to deterministic providers for repeatable CI. |
+| Role separation | Inspector captures/analyzes, Reviewer resolves findings/grades/approves/finalizes, and Admin monitors/replays/recoveries. See `docs/role-separated-proof.md`. |
 | Real-photo evidence | Source-documented listing/dealer photo sets plus quality edge cases. See `sample-data/real-photo-evidence-pack.md` and `sample-data/IMAGE_CREDITS.md`. |
-| Model evaluation | 24-case suite currently passes local thresholds for angle, OCR, damage, false positives, and retakes. See `docs/model-evaluation-report.md`. |
-| Operations proof | Platform Health shows live runtime status and has Admin-only local failure simulation/recovery. |
+| Model evaluation | A reproducible 108-image challenge corpus (12 independent sources x 9 variants) gates schema, angle, OCR, damage, and retake behavior. Local CI is contract proof; real Bedrock runs are manual promotion evidence. |
+| Operations proof | Platform Health shows outbox delivery, EventBridge/DLQ state, projector health, duplicate suppression, model usage, and Admin replay/recovery controls. |
 | Visual regression | `npm run test:screenshots` captures dashboard, workbench, suggestions, damage, reports, audit, platform health, and mobile capture. |
 
 ## Repo Health And Developer Workflow
 
 | Signal | Proof |
 | --- | --- |
-| CI | [InspectIQ CI](https://github.com/manynames3/inspectiq/actions/workflows/ci.yml) runs Node checks, Python grading tests, Terraform validation, and local browser E2E. |
+| CI | [InspectIQ CI](https://github.com/manynames3/inspectiq/actions/workflows/ci.yml) runs Node/web/mobile checks, Python grading/projector tests, Postgres integration, Terraform validation, browser E2E, and visual regression. |
 | Live deploy | [Deploy Cloudflare Pages](https://github.com/manynames3/inspectiq/actions/workflows/deploy-cloudflare-pages.yml) builds the frontend against the AWS API URL and deploys to Pages. |
 | Public live smoke | `make live-smoke` verifies the read-only dashboard, inspection detail evidence, and Platform Health on `inspectiq.pages.dev`. |
 | Fast local confidence | `make verify-fast` runs full TypeScript checks and unit tests. |
-| Full local confidence | `make verify-full` runs lint, typecheck, tests, vision eval, builds, Python grading, Terraform validate, and local E2E. |
+| Full local confidence | `make verify-full` runs lint, typecheck, tests, vision contract evaluation, builds, Python services, Terraform validation, browser E2E, and visual regression. |
 | Workspace cleanup | `make clean-generated` removes generated caches without deleting `node_modules`. |
 
 See `docs/developer-workflow.md` for when to use each command and which generated folders to avoid during agent-assisted development.
@@ -57,7 +57,7 @@ See `docs/developer-workflow.md` for when to use each command and which generate
 
 ## Live Vs Repeatable Local Path
 
-The live authenticated path uses Cloudflare Pages, Cognito, API Gateway, Lambda, Neon Postgres, private S3 image objects, SQS image-analysis jobs, Bedrock multimodal analysis, and CloudWatch operations visibility. Local development defaults to deterministic providers and file persistence so interviews, tests, and code review stay repeatable. Both paths use the same schema contracts, state machine, reviewer approval workflow, and audit-event model.
+The live authenticated path uses Cloudflare Pages, Cognito, API Gateway, Lambda, Neon Postgres, private S3 image objects, SQS image-analysis jobs, Bedrock multimodal analysis, EventBridge domain events, a Python operations-projector Lambda, DynamoDB operational projections, and CloudWatch/X-Ray visibility. Local development defaults to deterministic providers and file persistence so tests and code review stay repeatable. Both paths use the same schema contracts, state machine, reviewer approval workflow, and audit-event model.
 
 For deployed proof with real uploaded photos, run `npm run test:live-upload` with a Cognito JWT and a required-angle photo directory. See `docs/live-production-proof.md`.
 
@@ -69,8 +69,11 @@ InspectIQ was tightened through review passes focused on reducing walkthrough ri
 
 | Concern found | Improvement made | Tradeoff or reasoning |
 | --- | --- | --- |
-| Image analysis needed stronger evidence grounding | Added source-documented vehicle photo sets, bad-capture cases, a model evaluation report, and a deployed Bedrock-shaped provider path. | Local analysis stays deterministic so CI and interviews do not fail on credentials, latency, or provider drift; the same schema contract is used for Bedrock. |
+| Image analysis needed stronger evidence grounding | Added source-documented vehicle photo sets, bad-capture cases, a model evaluation report, and a deployed Bedrock multimodal provider. | Local analysis stays deterministic so CI and interviews do not fail on credentials, latency, or provider drift; the same schema contract is used for Bedrock. |
+| Reference data could be mistaken for model output | Separated source-manifest mappings from Bedrock/local analysis, removed unsupported Ford/Nissan/Honda damage claims, stopped metadata-derived OCR, and added startup reconciliation plus audit corrections. | A source photo, declared checklist slot, model finding, and reviewer-confirmed fact are different evidence classes; the UI and metrics must never collapse them into one claim. |
 | Roles were too similar | Split Inspector, Reviewer, and Admin responsibilities in UI, API RBAC, tests, and proof docs. | Local role sessions mirror enterprise OIDC roles for repeatable walkthroughs; deployed flow uses Cognito/JWT claims. |
+| Field capture needed a production-shaped mobile path | Added an Expo/React Native client with Cognito PKCE, SecureStore sessions, SQLite assignment/upload queues, offline capture, idempotent sync, local quality guidance, and role-specific workflows. | Only capture is offline-capable; reviewer, grading, report, and admin mutations remain online to avoid unsafe conflict resolution on buyer-visible facts. |
+| Async operations needed durable delivery semantics | Added a transactional Postgres outbox, EventBridge domain events, a Python operations-projector Lambda, DynamoDB idempotency/projections, an SQS DLQ, replay controls, and correlation IDs. | Neon remains authoritative; DynamoDB is limited to disposable operational projections and duplicate suppression rather than becoming a second system of record. |
 | Production readiness was buried in docs | Added Platform Health production proof: auth mode, role source, API URL, persistence mode, provider, queue health, latest analysis, and failed/recovered job status. | Makes architecture observable in the product instead of asking a reviewer to trust a diagram. |
 | Operations story lacked a live failure path | Added Admin-only local failure simulation and recovery for image-analysis jobs. | Proves retry/DLQ thinking without injecting real AWS failures; simulation is guarded and disabled by default in production. |
 | Persistence looked transitional | Moved the deployed Postgres path toward row-level upsert/delete for inspection, photo, suggestion, audit, and report hot paths. | The current bridge is credible for a hosted vertical slice; a high-concurrency production system should continue toward DB-first repositories. |
@@ -99,9 +102,11 @@ Wholesale condition reports need consistent photo evidence, clear damage facts, 
 
 InspectIQ uses Bedrock multimodal analysis as an advisory review layer, not as an unchecked damage authority. A multimodal model can classify photo angle, summarize visible damage, extract readable VIN/odometer text, and return schema-validated suggestions for a reviewer. The UI treats those outputs as evidence requiring human confirmation before they affect buyer-visible reports.
 
-The `angle` or `evidence` confidence shown on photo cards means the image appears usable for the required checklist angle. It is not a guarantee that the vehicle has no damage. Damage confidence is tracked separately in reviewer suggestions and only becomes a confirmed condition item after reviewer accept/edit.
+The `angle` confidence shown for an actual model run means the image appears usable for the required checklist angle. It is not a guarantee that the vehicle has no damage. Reference listing images are shown as source-manifest mappings without an AI confidence percentage. Damage confidence is tracked separately in model findings and only becomes a confirmed condition item after reviewer accept/edit.
 
-A production-grade inspection platform would use a hybrid AI/ML approach: image-quality checks for blur/glare/framing, a dedicated angle classifier, OCR tuned for VIN and odometer capture, a trained damage-detection model with measured precision/recall, and Bedrock multimodal reasoning for structured summaries, exception handling, and report language. InspectIQ keeps this boundary explicit so the demo shows responsible AI workflow design without overstating model certainty.
+Reference evidence is never presented as model inference. Source manifests provide the vehicle/photo association and intended checklist slot; a reviewer confirms that mapping. Reference metadata is not converted into OCR output, and the seeded queue contains no confirmed damage unless the linked image visibly supports the claim. Real Bedrock results remain distinct through provider, model, prompt, latency, token, cost, and audit metadata.
+
+A production-grade inspection platform would use a hybrid AI/ML approach: image-quality checks for blur/glare/framing, a dedicated angle classifier, OCR tuned for VIN and odometer capture, a trained damage-detection model with measured precision/recall, and Bedrock multimodal reasoning for structured summaries, exception handling, and report language. InspectIQ keeps this boundary explicit so the walkthrough shows responsible AI workflow design without overstating model certainty.
 
 ## Product Walkthrough
 
@@ -116,7 +121,7 @@ A production-grade inspection platform would use a hybrid AI/ML approach: image-
 9. Check CR readiness, VDP readiness, buyer-visible status, reconditioning estimate, and arbitration risk.
 10. Calculate the condition grade from confirmed evidence.
 11. Generate a schema-validated AI report draft.
-12. Edit and finalize the report as a reviewer.
+12. Edit, approve, and explicitly confirm finalization as a reviewer.
 13. Review the audit trail and Platform Health scorecard.
 
 ## What To Review First
@@ -132,15 +137,15 @@ A production-grade inspection platform would use a hybrid AI/ML approach: image-
 
 ![AWS Architecture](docs/architecture_aws.png)
 
-The live path is Cloudflare Pages -> Cognito -> API Gateway -> Lambda API -> Neon Postgres, private S3 image objects, SQS image-analysis jobs, Lambda image worker, Bedrock multimodal analysis, and CloudWatch operations visibility. Cloudflare Pages and Neon Postgres are external services; the AWS resources are provisioned by Terraform in `infra/terraform`.
+The live path is Cloudflare Pages or Expo/React Native -> Cognito -> API Gateway -> Lambda API -> Neon Postgres, private S3 evidence, and SQS/Lambda/Bedrock image analysis. Transactional outbox events publish to EventBridge; a Python 3.12 Lambda projects idempotent operational state into on-demand DynamoDB. Cloudflare Pages and Neon are external managed services; Terraform provisions the AWS resources in `infra/terraform`.
 
-Request flow: users sign in through Cognito, the React/Vite workbench sends JWT-authenticated REST calls through API Gateway, and the Lambda API performs schema validation, RBAC, object-level authorization, workflow persistence, and audit logging. Image uploads use presigned S3 URLs, while image-analysis jobs move through SQS to the Lambda worker before Bedrock output is validated and stored.
+Request flow: users sign in through Cognito OIDC/PKCE, clients send JWT-authenticated REST calls through API Gateway, and the Lambda API validates Cognito JWT/JWKS claims before schema validation, RBAC, object authorization, relational persistence, and audit logging. Image uploads use presigned S3 URLs; analysis jobs move through SQS to a bounded-concurrency worker before Bedrock output is schema-validated and stored as advisory findings.
 
-Deployment flow: GitHub Actions runs CI, local E2E, Python tests, Lambda packaging, and Terraform validation. The Cloudflare Pages workflow deploys the frontend with Wrangler. AWS infrastructure is Terraform-managed; the repo validates Terraform in CI, while AWS apply remains an explicit operator action.
+Deployment flow: GitHub Actions runs CI, Postgres integration, browser/mobile checks, Python tests, Lambda packaging, and Terraform validation. The `production` environment records the plan artifact and requires an explicit `apply` workflow input; Wrangler deploys the web client. Android CI builds an x86_64 Maestro test APK and a separate installable arm64 APK.
 
-Security: Cognito OIDC and groups drive role-aware access, API Gateway enforces JWTs on the normal API route, the separate `/api/evaluation/*` route is read-only for public review, the service repeats JWT/JWKS validation, S3 blocks public access with server-side encryption, Secrets Manager stores the Neon connection string, and Lambda IAM is scoped to required S3, SQS, Secrets Manager, and Bedrock actions.
+Security: Cognito OIDC and groups drive role-aware access. The Lambda service validates JWT/JWKS claims on protected API calls and applies object-level authorization; the separate `/api/evaluation/*` surface is read-only. S3 blocks public access with encryption enabled, Secrets Manager stores the Neon URL, mobile tokens use SecureStore, and IAM is scoped by runtime role. The HTTP API has a JWT authorizer resource, but the current catch-all routing deliberately relies on service-side validation so public health/evaluation routes can share one integration; this is documented rather than presented as gateway enforcement.
 
-Observability and cost controls: CloudWatch log groups, alarms, and the `inspectiq-ops` dashboard cover API errors, worker errors, API latency, SQS queue age, and DLQ depth. Bedrock calls happen on explicit analysis/report actions rather than page loads, and deterministic local providers keep CI and local development from spending on model calls.
+Observability and cost controls: CloudWatch/X-Ray, 30-day log retention, alarms, SNS notifications, and the `inspectiq-ops` dashboard cover API/worker/projector errors, latency, SQS age, both DLQs, pending outbox age, Bedrock throttling, and cost-guard rejections. DynamoDB conditionally reserves each model operation before a call and enforces monthly defaults of 250 image analyses and 50 report drafts. An AWS Budget alerts at $25 forecast, $40 actual, and the $50 monthly ceiling.
 
 Service selection decisions:
 
@@ -150,10 +155,10 @@ Service selection decisions:
 | Neon Postgres | Used as system of record | Inspection records, photos, suggestions, damage items, reports, users, roles, and audit events are relational and benefit from transactions, constraints, and explainable joins. |
 | S3 | Used for images | Vehicle photos belong in object storage, not the database. The app stores object keys, metadata, checksums, and protected preview intents in Postgres. |
 | SQS + DLQ | Used for image analysis | The current async workflow needs durable dispatch, retries, backoff, and failed-job recovery. SQS is enough for a single image-analysis worker path. |
-| DynamoDB | Not used in this version | Useful later for very high-write idempotency keys, ephemeral job checkpoints, or device sync state, but not as the primary store for this relational CR workflow. |
+| DynamoDB | Used for operational projection | Event idempotency, a 30-day operational timeline, latest projected inspection state, and monthly Bedrock reservations use on-demand capacity and TTL. Neon remains authoritative. |
 | OpenSearch | Not used in this version | Useful once VIN/OCR/damage-note/report search, similarity search, or marketplace-scale discovery outgrows indexed Postgres queries. Current queues and tables do not need a search cluster. |
 | Kinesis | Not used in this version | Useful for high-throughput streaming telemetry or auction-lane event ingestion. Current user-driven inspection events are transactional workflow events, not a continuous stream. |
-| EventBridge | Deferred | Useful for publishing domain events such as `inspection.finalized` or `retake.required` to downstream systems. The current repo has one internal API/worker bounded context, so SQS keeps the operational surface smaller. |
+| EventBridge | Used for domain events | Versioned inspection, upload, analysis, retake, review, and report events fan out to the Python projector with bounded retries and an SQS DLQ. SQS remains the work queue for image analysis. |
 | Step Functions | Deferred | Useful when image/report processing needs explicit waits, branches, compensation, or multi-provider fallback orchestration. Current image analysis is a straightforward queue worker path. |
 | Rekognition | Deferred | Useful as a narrow OCR, label, moderation, or image-quality fallback. Bedrock is the implemented provider because the product slice needs one validated multimodal contract for angle, quality, OCR, damage reasoning, repair estimate, confidence, and reviewer routing. |
 
@@ -169,21 +174,25 @@ Optional logical flow:
 
 ```mermaid
 flowchart LR
-  Web[Cloudflare Pages React workbench] --> Auth[Cognito OIDC]
-  Web --> API[API Gateway + Lambda API]
+  Clients[React web and Expo mobile] --> Auth[Cognito OIDC and PKCE]
+  Clients --> API[API Gateway and Lambda API]
   API --> PG[Neon Postgres]
   API --> S3[Private S3 images]
   API --> SQS[SQS image jobs]
   SQS --> Worker[Lambda image worker]
   Worker --> Bedrock[Bedrock multimodal model]
   Worker --> PG
+  API --> Bus[EventBridge domain bus]
+  Worker --> Bus
+  Bus --> Projector[Python projector Lambda]
+  Projector --> DDB[DynamoDB operations projection]
 ```
 
 ## Scope
 
-This is a production-shaped reference implementation with a live hosted frontend and AWS backend. Local development still defaults to deterministic providers and file persistence for repeatable tests, while the deployed path uses Cloudflare Pages, API Gateway, Lambda, Neon Postgres, S3 presigned uploads, SQS, Bedrock multimodal analysis, Secrets Manager, Cognito resources, CloudWatch logs, alarms, and a dashboard.
+This is a production-shaped reference implementation with hosted web and AWS backend paths plus a native Expo client. Local development defaults to deterministic providers and file persistence; the deployed path includes Lambda, Neon, S3, SQS, Bedrock, EventBridge, the Python operations projector, DynamoDB, Cognito, Secrets Manager, CloudWatch/X-Ray, alarms, and recovery controls.
 
-Remaining production hardening is called out directly in `docs/production-readiness.md`: expand the model evaluation set with labeled production images, mature the image pipeline, move the highest-concurrency persistence paths to DB-first repositories, prove queue/DLQ recovery, and add environment promotion/rollback automation.
+Remaining production hardening is called out directly in `docs/production-readiness.md`: replace the 12-source challenge base with a statistically representative, independently labeled field corpus; continue the row-delta store bridge toward aggregate-specific DB-first repositories; and collect real inspector/reviewer feedback plus sustained load, reliability, and seven-day idle-cost evidence.
 
 For the concise interview explanation, see `docs/implementation-boundary.md`.
 
@@ -210,15 +219,16 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 | Area | Implemented in this repo | Production replacement |
 | --- | --- | --- |
 | Inspection workflow | Working React/TypeScript UI, role-aware actions, REST API, state machine, audit trail | Same workflow behind enterprise auth, object-level authorization, and operational SLAs |
-| Image analysis | Deterministic local provider plus deployed SQS -> Lambda -> Bedrock multimodal provider using the same strict schema contract and `npm run eval:vision` evaluation set; outputs remain advisory until reviewer confirmation | Larger labeled evaluation corpus, calibrated angle/OCR/damage metrics, dedicated image-quality and damage-detection models, and provider fallback policy |
-| Persistence | In-memory tests, local JSON snapshot, and deployed `PERSISTENCE_MODE=postgres` against Neon with row-level upsert/delete transactions | Direct DB-first repositories for the highest-concurrency production paths, retention, backups, and audit durability |
-| Image storage | Deployed presigned S3 upload intent, private S3 objects, protected preview intent, object key metadata, MIME type, byte size, and checksum capture | EXIF stripping, image normalization, thumbnails, lifecycle, KMS key policy, and CDN/object access policy hardening |
+| Image analysis | Deterministic CI provider plus deployed SQS -> Lambda -> Bedrock provider using one strict schema; metadata records model, prompt, latency, tokens, cost, fallback, and failure category | Promote models only after the manual Bedrock run passes a larger independently labeled field corpus and calibrated thresholds |
+| Persistence | In-memory tests, durable local snapshots, numbered migrations, and deployed Neon row-delta transactions with conditional versions for inspections, suggestions, and reports | Replace the remaining hydrated store bridge with aggregate-specific DB-first repositories before high-concurrency production use |
+| Image storage | Presigned private S3 uploads with stable operation IDs, checksum/metadata capture, protected previews, lifecycle cleanup, and mobile normalization/EXIF removal | Add production thumbnail/CDN policy and retention/legal-hold rules driven by actual customers |
+| Domain events | Transactional Postgres outbox -> EventBridge -> Python projector -> idempotent DynamoDB state, with TTL, retry, DLQ, health, and replay | Add consumers only when another bounded context has a real ownership or integration requirement |
 | Python grading | Optional FastAPI service plus identical Node fallback for deterministic local reliability | Keep separate only when grading rules need independent ownership, versioning, or reuse |
 | Report generation | Async-shaped job model with deterministic local provider | Dedicated queue or Step Functions orchestration only if report retries, waits, and branch logic justify the extra control plane |
 
 ## Tech Stack
 
-- React, TypeScript, Vite, React Router, CSS.
+- React, TypeScript, Vite, React Router, CSS; Expo/React Native with native camera and offline capture.
 - Node.js, Express, Zod, structured logging, request IDs.
 - Shared TypeScript schemas.
 - Python FastAPI grading service.
@@ -226,10 +236,10 @@ For the concise interview explanation, see `docs/implementation-boundary.md`.
 - Optional Postgres persistence mode using the existing `pg` client.
 - Local file snapshot persistence plus Neon Postgres persistence for the deployed backend.
 - S3-style image storage interface.
-- Queue-backed image analysis jobs and async-shaped report jobs.
+- SQS image jobs, EventBridge domain events, and an idempotent Python 3.12 DynamoDB projector.
 - Provider interfaces with deterministic local AI and Bedrock implementations.
 - Vitest, Supertest, React Testing Library, pytest.
-- Terraform-managed AWS Lambda, API Gateway, S3, SQS/DLQ, Secrets Manager, Cognito, CloudWatch alarms, and dashboard.
+- Terraform-managed AWS Lambda, API Gateway, S3, SQS/DLQs, EventBridge, DynamoDB, Secrets Manager, Cognito, SNS, CloudWatch/X-Ray, budget, alarms, and dashboard.
 
 ## Local Setup
 
@@ -268,6 +278,12 @@ Copy `.env.example` to `.env` if you want to customize:
 - `INSPECTIQ_STORE_FILE`
 - `DATABASE_URL`
 - `IMAGE_BUCKET`
+- `IMAGE_ANALYSIS_QUEUE_URL`
+- `DOMAIN_EVENT_BUS_NAME`
+- `DOMAIN_EVENT_DLQ_URL`
+- `OPERATIONS_TABLE_NAME`
+- `BEDROCK_MONTHLY_IMAGE_LIMIT`
+- `BEDROCK_MONTHLY_REPORT_LIMIT`
 - `PG_POOL_SIZE`
 - `PG_IDLE_TIMEOUT_MS`
 - `AUTH_MODE=jwt`
@@ -355,11 +371,15 @@ The Postgres schema covers:
 - `photo_analysis_results`
 - `vision_suggestions`
 - `damage_items`
+- `identity_verifications`
 - `condition_grades`
 - `ai_report_jobs`
 - `ai_report_drafts`
 - `final_reports`
+- `report_versions`
 - `audit_events`
+- `domain_events`
+- `schema_migrations`
 
 See `apps/api/src/db/schema.sql` and `apps/api/src/db/drizzle-schema.ts`.
 
@@ -393,7 +413,8 @@ Deployed AWS path:
 
 ```txt
 S3 upload -> SQS -> Lambda image worker -> Bedrock multimodal model
--> schema validation -> Postgres suggestions -> audit event
+-> schema validation -> Postgres suggestions/audit/outbox -> EventBridge
+-> Python projector -> idempotent DynamoDB operations state
 ```
 
 Upload intent:
@@ -416,7 +437,7 @@ Generate report -> ai_report_jobs -> gather confirmed facts -> provider call
 -> schema validation -> ai_report_drafts -> human review or AI_DRAFTED
 ```
 
-AI never finalizes reports.
+AI never approves or finalizes reports. A Reviewer must resolve blockers, approve an exact report version with a comment, and separately confirm finalization; stale versions return `409 VERSION_CONFLICT`.
 
 ## Human-In-The-Loop Governance
 
@@ -425,7 +446,7 @@ AI never finalizes reports.
 - Only accepted suggestions become facts.
 - Damage candidates create damage items only after acceptance.
 - Low confidence or missing evidence forces human review.
-- Finalization requires valid state and complete evidence.
+- Finalization requires valid state, complete evidence, and an approved current report version.
 - Buyer-visible release is blocked by missing required angles, unresolved AI suggestions, failed analysis, retake-required image quality, missing grade, or missing final report.
 - Audit trail records decisions and state changes.
 
@@ -445,7 +466,7 @@ PERSISTENCE_MODE=memory npm run dev
 npm run test:e2e
 ```
 
-The API tests cover the full create-to-finalize flow, upload intent metadata, image-analysis job records, readiness blockers, schema validation failures, evidence completeness gates, AI suggestion review, SLA assignment metadata, audit trail events, buyer-ready report export, and post-finalization immutability guards. The browser E2E script covers role-specific dashboard context, create -> attach photos -> analyze -> reviewer SLA queue -> reviewer acceptance -> grade -> draft report -> finalize -> export buyer report -> audit verification through the rendered React app.
+The API tests cover the full create-to-finalize flow, idempotent mobile uploads, optimistic conflicts, report approval/versioning, analysis metadata, readiness blockers, schema failures, reviewer assignments, domain outbox events, audit history, export, and post-finalization immutability. Browser E2E covers create -> attach -> analyze -> assign/review -> grade -> draft -> approve -> finalize -> export -> audit through the rendered React app. Mobile tests cover role claims, session behavior, offline retry, local quality policy, and native inspection cards; the Android workflow runs a Maestro Evaluation Workspace journey.
 
 Capture viewport regression evidence:
 
@@ -488,21 +509,21 @@ python -m pip install -r requirements.txt
 python -m pytest
 ```
 
+The deployed Python projector is tested separately:
+
+```bash
+make verify-projector
+```
+
 ## Observability
 
-Implemented locally:
-
-- Request IDs.
-- Structured logs.
-- Provider names and prompt versions in records.
-- Audit events for key decisions.
-- Platform Health scorecard.
+Implemented across local and deployed paths: correlation/request IDs, structured logs, model/prompt/token/cost metadata, audit and domain events, X-Ray tracing, Platform Health projections, DLQ state/replay, CloudWatch metrics/alarms, and optional SNS email notifications.
 
 Production metrics include image analysis success rate, image retake rate, image-analysis queue latency, missing required angle rate, human review rate, grade generation latency, report finalization rate, suggestion acceptance rate, buyer-visible ready rate, and p95 API latency.
 
 ## Security
 
-Local review uses role-aware UI controls and API RBAC for Inspector, Reviewer, and Admin workflows. The deployed path uses Cognito hosted OIDC, API Gateway JWT enforcement, Lambda-side JWT/JWKS validation, Cognito group or role-claim mapping, optional email-based bootstrap role mapping for owner/operator accounts, least-privilege Inspector fallback for authenticated users without an app role claim, object-level authorization, S3 presigned uploads, protected short-lived image preview URLs, encrypted S3 storage, Secrets Manager, and least-privilege IAM. Set `REQUIRE_JWT_ROLE_CLAIM=true` after Cognito groups are fully managed to fail closed on unmapped missing role claims.
+Local review uses role-aware sessions and API RBAC. The deployed path uses Cognito OIDC/PKCE, Lambda-side JWT/JWKS validation, group/role claims, object-level inspection authorization, SecureStore on mobile, stable upload idempotency keys, private S3 presigned uploads, short-lived protected previews, encryption, Secrets Manager, and scoped IAM. Set `REQUIRE_JWT_ROLE_CLAIM=true` when group provisioning is fully managed to fail closed on unmapped claims. API Gateway currently routes the catch-all integration without route-level authorization so health/evaluation and protected endpoints can coexist; protected routes still fail closed in the Lambda service.
 
 ## AWS Deployment Architecture
 
@@ -518,10 +539,13 @@ React
 -> Lambda image worker
 -> Bedrock multimodal model
 -> validated suggestions
--> audit trail
+-> Postgres audit + domain outbox
+-> EventBridge
+-> Python operations projector
+-> DynamoDB operational view
 ```
 
-The Terraform in `infra/terraform` deploys the AWS resources used by the live backend. Cognito groups and the API Gateway JWT authorizer are enabled by default for the authenticated Pages walkthrough.
+Terraform in `infra/terraform` defines the live backend, Cognito groups, custom EventBridge bus, Python projector, DynamoDB operations table, alarms, budget, and GitHub OIDC deploy role. The JWT authorizer resource exists for future route decomposition; current protected catch-all requests are enforced by Lambda-side JWT validation.
 
 ## Cost Awareness
 
@@ -534,7 +558,7 @@ Major drivers:
 - Neon Postgres compute/storage.
 - CloudWatch logs.
 
-For 1,000 inspections with 10 images each, model calls dominate variable cost. Local deterministic providers avoid accidental spend during development; the deployed Bedrock path is reserved for explicit image-analysis actions and uses job records for idempotency.
+For 1,000 inspections with 10 images each, model calls dominate variable cost. Local deterministic providers avoid CI spend; deployed Bedrock calls require an explicit user action and an idempotent DynamoDB reservation. The stack uses on-demand/scale-to-zero services, bounded Lambda concurrency, 30-day logs, default model quotas, and a $50 monthly AWS budget rather than always-on OpenSearch or container capacity.
 
 ## Failure Handling
 
@@ -546,6 +570,8 @@ Handled or documented:
 - Unknown photo angle routing.
 - Image quality retake policy.
 - Duplicate analysis handling.
+- Duplicate EventBridge suppression and domain-event DLQ replay.
+- Monthly model-call guardrails with `429 COST_GUARD_REACHED`.
 - Missing evidence before grading.
 - Report job failure and retry path.
 - Finalization state guards.
@@ -567,11 +593,11 @@ I would discuss:
 
 ## Future Improvements
 
-- Larger labeled model evaluation set with production-like auction photos and confidence calibration.
-- Reviewer queue with assignment and SLA filters.
-- Thumbnail generation and image metadata extraction.
-- Alarm notification targets and dashboard promotion across dev/stage/prod.
-- Cross-browser frontend flow tests.
+- Independent field data with adjudicated labels and real Bedrock promotion results by model/prompt version.
+- Real inspector/reviewer usability studies, measured task time, and sustained workload/SLO evidence.
+- Aggregate-specific DB-first repositories replacing the remaining row-delta store bridge.
+- Production thumbnail/CDN and evidence retention/legal-hold policies.
+- A second environment only when release volume justifies its idle and operational cost.
 
 ## Resume Bullets
 

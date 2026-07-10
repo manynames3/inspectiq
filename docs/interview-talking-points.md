@@ -7,7 +7,7 @@
 5. Why Python service? It shows a service boundary for independently owned business rules; it could be collapsed early in a smaller system.
 6. Why async reports? Model calls can be slow, fail, or need retries without blocking the UI.
 7. Image processing? Provider interface, strict schema validation, raw and validated output, angle confidence, image-quality scores, retake policy, damage confidence, OCR, repair estimate range, pending suggestions.
-8. AWS scale? The live path is React on Cloudflare Pages -> API Gateway/Lambda -> Neon Postgres -> S3 -> SQS -> Lambda image worker -> Bedrock multimodal model -> validated suggestions -> audit trail.
+8. AWS scale? Web/mobile clients use Cognito and API Gateway/Lambda; Neon/S3 hold workflow/evidence, SQS/Lambda/Bedrock handles image work, and a transactional outbox publishes EventBridge events to an idempotent Python/DynamoDB operations projection.
 9. AI failure? Save failed jobs, preserve audit events, block finalization, retry safely.
 10. Prevent hallucinations? Constrain prompts to confirmed facts and validate schema.
 11. Audit trail value? It explains every AI suggestion, human decision, grade, report edit, and finalization.

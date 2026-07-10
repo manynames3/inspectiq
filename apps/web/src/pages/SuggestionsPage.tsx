@@ -1,9 +1,10 @@
-import { AlertTriangle, Check, Clock3, RefreshCw, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { AlertTriangle, Check, Clock3, RefreshCw, RotateCcw, Search, SlidersHorizontal, Sparkles, UserCheck, X } from "lucide-react";
 import { estimateDamageRepairCost } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api.js";
+import { api, ApiClientError } from "../api.js";
 import { useActor } from "../App.js";
+import { isReferenceProvider } from "../evidenceProvenance.js";
 import type { VisionSuggestion } from "../types.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
 
@@ -13,7 +14,7 @@ type SuggestionRow = {
 };
 
 type ReviewStatusFilter = "actionable" | "all" | "accepted" | "rejected";
-type ReviewOwnerFilter = "all" | "reviewer" | "inspector" | "closed";
+type ReviewOwnerFilter = "all" | "mine" | "reviewer" | "inspector" | "closed";
 type ReviewSlaFilter = "all" | "overdue" | "watch" | "clear" | "closed";
 type ReviewTypeFilter = "all" | "damage_candidate" | "photo_angle" | "extracted_text" | "quality_warning";
 
@@ -67,13 +68,21 @@ function suggestionTitle(value: string): string {
   return titleCase(value);
 }
 
-function evidenceSummary(suggestion: VisionSuggestion): EvidenceSummary {
+function suggestionProvider(record: InspectionReviewRecord, suggestion: VisionSuggestion) {
+  return record.bundle.photoAnalysisResults
+    ?.filter((analysis) => analysis.photoId === suggestion.photoId)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]?.provider;
+}
+
+function evidenceSummary(suggestion: VisionSuggestion, referenceMapping = false): EvidenceSummary {
   const value = asRecord(suggestion.suggestedValueJson);
 
   if (suggestion.suggestionType === "photo_angle") {
     return {
       primary: `Photo angle: ${titleCase(value.photoAngle)}`,
-      secondary: "Used to complete the required photo checklist."
+      secondary: referenceMapping
+        ? "Mapped from documented source metadata and confirmed by a reviewer."
+        : "Model finding used to complete the required photo checklist after review."
     };
   }
 
@@ -99,7 +108,7 @@ function evidenceSummary(suggestion: VisionSuggestion): EvidenceSummary {
 
   if (suggestion.suggestionType === "quality_warning") {
     const quality = asRecord(value.imageQuality);
-    const scoreSummary = [
+    const scoreSummary = referenceMapping ? "" : [
       percentScore(quality.blurScore) ? `Blur ${percentScore(quality.blurScore)}` : null,
       percentScore(quality.exposureScore) ? `Exposure ${percentScore(quality.exposureScore)}` : null,
       percentScore(quality.framingScore) ? `Framing ${percentScore(quality.framingScore)}` : null
@@ -138,6 +147,7 @@ function suggestionOwner(suggestion: VisionSuggestion): ReviewOwnerFilter {
 }
 
 function ownerLabel(owner: ReviewOwnerFilter) {
+  if (owner === "mine") return "Assigned to me";
   if (owner === "reviewer") return "Reviewer";
   if (owner === "inspector") return "Inspector QA";
   if (owner === "closed") return "Closed";
@@ -214,6 +224,8 @@ export function SuggestionsPage() {
   const [ownerFilter, setOwnerFilter] = useState<ReviewOwnerFilter>("all");
   const [slaFilter, setSlaFilter] = useState<ReviewSlaFilter>("all");
   const [typeFilter, setTypeFilter] = useState<ReviewTypeFilter>("all");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [filtersHydrated, setFiltersHydrated] = useState(false);
 
   async function load() {
     setError(null);
@@ -224,14 +236,20 @@ export function SuggestionsPage() {
     }
   }
 
-  async function reviewSuggestion(id: string, action: "accept" | "reject") {
+  async function reviewSuggestion(suggestion: VisionSuggestion, action: "accept" | "reject") {
+    const id = suggestion.id;
     setBusyId(id);
     setError(null);
     try {
-      await api(`/api/vision-suggestions/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }, actor);
+      await api(`/api/vision-suggestions/${id}/${action}`, { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) }, actor);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to ${action} suggestion.`);
+      if (err instanceof ApiClientError && err.code === "VERSION_CONFLICT") {
+        await load();
+        setError("This finding changed in another session. The latest version is loaded for review.");
+      } else {
+        setError(err instanceof Error ? err.message : `Failed to ${action} suggestion.`);
+      }
     } finally {
       setBusyId(null);
     }
@@ -240,6 +258,82 @@ export function SuggestionsPage() {
   useEffect(() => {
     void load();
   }, [actor]);
+
+  useEffect(() => {
+    const key = `inspectiq.review-filters.${actor.id}`;
+    setFiltersHydrated(false);
+    try {
+      const stored = JSON.parse(localStorage.getItem(key) ?? "null") as Partial<{
+        status: ReviewStatusFilter;
+        owner: ReviewOwnerFilter;
+        sla: ReviewSlaFilter;
+        type: ReviewTypeFilter;
+      }> | null;
+      if (stored?.status) setStatusFilter(stored.status);
+      if (stored?.owner) setOwnerFilter(stored.owner);
+      if (stored?.sla) setSlaFilter(stored.sla);
+      if (stored?.type) setTypeFilter(stored.type);
+    } catch {
+      localStorage.removeItem(key);
+    } finally {
+      setFiltersHydrated(true);
+    }
+  }, [actor.id]);
+
+  useEffect(() => {
+    if (!filtersHydrated) return;
+    localStorage.setItem(`inspectiq.review-filters.${actor.id}`, JSON.stringify({
+      status: statusFilter,
+      owner: ownerFilter,
+      sla: slaFilter,
+      type: typeFilter
+    }));
+  }, [actor.id, filtersHydrated, ownerFilter, slaFilter, statusFilter, typeFilter]);
+
+  async function assignSelectedToMe() {
+    if (selectedIds.size === 0) return;
+    setBusyId("bulk-assign");
+    setError(null);
+    try {
+      await api("/api/vision-suggestions/bulk-assignment", {
+        method: "POST",
+        body: JSON.stringify({
+          suggestionIds: [...selectedIds],
+          assignedToRole: actor.role === "inspector" ? "inspector" : "reviewer",
+          assignedToUserId: actor.id
+        })
+      }, actor);
+      setSelectedIds(new Set());
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bulk assignment failed.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function requestSelectedRetakes() {
+    const eligible = rows
+      .filter(({ suggestion }) => selectedIds.has(suggestion.id) && (suggestion.suggestionType === "quality_warning" || suggestion.suggestionType === "photo_angle"))
+      .map(({ suggestion }) => suggestion.id);
+    if (eligible.length === 0) {
+      setError("Select image quality or angle findings. Damage, VIN, and odometer facts require individual review.");
+      return;
+    }
+    setBusyId("bulk-retake");
+    try {
+      await api("/api/vision-suggestions/bulk-retake", {
+        method: "POST",
+        body: JSON.stringify({ suggestionIds: eligible, reason: "Required evidence does not meet capture standards." })
+      }, actor);
+      setSelectedIds(new Set());
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Retake request failed.");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   const rows = useMemo<SuggestionRow[]>(() => records.flatMap((record) =>
     record.bundle.suggestions.map((suggestion) => ({ record, suggestion }))
@@ -255,7 +349,8 @@ export function SuggestionsPage() {
         if (statusFilter === "actionable" && !actionable) return false;
         if (statusFilter === "accepted" && suggestion.status !== "accepted") return false;
         if (statusFilter === "rejected" && suggestion.status !== "rejected") return false;
-        if (ownerFilter !== "all" && owner !== ownerFilter) return false;
+        if (ownerFilter === "mine" && suggestion.assignedToUserId !== actor.id) return false;
+        if (ownerFilter !== "all" && ownerFilter !== "mine" && owner !== ownerFilter) return false;
         if (slaFilter !== "all" && sla.id !== slaFilter) return false;
         if (typeFilter !== "all" && suggestion.suggestionType !== typeFilter) return false;
         if (!normalizedQuery) return true;
@@ -285,7 +380,7 @@ export function SuggestionsPage() {
         if (typeRankDelta !== 0) return typeRankDelta;
         return right.suggestion.confidence - left.suggestion.confidence;
       });
-  }, [ownerFilter, rows, searchQuery, slaFilter, statusFilter, typeFilter]);
+  }, [actor.id, ownerFilter, rows, searchQuery, slaFilter, statusFilter, typeFilter]);
   const pendingCount = rows.filter(({ suggestion }) => isActionableSuggestion(suggestion)).length;
   const slaWatchCount = rows.filter((row) => {
     const state = slaState(row).id;
@@ -296,6 +391,7 @@ export function SuggestionsPage() {
   const rejectedCount = rows.filter(({ suggestion }) => suggestion.status === "rejected").length;
   const closedCount = acceptedCount + rejectedCount;
   const canReviewSuggestions = can("suggestion:review");
+  const canAssignSuggestions = can("suggestion:assign");
   const hasActiveFilters = Boolean(searchQuery) || statusFilter !== "actionable" || ownerFilter !== "all" || slaFilter !== "all" || typeFilter !== "all";
 
   return (
@@ -339,6 +435,7 @@ export function SuggestionsPage() {
           <span>Owner</span>
           <select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value as ReviewOwnerFilter)}>
             <option value="all">All owners</option>
+            <option value="mine">Assigned to me</option>
             <option value="reviewer">Reviewer</option>
             <option value="inspector">Inspector QA</option>
             <option value="closed">Closed</option>
@@ -381,8 +478,21 @@ export function SuggestionsPage() {
 
       <div className="queue-results-line">
         <span>{filteredRows.length} of {rows.length} findings</span>
-        <span>Sorted by SLA risk, damage impact, and confidence.</span>
+        <span>Sorted by SLA risk, damage impact, and review priority.</span>
       </div>
+
+      {selectedIds.size > 0 ? (
+        <div className="queue-bulk-actions" role="region" aria-label="Selected findings">
+          <strong>{selectedIds.size} selected</strong>
+          <button className="secondary-button" disabled={!canAssignSuggestions || busyId !== null} onClick={() => void assignSelectedToMe()}>
+            <UserCheck size={15} /> Assign to me
+          </button>
+          <button className="secondary-button" disabled={!canAssignSuggestions || busyId !== null} onClick={() => void requestSelectedRetakes()}>
+            <RotateCcw size={15} /> Request retake
+          </button>
+          <button className="text-button" onClick={() => setSelectedIds(new Set())}>Clear</button>
+        </div>
+      ) : null}
 
       <div className="summary-grid">
         <article className="summary-card">
@@ -424,6 +534,7 @@ export function SuggestionsPage() {
           <table>
             <thead>
               <tr>
+                <th><span className="visually-hidden">Select</span></th>
                 <th>Inspection</th>
                 <th>Finding</th>
                 <th>Owner</th>
@@ -439,9 +550,23 @@ export function SuggestionsPage() {
                 const actionable = isActionableSuggestion(suggestion);
                 const owner = suggestionOwner(suggestion);
                 const sla = slaState({ record, suggestion });
-                const evidence = evidenceSummary(suggestion);
+                const referenceMapping = isReferenceProvider(suggestionProvider(record, suggestion));
+                const evidence = evidenceSummary(suggestion, referenceMapping);
                 return (
                   <tr key={suggestion.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${suggestionTitle(suggestion.suggestionType)} for ${record.inspection.vin}`}
+                        checked={selectedIds.has(suggestion.id)}
+                        disabled={!actionable}
+                        onChange={() => setSelectedIds((current) => {
+                          const next = new Set(current);
+                          if (next.has(suggestion.id)) next.delete(suggestion.id); else next.add(suggestion.id);
+                          return next;
+                        })}
+                      />
+                    </td>
                     <td>
                       <strong>{record.inspection.year} {record.inspection.make} {record.inspection.model}</strong>
                       <small>{record.inspection.vin}</small>
@@ -458,7 +583,7 @@ export function SuggestionsPage() {
                       <small>{sla.detail}</small>
                     </td>
                     <td><span className={`queue-status status-${suggestion.status}`}>{suggestion.status}</span></td>
-                    <td>{Math.round(suggestion.confidence * 100)}%</td>
+                    <td>{referenceMapping ? "Reference" : `${Math.round(suggestion.confidence * 100)}%`}</td>
                     <td>
                       <div className="evidence-summary">
                         <strong>{evidence.primary}</strong>
@@ -474,7 +599,7 @@ export function SuggestionsPage() {
                               className="accept-button"
                               disabled={busyId === suggestion.id || !canReviewSuggestions}
                               title={canReviewSuggestions ? undefined : isEvaluationMode ? "Sign in with Cognito to change findings." : "Reviewer or Admin access required"}
-                              onClick={() => void reviewSuggestion(suggestion.id, "accept")}
+                              onClick={() => void reviewSuggestion(suggestion, "accept")}
                             >
                               <Check size={15} /> Accept
                             </button>
@@ -482,7 +607,7 @@ export function SuggestionsPage() {
                               className="reject-button"
                               disabled={busyId === suggestion.id || !canReviewSuggestions}
                               title={canReviewSuggestions ? undefined : isEvaluationMode ? "Sign in with Cognito to change findings." : "Reviewer or Admin access required"}
-                              onClick={() => void reviewSuggestion(suggestion.id, "reject")}
+                              onClick={() => void reviewSuggestion(suggestion, "reject")}
                             >
                               <X size={15} /> Reject
                             </button>

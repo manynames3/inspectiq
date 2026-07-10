@@ -10,11 +10,14 @@ const storeMapNames = [
   "analyses",
   "suggestions",
   "damageItems",
+  "identityVerifications",
   "conditionGrades",
   "reportJobs",
   "reportDrafts",
   "finalReports",
-  "auditEvents"
+  "reportVersions",
+  "auditEvents",
+  "domainEvents"
 ] as const;
 
 type StoreMapName = typeof storeMapNames[number];

@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
+import { emitMetric } from "./metrics.js";
 
 export class ApiError extends Error {
   constructor(
@@ -18,6 +19,21 @@ export function notFound(resource = "Resource"): ApiError {
 
 export function conflict(message: string, details?: unknown): ApiError {
   return new ApiError(409, "CONFLICT", message, details);
+}
+
+export function versionConflict(resource: string, expectedVersion: number, actualVersion: number): ApiError {
+  return new ApiError(409, "VERSION_CONFLICT", `${resource} changed after it was loaded. Refresh and review the latest version.`, {
+    expectedVersion,
+    actualVersion
+  });
+}
+
+export function costGuardReached(resource: string, limit: number): ApiError {
+  emitMetric("CostGuardRejections", 1, { Resource: resource.replaceAll(" ", "_") });
+  return new ApiError(429, "COST_GUARD_REACHED", `${resource} monthly usage limit has been reached. Captured evidence remains saved.`, {
+    limit,
+    action: "Ask an administrator to review the monthly analysis allowance."
+  });
 }
 
 export function forbidden(message: string, details?: unknown): ApiError {

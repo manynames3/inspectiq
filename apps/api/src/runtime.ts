@@ -6,6 +6,7 @@ import { resolveDatabaseUrl } from "./runtimeConfig.js";
 import { reconcileReferenceEvidence } from "./seedData.js";
 import { store } from "./store.js";
 import { loadStoreSnapshot, saveStoreSnapshot } from "./storeSnapshot.js";
+import { flushPendingDomainEvents } from "./awsEvents.js";
 
 export type Runtime = {
   app: ReturnType<typeof createApp>;
@@ -43,9 +44,16 @@ export async function createRuntime(): Promise<Runtime> {
         }
         : undefined,
       afterMutation: persistPostgres && pool
-        ? () => savePostgresRows(store, pool)
+        ? async () => {
+          await savePostgresRows(store, pool);
+          await flushPendingDomainEvents(store);
+          await savePostgresRows(store, pool);
+        }
         : persistLocally
-          ? () => saveStoreSnapshot(store)
+          ? async () => {
+            await flushPendingDomainEvents(store);
+            await saveStoreSnapshot(store);
+          }
           : undefined
     });
 

@@ -3,15 +3,21 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { pinoHttp } from "pino-http";
 import {
   CreateDamageItemSchema,
+  BulkRetakeRequestSchema,
+  BulkSuggestionAssignmentSchema,
   CreateInspectionSchema,
   GradeRequestSchema,
   PatchDamageItemSchema,
   PatchInspectionSchema,
   PatchReportSchema,
+  ReportApprovalSchema,
   SamplePhotoSchema,
   UpdateSuggestionSchema,
+  SuggestionAssignmentSchema,
+  SuggestionDecisionSchema,
   UploadIntentSchema,
   UploadPhotoSchema,
+  requiredPhotoAngles,
   rolePermissions,
   type ApiEnvelope
 } from "@inspectiq/shared";
@@ -22,12 +28,15 @@ import { getVisionProvider } from "./visionProvider.js";
 import { createPresignedDownload, createPresignedUpload, s3ObjectUrl } from "./awsStorage.js";
 import { sendImageAnalysisMessage } from "./awsQueue.js";
 import { runImageAnalysisJob } from "./imageAnalysisRunner.js";
+import { domainEventDlqHealth, flushPendingDomainEvents, replayDomainEventDlq } from "./awsEvents.js";
+import { getMonthlyBedrockUsage, getOperationalProjectionHealth, listRecentOperationalEvents, reserveBedrockUsage } from "./operationsStore.js";
 import { platformHealthPayload } from "./platformHealth.js";
 import { authenticateRequest, authMode } from "./auth.js";
 import { canAccessInspection, isEvaluationActor, requireAction, requireInspectionAccess } from "./rbac.js";
 import { findSampleImage, findSamplePhotoSet, sampleBundles, sampleImageDirectory, sampleSetForInspection } from "./sampleImages.js";
 import { identityDataUrl, identitySourceLicense, identitySourceName, seedStore } from "./seedData.js";
 import { MemoryStore, store as defaultStore } from "./store.js";
+import { runWithRequestContext } from "./requestContext.js";
 import type { Actor, DamageItem, FinalReport, Inspection, VehiclePhoto, VisionSuggestion } from "./domain.js";
 
 type AsyncRoute = (req: Request, res: Response, next: NextFunction) => Promise<void> | void;
@@ -186,9 +195,12 @@ async function draftInspectionReport(store: MemoryStore, inspection: Inspection,
   if (inspection.status !== "GRADED" && inspection.status !== "REPORT_FAILED" && inspection.status !== "HUMAN_REVIEW_REQUIRED") {
     throw conflict(`Cannot request AI report from status ${inspection.status}.`);
   }
+  const provider = getReportProvider();
+  if (provider.name.toLowerCase().includes("bedrock")) {
+    await reserveBedrockUsage("reportDrafts", idempotencyKey ?? `report:${inspection.id}:${crypto.randomUUID()}`);
+  }
   const job = store.createReportJob(inspection.id, idempotencyKey, actor);
   store.markJobRunning(job.id);
-  const provider = getReportProvider();
   try {
     const damageItems = store.listDamage(inspection.id);
     const missingEvidence = store.missingRequiredEvidence(inspection.id);
@@ -223,9 +235,9 @@ async function draftInspectionReport(store: MemoryStore, inspection: Inspection,
   }
 }
 
-function objectKeyForUpload(inspectionId: string, filename: string): string {
+function objectKeyForUpload(inspectionId: string, filename: string, operationId?: string | null): string {
   const cleanName = filename.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 120);
-  return `inspections/${inspectionId}/photos/${crypto.randomUUID()}-${cleanName}`;
+  return `inspections/${inspectionId}/photos/${operationId ?? crypto.randomUUID()}-${cleanName}`;
 }
 
 function assertUploadObjectScope(inspectionId: string, input: {
@@ -305,8 +317,9 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   const app = express();
   const autoLogHttpRequests = process.env.NODE_ENV !== "test" && process.env.VITEST !== "true";
   app.use((req, res, next) => {
-    res.locals.requestId = req.header("x-request-id") ?? crypto.randomUUID();
-    next();
+    const requestId = req.header("x-request-id") ?? crypto.randomUUID();
+    res.locals.requestId = requestId;
+    runWithRequestContext(requestId, next);
   });
   app.use(pinoHttp({
     autoLogging: autoLogHttpRequests,
@@ -394,6 +407,29 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     })));
   });
 
+  app.get("/api/mobile/bootstrap", (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    const cursorValue = typeof req.query.cursor === "string"
+      ? req.query.cursor
+      : typeof req.query.since === "string"
+        ? req.query.since
+        : "";
+    const since = Date.parse(cursorValue);
+    const accessible = appStore.listInspections()
+      .filter((inspection) => canAccessInspection(actor, inspection))
+      .filter((inspection) => !Number.isFinite(since) || Date.parse(inspection.updatedAt) > since);
+    const cursor = appStore.listInspections()
+      .map((inspection) => inspection.updatedAt)
+      .sort((left, right) => right.localeCompare(left))[0] ?? new Date().toISOString();
+    sendData(res, {
+      actor,
+      permissions: rolePermissions[actor.role],
+      requiredPhotoAngles,
+      cursor,
+      inspections: accessible.map((inspection) => appStore.bundle(inspection.id))
+    });
+  });
+
   app.post("/api/inspections", asyncRoute((req, res) => {
     const input = CreateInspectionSchema.parse(req.body);
     const actor = actorFromRequest(req, appStore);
@@ -423,7 +459,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     requireAction(actor, "photo:capture");
     inspectionForRequest(appStore, req.params.id, actor, "upload photos to this inspection");
     assertUploadObjectScope(req.params.id, input);
-    const objectKey = input.objectKey ?? objectKeyForUpload(req.params.id, input.originalFilename);
+    const objectKey = input.objectKey ?? objectKeyForUpload(req.params.id, input.originalFilename, input.operationId);
     const photo = appStore.addPhoto({
       inspectionId: req.params.id,
       storageKey: input.storageKey ?? `/uploads/${objectKey}`,
@@ -438,7 +474,11 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       sourceUrl: input.sourceUrl ?? null,
       sourceLicense: input.sourceLicense ?? null,
       uploadedBy: actor.id,
-      declaredAngle: input.declaredAngle ?? null
+      declaredAngle: input.declaredAngle ?? null,
+      operationId: input.operationId ?? null,
+      capturedAt: input.capturedAt ?? null,
+      deviceId: input.deviceId ?? null,
+      captureSource: input.captureSource
     }, actor);
     await persistMutation(options);
     sendData(res, photo, 201);
@@ -450,7 +490,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     requireAction(actor, "photo:capture");
     inspectionForRequest(appStore, input.inspectionId, actor, "create upload intent for this inspection");
     appStore.assertMutableInspection(input.inspectionId, "create upload intent");
-    const objectKey = objectKeyForUpload(input.inspectionId, input.originalFilename);
+    const objectKey = objectKeyForUpload(input.inspectionId, input.originalFilename, input.operationId);
     const objectBucket = process.env.IMAGE_BUCKET ?? "inspectiq-local-uploads";
     if (process.env.IMAGE_UPLOAD_MODE === "presigned") {
       if (!process.env.IMAGE_BUCKET) throw validation("IMAGE_BUCKET is required for presigned uploads.");
@@ -465,7 +505,8 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
         objectKey,
         uploadUrl: presigned.uploadUrl,
         requiredHeaders: presigned.requiredHeaders,
-        expiresInSeconds: presigned.expiresInSeconds
+        expiresInSeconds: presigned.expiresInSeconds,
+        operationId: input.operationId ?? null
       }, 201);
       return;
     }
@@ -477,7 +518,8 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
         "content-type": input.mimeType,
         ...(input.checksumSha256 ? { "x-amz-checksum-sha256": input.checksumSha256 } : {})
       },
-      expiresInSeconds: 900
+      expiresInSeconds: 900,
+      operationId: input.operationId ?? null
     }, 201);
   }));
 
@@ -676,24 +718,26 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
 
   app.get("/api/inspections/:id/vision-suggestions", asyncRoute((req, res) => {
     const actor = actorFromRequest(req, appStore);
-    inspectionForRequest(appStore, req.params.id, actor, "view AI suggestions for this inspection");
+    inspectionForRequest(appStore, req.params.id, actor, "view review findings for this inspection");
     sendData(res, appStore.listSuggestions(req.params.id));
   }));
 
   app.post("/api/vision-suggestions/:id/accept", asyncRoute(async (req, res) => {
+    const input = SuggestionDecisionSchema.parse(req.body ?? {});
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "suggestion:review");
-    suggestionForRequest(appStore, req.params.id, actor, "accept this AI suggestion");
-    const suggestion = appStore.acceptSuggestion(req.params.id, actor);
+    suggestionForRequest(appStore, req.params.id, actor, "accept this review finding");
+    const suggestion = appStore.acceptSuggestion(req.params.id, actor, input.expectedVersion);
     await persistMutation(options);
     sendData(res, suggestion);
   }));
 
   app.post("/api/vision-suggestions/:id/reject", asyncRoute(async (req, res) => {
+    const input = SuggestionDecisionSchema.parse(req.body ?? {});
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "suggestion:review");
-    suggestionForRequest(appStore, req.params.id, actor, "reject this AI suggestion");
-    const suggestion = appStore.rejectSuggestion(req.params.id, actor);
+    suggestionForRequest(appStore, req.params.id, actor, "reject this review finding");
+    const suggestion = appStore.rejectSuggestion(req.params.id, actor, input.expectedVersion);
     await persistMutation(options);
     sendData(res, suggestion);
   }));
@@ -705,13 +749,54 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     }
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "suggestion:review");
-    suggestionForRequest(appStore, req.params.id, actor, "edit this AI suggestion");
+    suggestionForRequest(appStore, req.params.id, actor, "edit this review finding");
     const suggestion = appStore.editSuggestion(req.params.id, {
       suggestedValue: input.suggestedValue,
-      explanation: input.explanation
+      explanation: input.explanation,
+      expectedVersion: input.expectedVersion
     }, actor);
     await persistMutation(options);
     sendData(res, suggestion);
+  }));
+
+  app.patch("/api/vision-suggestions/:id/assignment", asyncRoute(async (req, res) => {
+    const input = SuggestionAssignmentSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "suggestion:assign");
+    suggestionForRequest(appStore, req.params.id, actor, "assign this review finding");
+    const suggestion = appStore.assignSuggestion(req.params.id, input, actor);
+    await persistMutation(options);
+    sendData(res, suggestion);
+  }));
+
+  app.post("/api/vision-suggestions/bulk-assignment", asyncRoute(async (req, res) => {
+    const input = BulkSuggestionAssignmentSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "suggestion:assign");
+    const suggestions = input.suggestionIds.map((suggestionId) => {
+      suggestionForRequest(appStore, suggestionId, actor, "assign this review finding");
+      return appStore.assignSuggestion(suggestionId, input, actor);
+    });
+    await persistMutation(options);
+    sendData(res, suggestions);
+  }));
+
+  app.post("/api/vision-suggestions/bulk-retake", asyncRoute(async (req, res) => {
+    const input = BulkRetakeRequestSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "suggestion:assign");
+    const suggestions = input.suggestionIds.map((suggestionId) => {
+      const suggestion = suggestionForRequest(appStore, suggestionId, actor, "request a retake for this finding");
+      if (suggestion.suggestionType !== "quality_warning" && suggestion.suggestionType !== "photo_angle") {
+        throw validation("Bulk retake is limited to image quality and angle findings. Damage and identity facts require individual review.", {
+          suggestionId,
+          suggestionType: suggestion.suggestionType
+        });
+      }
+      return appStore.requestSuggestionRetake(suggestionId, input.reason, actor);
+    });
+    await persistMutation(options);
+    sendData(res, suggestions);
   }));
 
   app.post("/api/inspections/:id/damage", asyncRoute(async (req, res) => {
@@ -829,7 +914,20 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "report:edit");
     reportForRequest(appStore, req.params.id, actor, "edit this report");
-    const report = appStore.patchReport(req.params.id, input.reportBody, actor);
+    const report = appStore.patchReport(req.params.id, input.reportBody, actor, {
+      expectedVersion: input.expectedVersion,
+      reviewerComment: input.reviewerComment
+    });
+    await persistMutation(options);
+    sendData(res, report);
+  }));
+
+  app.post("/api/reports/:id/approve", asyncRoute(async (req, res) => {
+    const input = ReportApprovalSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "report:approve");
+    reportForRequest(appStore, req.params.id, actor, "approve this report");
+    const report = appStore.approveReport(req.params.id, actor, input.expectedVersion, input.reviewerComment);
     await persistMutation(options);
     sendData(res, report);
   }));
@@ -838,7 +936,8 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "report:finalize");
     reportForRequest(appStore, req.params.id, actor, "finalize this report");
-    const report = appStore.finalizeReport(req.params.id, actor);
+    const expectedVersion = SuggestionDecisionSchema.parse(req.body ?? {}).expectedVersion;
+    const report = appStore.finalizeReport(req.params.id, actor, expectedVersion);
     await persistMutation(options);
     sendData(res, report);
   }));
@@ -863,10 +962,23 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     sendData(res, reportForRequest(appStore, req.params.id, actor, "view this report"));
   }));
 
-  app.get("/api/platform-health", (req, res) => {
+  app.get("/api/reports/:id/versions", asyncRoute((req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    reportForRequest(appStore, req.params.id, actor, "view report version history");
+    sendData(res, appStore.reportVersionsFor(req.params.id));
+  }));
+
+  app.get("/api/platform-health", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     const provider = getVisionProvider();
-    sendData(res, platformHealthPayload(appStore, {
+    const [bedrockUsage, operationalEvents, projectionHealth, eventDlq] = await Promise.all([
+      getMonthlyBedrockUsage(),
+      listRecentOperationalEvents(),
+      getOperationalProjectionHealth(),
+      domainEventDlqHealth()
+    ]);
+    sendData(res, {
+      ...platformHealthPayload(appStore, {
       visionProviderName: provider.name,
       visionPromptVersion: provider.promptVersion,
       actor,
@@ -877,8 +989,72 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
         : (req as AuthenticatedRequest).actor
           ? "verified JWT role claim or configured identity mapping"
           : "local role header"
-    }));
-  });
+      }),
+      eventDrivenOperations: {
+        bus: process.env.DOMAIN_EVENT_BUS_NAME ?? "local event adapter",
+        pendingOutboxEvents: appStore.pendingDomainEvents().length,
+        deliveredOutboxEvents: [...appStore.domainEvents.values()].filter((event) => event.status === "delivered").length,
+        failedOutboxEvents: [...appStore.domainEvents.values()].filter((event) => event.status === "failed").length,
+        recentProjectionEvents: operationalEvents,
+        projectionHealth,
+        eventDlq
+      },
+      costGuard: {
+        month: bedrockUsage.month,
+        imageAnalyses: { used: bedrockUsage.imageAnalyses, limit: Number(process.env.BEDROCK_MONTHLY_IMAGE_LIMIT ?? 250) },
+        reportDrafts: { used: bedrockUsage.reportDrafts, limit: Number(process.env.BEDROCK_MONTHLY_REPORT_LIMIT ?? 50) }
+      }
+    });
+  }));
+
+  app.get("/api/operations/projections", asyncRoute(async (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "ops:view");
+    const requestedLimit = Number(req.query.limit ?? 50);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.floor(requestedLimit), 1), 100) : 50;
+    const [events, health, usage, eventDlq] = await Promise.all([
+      listRecentOperationalEvents(limit),
+      getOperationalProjectionHealth(),
+      getMonthlyBedrockUsage(),
+      domainEventDlqHealth()
+    ]);
+    sendData(res, { health, events, usage, eventDlq });
+  }));
+
+  app.post("/api/platform-health/replay-domain-events", asyncRoute(async (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "ops:recover");
+    const eventIds = Array.isArray(req.body?.eventIds)
+      ? req.body.eventIds.filter((value: unknown): value is string => typeof value === "string")
+      : undefined;
+    const result = await flushPendingDomainEvents(appStore, eventIds);
+    const replayedInspectionIds = new Set(
+      [...appStore.domainEvents.values()]
+        .filter((event) => !eventIds || eventIds.includes(event.id))
+        .map((event) => event.inspectionId)
+    );
+    if (replayedInspectionIds.size === 0) throw validation("No matching domain events were found for replay.");
+    for (const inspectionId of replayedInspectionIds) {
+      appStore.addAudit(inspectionId, actor, "domain_event.replayed", {
+        ...result,
+        eventIds: eventIds ?? "all pending"
+      });
+    }
+    await persistMutation(options);
+    sendData(res, result);
+  }));
+
+  app.post("/api/platform-health/replay-domain-event-dlq", asyncRoute(async (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "ops:recover");
+    const result = await replayDomainEventDlq(Number(req.body?.maxMessages ?? 10));
+    const auditInspection = appStore.listInspections()[0];
+    if (auditInspection) {
+      appStore.addAudit(auditInspection.id, actor, "domain_event.dlq_replayed", result);
+      await persistMutation(options);
+    }
+    sendData(res, result);
+  }));
 
   app.post("/api/platform-health/simulate-failed-image-job", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);

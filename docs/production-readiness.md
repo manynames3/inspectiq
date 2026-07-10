@@ -1,114 +1,46 @@
 # Production Readiness
 
-InspectIQ is production-shaped, not a claim that a portfolio dataset is enough for a buyer-visible automotive inspection launch. This document separates implemented proof from the remaining gates that would be required before running the system as a real inspection platform.
+InspectIQ is production-shaped, not a claim that a portfolio corpus and low-volume walkthrough are sufficient for buyer-visible automotive decisions. This document separates implemented controls from external proof still required.
 
-## Current Proof
+## Implemented Proof
 
-| Area | Current proof in repo/live stack |
+| Area | Evidence in repo/live shape |
 | --- | --- |
-| End-to-end workflow | Inspector capture, image analysis, reviewer accept/reject/edit, damage confirmation, grading, report draft/finalization, and audit trail are implemented through API and UI tests. |
-| AWS serverless path | Cloudflare Pages calls API Gateway/Lambda; image analysis can run through SQS -> Lambda worker -> Bedrock multimodal provider; objects are stored in private S3; state is persisted in Neon Postgres. |
-| Human-in-the-loop control | AI output creates advisory suggestions only. CR/VDP readiness, damage records, and reports depend on reviewer decisions. |
-| Auth and authorization | Cognito/OIDC JWT validation, role claims, RBAC, object-level inspection access, and read-only evaluation preview are enforced by the API. |
-| Upload intake | JPEG, PNG, and WebP schemas enforce MIME and size limits; presigned mode requires scoped object bucket/key metadata, byte size, and SHA-256 checksum. |
-| Operations | Platform Health exposes SLOs, alert signals, queue/DLQ recovery steps, AI contract metadata, and implementation boundaries. |
-| CI | TypeScript, unit/API/component tests, and build checks are wired through repository scripts and GitHub Actions. |
+| Workflow | Inspector capture, SQS/Bedrock analysis, reviewer accept/reject/edit, damage, grading, report version approval/finalization, export, and audit are covered by API/browser tests. |
+| Native mobile | Expo/React Native roles, Cognito PKCE, SecureStore, SQLite assignment/operation cache, sandboxed photos, offline Inspector capture, bounded sync retries, local QA, and Android build/Maestro workflows. |
+| Relational integrity | Numbered migrations, `schema_migrations`, normalized Neon rows, changed-row transactions, conditional versions, `409 VERSION_CONFLICT`, and business/audit/outbox co-commit. |
+| Event reliability | Versioned `DomainEventV1` outbox, EventBridge, Python projector, transactional DynamoDB duplicate suppression, TTL timelines, latest state, domain-event DLQ, alarms, and Admin replay. |
+| AI governance | Strict schemas, no-fallback promotion workflow, model/prompt/latency/token/cost/failure metadata, monthly reservations, reviewer approval, and buyer-output redaction. |
+| Auth | Cognito OIDC/PKCE, JWT/JWKS validation, role claims, RBAC, object authorization, read-only evaluation mode, and no role switching for authenticated users. |
+| Operations | Correlation IDs through API/SQS/events, X-Ray, CloudWatch dashboard/alarms, SNS option, Platform Health, failed job/event recovery, and $50 budget thresholds. |
+| Quality gates | Node/web/mobile tests, Python grading/projector tests, Postgres service integration in CI, browser E2E, Axe/viewport checks, screenshot regression, Terraform validation, and Android release build. |
 
-## Production Gates
+## Remaining Production Gates
 
-### 1. Real Image ML Evaluation
+### 1. Field Model Evidence
 
-Before any buyer-visible confidence claim, the image pipeline needs a labeled corpus of real inspection images:
+The current corpus executes 108 images but derives them from 12 independent rights-cleared sources. Before operational rollout, build an adjudicated field dataset spanning operators, devices, vehicle classes, lighting/weather, clean controls, subtle/material damage, VIN/odometer variations, and auction/offsite backgrounds. Record inter-rater agreement, precision/recall by class, calibration, reviewer override rate, latency, and cost for each model/prompt version. Bedrock remains advisory until that evidence supports the intended risk tier.
 
-- front/rear/side/interior/engine/odometer/VIN angles;
-- clean vehicles, known damage, subtle scratches, dents, glass, wheels, interior wear;
-- bad captures: blur, glare, dark interior, partial VIN, dirty odometer, missing vehicle, bad crop;
-- capture sources: mobile/offsite, dealer listing, auction lane, recon shop, indoor/outdoor lighting.
+### 2. DB-First Repositories
 
-Required metrics:
+The deployed adapter writes normalized changed rows transactionally and rejects stale versioned updates, but it still hydrates the store facade and uses a global advisory lock. Replace this bridge with aggregate-specific inspection/photo/suggestion/report/audit/job repositories and narrow transactions before high-concurrency multi-tenant use. Preserve the current outbox and optimistic-concurrency invariants.
 
-- angle accuracy;
-- OCR accuracy for VIN and odometer;
-- damage precision, recall, and false-positive rate;
-- retake precision and recall;
-- latency and cost per analyzed image;
-- reviewer override rate.
+### 3. Image Delivery Policy
 
-Bedrock multimodal remains useful for advisory reasoning and structured summaries. A production condition platform should pair it with dedicated image-quality, OCR, angle, and damage-detection models when the business requires calibrated damage decisions.
+Mobile normalization and EXIF removal, private S3 uploads, checksums, and abandoned-multipart cleanup are implemented. Production still needs thumbnail/CDN design, retention/legal hold, backup/restore, key-policy review, malware/content policy, and documented deletion/export requirements.
 
-### 2. Production Image Pipeline
+### 4. Identity and Tenant Operations
 
-The current S3/presigned path proves the storage architecture. Production still needs:
+Prove enterprise group provisioning, refresh/revocation, password/MFA policy, sensitive-read auditing, tenant/account boundaries, support escalation, and negative authorization tests against every object type. Decompose API Gateway routes and attach the JWT authorizer when the public/protected route split is stable.
 
-- EXIF stripping;
-- image resizing/normalization;
-- thumbnail generation;
-- malware/content scanning policy;
-- checksum enforcement;
-- S3 lifecycle and retention rules;
-- KMS key-policy review;
-- CDN/private preview policy;
-- failed-upload cleanup.
+### 5. Sustained Operations
 
-### 3. Auth, Sessions, and Object Authorization
+Run load/soak tests against expected concurrency; verify Neon pool behavior, Lambda throttles, Bedrock quotas, SQS age, outbox recovery, DLQ replay, and rollback. Have someone other than the author execute the runbook. Record seven-day idle cost and at least one controlled failed-job and failed-event recovery artifact.
 
-The API already validates JWTs and object-level access. Production should add:
+### 6. Real-User Validation
 
-- enterprise OIDC/Cognito group provisioning;
-- no role switching for authenticated users;
-- session timeout and refresh policy;
-- audit records for sensitive reads, not only writes;
-- tenant/account boundaries if multiple sellers or clients share the platform;
-- negative authorization tests for every photo, report, suggestion, damage, and audit endpoint.
+Observe actual inspectors and reviewers. Measure capture completion, retake frequency, sync recovery, time to decision, queue aging, keyboard/accessibility use, report corrections, and support incidents. Iterate from those observations rather than adding speculative features.
 
-### 4. Persistence and Data Durability
+## Honest Interview Framing
 
-Neon Postgres is deployed, but the highest-concurrency paths should mature further:
-
-- DB-first repositories for inspection, photo, suggestion, audit, report, and job hot paths;
-- targeted transactions instead of broad snapshot synchronization;
-- migration workflow with rollback strategy;
-- backup/restore drills;
-- retention policy for image metadata, audit events, and finalized reports;
-- indexes verified against expected queue/reviewer workloads.
-
-### 5. Event-Driven Reliability
-
-The SQS worker path exists. Production proof should include:
-
-- idempotency tests for duplicate SQS delivery;
-- retry classification for provider throttling vs schema failure vs missing image object;
-- DLQ replay tooling;
-- queue age alarms;
-- worker concurrency limits matched to Bedrock throttling behavior;
-- operational drill: fail an image job, recover it, and prove readiness blockers clear.
-
-### 6. Operational Readiness
-
-Platform Health documents the intended operating model. Production should add:
-
-- CloudWatch alarm notifications;
-- request/job/inspection trace correlation;
-- dashboards for API latency, worker failures, queue age, Bedrock throttles, DB latency, and S3 errors;
-- runbooks tested by someone other than the author;
-- frontend/Lambda/Terraform/database rollback instructions;
-- staged deployment promotion.
-
-### 7. End-User Readiness
-
-The UI is credible for review, but daily production use needs field validation:
-
-- mobile/offsite inspector capture tests;
-- retake guidance tied to real camera quality;
-- reviewer assignment and SLA workflows;
-- bulk queue actions;
-- report approval/version workflow;
-- accessibility pass;
-- screenshot regression checks for dense dashboard/workbench pages.
-
-## Interview Framing
-
-The concise answer:
-
-> InspectIQ proves the architecture, workflow, and governance shape. To make it production ready, I would validate the image models with a labeled real-world corpus, harden the image ingestion pipeline, mature the Postgres hot paths, prove SQS/DLQ recovery, and run role-based user testing with inspectors and reviewers. Bedrock is valuable for multimodal reasoning, but buyer-visible damage claims need evaluated ML metrics and human approval.
-
+> InspectIQ proves the workflow, event, mobile, governance, and low-idle serverless shape. The remaining gap is external evidence: a representative labeled field corpus, sustained workload/SLO results, DB-first repositories at real concurrency, and feedback from working inspectors and reviewers. Bedrock output is advisory, and buyer-visible facts remain human-approved.

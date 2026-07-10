@@ -1,0 +1,17 @@
+appId: com.aidenrhaa.inspectiq
+---
+- launchApp:
+    clearState: true
+- assertVisible: "InspectIQ"
+- assertVisible: "Open Evaluation Workspace"
+- tapOn: "Open Evaluation Workspace"
+- assertVisible: "Review queue"
+- assertVisible: "Evaluation"
+- tapOn: "Review"
+- assertVisible: "Review queue"
+- tapOn: "Damage"
+- assertVisible: "Confirmed damage"
+- tapOn: "Reports"
+- assertVisible: "Condition reports"
+- tapOn: "Sign out"
+- assertVisible: "Open Evaluation Workspace"

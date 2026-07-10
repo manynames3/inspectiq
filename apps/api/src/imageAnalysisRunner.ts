@@ -1,6 +1,8 @@
 import { getVisionProvider } from "./visionProvider.js";
 import type { Actor, PhotoAnalysisResult, VisionSuggestion } from "./domain.js";
 import type { MemoryStore } from "./store.js";
+import { reserveBedrockUsage } from "./operationsStore.js";
+import { emitMetric } from "./metrics.js";
 
 export type ImageAnalysisRunResult = {
   job: ReturnType<MemoryStore["imageAnalysisJobsForInspection"]>[number] | undefined;
@@ -19,6 +21,9 @@ export async function runImageAnalysisJob(store: MemoryStore, jobId: string, act
 
   const provider = getVisionProvider();
   try {
+    if (provider.name.toLowerCase().includes("bedrock")) {
+      await reserveBedrockUsage("imageAnalyses", job.idempotencyKey ?? job.id);
+    }
     const result = await provider.analyze({
       filename: photo.originalFilename,
       storageKey: photo.storageKey,
@@ -32,6 +37,7 @@ export async function runImageAnalysisJob(store: MemoryStore, jobId: string, act
       promptVersion: provider.promptVersion,
       raw: result.raw,
       validated: result.validated,
+      metadata: result.metadata,
       jobId: job.id,
       force: job.idempotencyKey?.startsWith("force:") ?? false
     }, actor);
@@ -41,11 +47,16 @@ export async function runImageAnalysisJob(store: MemoryStore, jobId: string, act
       suggestions: store.listSuggestions(photo.inspectionId).filter((suggestion) => suggestion.photoId === photo.id)
     };
   } catch (error) {
+    const errorName = error instanceof Error ? error.name : "";
+    const errorMessage = error instanceof Error ? error.message : "Unknown analysis failure.";
+    if (/throttl/i.test(`${errorName} ${errorMessage}`)) {
+      emitMetric("BedrockThrottles", 1, { Operation: "ImageAnalysis" });
+    }
     const analysis = store.failAnalysis(
       photo,
       provider.name,
       provider.promptVersion,
-      error instanceof Error ? error.message : "Unknown analysis failure.",
+      errorMessage,
       actor,
       job.id
     );

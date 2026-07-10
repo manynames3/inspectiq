@@ -60,14 +60,17 @@ export const roleActions = [
   "photo:capture",
   "photo:analyze",
   "suggestion:review",
+  "suggestion:assign",
   "damage:create",
   "damage:update",
   "damage:delete",
   "grade:calculate",
   "report:draft",
   "report:edit",
+  "report:approve",
   "report:finalize",
   "report:retry",
+  "ops:view",
   "ops:recover"
 ] as const;
 
@@ -199,10 +202,12 @@ export const rolePermissions: Record<UserRole, RoleAction[]> = {
   ],
   reviewer: [
     "suggestion:review",
+    "suggestion:assign",
     "damage:create",
     "grade:calculate",
     "report:draft",
     "report:edit",
+    "report:approve",
     "report:finalize",
     "report:retry"
   ],
@@ -215,14 +220,17 @@ export const roleActionLabels: Record<RoleAction, string> = {
   "photo:capture": "attach or upload photo evidence",
   "photo:analyze": "run image analysis",
   "suggestion:review": "accept, reject, or edit AI suggestions",
+  "suggestion:assign": "assign AI suggestions",
   "damage:create": "confirm damage items",
   "damage:update": "edit confirmed damage",
   "damage:delete": "delete confirmed damage",
   "grade:calculate": "calculate condition grades",
   "report:draft": "draft condition reports",
   "report:edit": "edit report drafts",
+  "report:approve": "approve report drafts",
   "report:finalize": "finalize condition reports",
   "report:retry": "retry report jobs",
+  "ops:view": "view operational projections",
   "ops:recover": "recover failed operations jobs"
 };
 
@@ -253,7 +261,9 @@ export const CreateInspectionSchema = z.object({
 });
 
 export const PatchInspectionSchema = CreateInspectionSchema.partial().extend({
-  status: InspectionStatusSchema.optional()
+  status: InspectionStatusSchema.optional(),
+  assignedToUserId: z.string().trim().min(1).max(120).nullable().optional(),
+  expectedVersion: z.coerce.number().int().min(1).optional()
 });
 
 export const UploadPhotoSchema = z.object({
@@ -268,7 +278,18 @@ export const UploadPhotoSchema = z.object({
   checksumSha256: z.string().trim().regex(/^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$/i).optional(),
   sourceName: z.string().trim().min(1).max(120).optional(),
   sourceUrl: z.string().trim().url().max(500).optional(),
-  sourceLicense: z.string().trim().min(1).max(160).optional()
+  sourceLicense: z.string().trim().min(1).max(160).optional(),
+  operationId: z.string().uuid().optional(),
+  capturedAt: z.string().datetime().optional(),
+  deviceId: z.string().trim().min(1).max(120).optional(),
+  captureSource: z.enum(["web", "mobile", "reference"]).default("web")
+}).superRefine((input, ctx) => {
+  if (input.captureSource === "mobile" && !input.operationId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["operationId"], message: "Mobile uploads require an operationId." });
+  }
+  if (input.captureSource === "mobile" && !input.deviceId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["deviceId"], message: "Mobile uploads require a deviceId." });
+  }
 });
 
 export const UploadIntentSchema = z.object({
@@ -276,7 +297,13 @@ export const UploadIntentSchema = z.object({
   originalFilename: z.string().trim().min(1).max(180),
   mimeType: SupportedImageUploadMimeTypeSchema,
   byteSize: z.coerce.number().int().min(1).max(maxImageUploadBytes),
-  checksumSha256: z.string().trim().regex(/^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$/i).optional()
+  checksumSha256: z.string().trim().regex(/^([a-f0-9]{64}|[A-Za-z0-9+/]{43}=)$/i).optional(),
+  operationId: z.string().uuid().optional(),
+  captureSource: z.enum(["web", "mobile"]).default("web")
+}).superRefine((input, ctx) => {
+  if (input.captureSource === "mobile" && !input.operationId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["operationId"], message: "Mobile upload intents require an operationId." });
+  }
 });
 
 export const SamplePhotoSchema = z.object({
@@ -325,7 +352,31 @@ export type VisionOutput = z.infer<typeof VisionOutputSchema>;
 
 export const UpdateSuggestionSchema = z.object({
   suggestedValue: z.unknown(),
-  explanation: z.string().trim().min(1).max(500).optional()
+  explanation: z.string().trim().min(1).max(500).optional(),
+  expectedVersion: z.coerce.number().int().min(1).optional()
+});
+
+export const SuggestionDecisionSchema = z.object({
+  expectedVersion: z.coerce.number().int().min(1).optional()
+}).default({});
+
+export const SuggestionAssignmentSchema = z.object({
+  assignedToRole: z.enum(["inspector", "reviewer"]),
+  assignedToUserId: z.string().trim().min(1).max(120).nullable().optional(),
+  dueAt: z.string().datetime().optional(),
+  expectedVersion: z.coerce.number().int().min(1).optional()
+});
+
+export const BulkSuggestionAssignmentSchema = z.object({
+  suggestionIds: z.array(z.string().uuid()).min(1).max(100),
+  assignedToRole: z.enum(["inspector", "reviewer"]),
+  assignedToUserId: z.string().trim().min(1).max(120).nullable().optional(),
+  dueAt: z.string().datetime().optional()
+});
+
+export const BulkRetakeRequestSchema = z.object({
+  suggestionIds: z.array(z.string().uuid()).min(1).max(100),
+  reason: z.string().trim().min(1).max(500)
 });
 
 export const CreateDamageItemSchema = z.object({
@@ -398,8 +449,42 @@ export const AiReportOutputSchema = z.object({
 export type AiReportOutput = z.infer<typeof AiReportOutputSchema>;
 
 export const PatchReportSchema = z.object({
-  reportBody: z.string().trim().min(1).max(8000)
+  reportBody: z.string().trim().min(1).max(8000),
+  reviewerComment: z.string().trim().max(2000).optional(),
+  expectedVersion: z.coerce.number().int().min(1).optional()
 });
+
+export const ReportApprovalSchema = z.object({
+  reviewerComment: z.string().trim().max(2000).optional(),
+  expectedVersion: z.coerce.number().int().min(1)
+});
+
+export const DomainEventTypeSchema = z.enum([
+  "inspection.created",
+  "photo.uploaded",
+  "image.analysis.completed",
+  "image.analysis.failed",
+  "image.retake.required",
+  "suggestion.reviewed",
+  "report.finalized"
+]);
+
+export const DomainEventV1Schema = z.object({
+  eventId: z.string().uuid(),
+  eventType: DomainEventTypeSchema,
+  schemaVersion: z.literal("1.0"),
+  occurredAt: z.string().datetime(),
+  inspectionId: z.string().uuid(),
+  actor: z.object({
+    id: z.string().trim().min(1).max(120),
+    role: UserRoleSchema
+  }),
+  correlationId: z.string().trim().min(1).max(160),
+  payload: z.record(z.unknown())
+}).strict();
+
+export type DomainEventType = z.infer<typeof DomainEventTypeSchema>;
+export type DomainEventV1 = z.infer<typeof DomainEventV1Schema>;
 
 export type ApiEnvelope<T> = {
   data?: T;

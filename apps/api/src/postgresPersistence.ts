@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
@@ -8,19 +8,23 @@ import type {
   AuditEvent,
   ConditionGrade,
   DamageItem,
+  DomainEventOutbox,
   FinalReport,
   ImageAnalysisJob,
   IdentityVerification,
   Inspection,
   PhotoAnalysisResult,
+  ReportVersion,
   User,
   VehiclePhoto,
   VisionSuggestion
 } from "./domain.js";
 import type { MemoryStore } from "./store.js";
+import { versionConflict } from "./errors.js";
 
 const POSTGRES_ROW_STORE_LOCK_KEY = "7803144587035695001";
 const retryablePostgresCodes = new Set(["40001", "40P01", "55P03"]);
+const migratedPools = new WeakSet<Pool>();
 
 function schemaPath(): string {
   const candidates = [
@@ -33,6 +37,17 @@ function schemaPath(): string {
   const found = candidates.find((candidate) => existsSync(candidate));
   if (!found) throw new Error(`Could not locate schema.sql. Checked: ${candidates.join(", ")}`);
   return found;
+}
+
+function migrationsPath(): string | null {
+  const candidates = [
+    process.env.DB_MIGRATIONS_PATH,
+    path.resolve(process.cwd(), "src/db/migrations"),
+    path.resolve(process.cwd(), "apps/api/src/db/migrations"),
+    path.resolve(process.cwd(), "migrations"),
+    path.resolve(path.dirname(new URL(import.meta.url).pathname), "db/migrations")
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
 function iso(value: unknown): string {
@@ -95,7 +110,9 @@ type StoreMapName =
   | "reportJobs"
   | "reportDrafts"
   | "finalReports"
-  | "auditEvents";
+  | "reportVersions"
+  | "auditEvents"
+  | "domainEvents";
 
 type TableBatch = {
   table: string;
@@ -118,7 +135,9 @@ const storeMapNames: StoreMapName[] = [
   "reportJobs",
   "reportDrafts",
   "finalReports",
-  "auditEvents"
+  "reportVersions",
+  "auditEvents",
+  "domainEvents"
 ];
 const storeMapToTable: Record<StoreMapName, string> = {
   users: "users",
@@ -133,7 +152,9 @@ const storeMapToTable: Record<StoreMapName, string> = {
   reportJobs: "ai_report_jobs",
   reportDrafts: "ai_report_drafts",
   finalReports: "final_reports",
-  auditEvents: "audit_events"
+  reportVersions: "report_versions",
+  auditEvents: "audit_events",
+  domainEvents: "domain_events"
 };
 const postgresSnapshots = new WeakMap<MemoryStore, StoreSnapshot>();
 
@@ -157,8 +178,72 @@ function tableSignature(row: unknown[]): string {
 }
 
 export async function migratePostgres(pool: Pool, filePath = schemaPath()): Promise<void> {
+  if (migratedPools.has(pool)) return;
   const schema = await readFile(filePath, "utf8");
   await pool.query(schema);
+  const directory = migrationsPath();
+  if (!directory) {
+    migratedPools.add(pool);
+    return;
+  }
+  const files = (await readdir(directory)).filter((file) => /^\d+.*\.sql$/.test(file)).sort();
+  for (const file of files) {
+    const applied = await pool.query("select 1 from schema_migrations where version = $1", [file]);
+    if (applied.rowCount) continue;
+    const migration = await readFile(path.join(directory, file), "utf8");
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      await client.query(migration);
+      await client.query("insert into schema_migrations (version) values ($1)", [file]);
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  migratedPools.add(pool);
+}
+
+const versionedTables = new Set(["inspections", "vision_suggestions", "final_reports"]);
+
+async function writeVersionedChangedRows(
+  client: PoolClient,
+  batch: TableBatch,
+  previousRows: Map<string, string>,
+  changedRows: unknown[][]
+): Promise<void> {
+  const versionIndex = batch.columns.indexOf("version");
+  if (versionIndex < 0) throw new Error(`Versioned table ${batch.table} is missing a version column.`);
+  const newRows: unknown[][] = [];
+  for (const row of changedRows) {
+    const rowId = String(row[0]);
+    const previousSignature = previousRows.get(rowId);
+    if (!previousSignature) {
+      newRows.push(row);
+      continue;
+    }
+    const previous = JSON.parse(previousSignature) as unknown[];
+    const expectedVersion = Number(previous[versionIndex]);
+    const currentVersion = Number(row[versionIndex]);
+    const columns = batch.columns.filter((column) => column !== "id");
+    const values = row.slice(1);
+    const assignments = columns.map((column, index) => `${column} = $${index + 1}`).join(", ");
+    const result = await client.query(
+      `update ${batch.table} set ${assignments} where id = $${columns.length + 1} and version = $${columns.length + 2}`,
+      [...values, rowId, expectedVersion]
+    );
+    if (result.rowCount !== 1) {
+      const latest = await client.query<{ version: number }>(
+        `select version from ${batch.table} where id = $1`,
+        [rowId]
+      );
+      throw versionConflict(batch.table, expectedVersion, Number(latest.rows[0]?.version ?? currentVersion));
+    }
+  }
+  await upsertRows(client, batch.table, batch.columns, newRows);
 }
 
 async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient): Promise<boolean> {
@@ -193,6 +278,8 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         status: record.status,
         completenessPercentage: record.completeness_percentage,
         createdBy: record.created_by,
+        assignedToUserId: record.assigned_to_user_id,
+        version: record.version ?? 1,
         createdAt: iso(record.created_at),
         updatedAt: iso(record.updated_at),
         finalizedAt: record.finalized_at ? iso(record.finalized_at) : null
@@ -222,7 +309,11 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         detectedAngle: record.detected_angle,
         detectedAngleConfidence: nullableNum(record.detected_angle_confidence),
         qualityStatus: record.quality_status,
-        analysisStatus: record.analysis_status
+        analysisStatus: record.analysis_status,
+        operationId: record.operation_id,
+        capturedAt: record.captured_at ? iso(record.captured_at) : null,
+        deviceId: record.device_id,
+        captureSource: record.capture_source ?? "web"
       } satisfies VehiclePhoto);
     }
 
@@ -254,6 +345,15 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         confidence: num(record.confidence),
         status: record.status,
         errorMessage: record.error_message,
+        modelId: record.model_id,
+        latencyMs: record.latency_ms == null ? null : num(record.latency_ms),
+        inputTokens: record.input_tokens == null ? null : num(record.input_tokens),
+        outputTokens: record.output_tokens == null ? null : num(record.output_tokens),
+        totalTokens: record.total_tokens == null ? null : num(record.total_tokens),
+        estimatedCostUsd: record.estimated_cost_usd == null ? null : num(record.estimated_cost_usd),
+        schemaValid: record.schema_valid ?? true,
+        fallbackUsed: record.fallback_used ?? false,
+        failureCategory: record.failure_category,
         createdAt: iso(record.created_at)
       } satisfies PhotoAnalysisResult);
     }
@@ -275,7 +375,8 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         reviewedBy: record.reviewed_by,
         reviewedAt: record.reviewed_at ? iso(record.reviewed_at) : null,
         resolvedAt: record.resolved_at ? iso(record.resolved_at) : null,
-        createdAt: iso(record.created_at)
+        createdAt: iso(record.created_at),
+        version: record.version ?? 1
       } satisfies VisionSuggestion);
     }
 
@@ -362,8 +463,28 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         reportBody: record.report_body,
         finalizedBy: record.finalized_by,
         finalizedAt: record.finalized_at ? iso(record.finalized_at) : null,
-        version: record.version
+        version: record.version,
+        approvalStatus: record.approval_status ?? (record.finalized_at ? "finalized" : "draft"),
+        reviewerComment: record.reviewer_comment ?? "",
+        approvedBy: record.approved_by,
+        approvedAt: record.approved_at ? iso(record.approved_at) : null
       } satisfies FinalReport);
+    }
+
+    for (const row of (await client.query("select * from report_versions order by report_id, version, id")).rows) {
+      const record = row as QueryResultRow;
+      store.reportVersions.set(record.id, {
+        id: record.id,
+        reportId: record.report_id,
+        inspectionId: record.inspection_id,
+        version: record.version,
+        reportBody: record.report_body,
+        approvalStatus: record.approval_status,
+        reviewerComment: record.reviewer_comment,
+        changedBy: record.changed_by,
+        changeType: record.change_type,
+        createdAt: iso(record.created_at)
+      } satisfies ReportVersion);
     }
 
     for (const row of (await client.query("select * from audit_events order by created_at, id")).rows) {
@@ -376,6 +497,25 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         detailsJson: record.details_json,
         createdAt: iso(record.created_at)
       } satisfies AuditEvent);
+    }
+
+    for (const row of (await client.query("select * from domain_events order by created_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.domainEvents.set(record.id, {
+        id: record.id,
+        eventType: record.event_type,
+        schemaVersion: record.schema_version,
+        inspectionId: record.inspection_id,
+        actorId: record.actor_id,
+        actorRole: record.actor_role,
+        correlationId: record.correlation_id,
+        payloadJson: record.payload_json,
+        status: record.status,
+        deliveryAttempts: record.delivery_attempts,
+        lastError: record.last_error,
+        createdAt: iso(record.created_at),
+        deliveredAt: record.delivered_at ? iso(record.delivered_at) : null
+      } satisfies DomainEventOutbox);
     }
 
     rememberSnapshot(store);
@@ -406,7 +546,7 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
     },
     {
       table: "inspections",
-      columns: ["id", "vin", "year", "make", "model", "trim", "mileage", "exterior_color", "seller_source", "inspector_name", "status", "completeness_percentage", "created_by", "created_at", "updated_at", "finalized_at"],
+      columns: ["id", "vin", "year", "make", "model", "trim", "mileage", "exterior_color", "seller_source", "inspector_name", "status", "completeness_percentage", "created_by", "assigned_to_user_id", "version", "created_at", "updated_at", "finalized_at"],
       rows: [...store.inspections.values()].map((record) => [
         record.id,
         record.vin,
@@ -421,6 +561,8 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
         record.status,
         record.completenessPercentage,
         record.createdBy,
+        record.assignedToUserId,
+        record.version,
         record.createdAt,
         record.updatedAt,
         record.finalizedAt
@@ -428,7 +570,7 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
     },
     {
       table: "vehicle_photos",
-      columns: ["id", "inspection_id", "storage_key", "object_bucket", "object_key", "thumbnail_storage_key", "byte_size", "checksum_sha256", "original_filename", "mime_type", "source_name", "source_url", "source_license", "uploaded_by", "uploaded_at", "upload_status", "declared_angle", "detected_angle", "detected_angle_confidence", "quality_status", "analysis_status"],
+      columns: ["id", "inspection_id", "storage_key", "object_bucket", "object_key", "thumbnail_storage_key", "byte_size", "checksum_sha256", "original_filename", "mime_type", "source_name", "source_url", "source_license", "uploaded_by", "uploaded_at", "upload_status", "declared_angle", "detected_angle", "detected_angle_confidence", "quality_status", "analysis_status", "operation_id", "captured_at", "device_id", "capture_source"],
       rows: [...store.photos.values()].map((record) => [
         record.id,
         record.inspectionId,
@@ -450,7 +592,11 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
         record.detectedAngle,
         record.detectedAngleConfidence,
         record.qualityStatus,
-        record.analysisStatus
+        record.analysisStatus,
+        record.operationId,
+        record.capturedAt,
+        record.deviceId,
+        record.captureSource
       ])
     },
     {
@@ -471,7 +617,7 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
     },
     {
       table: "photo_analysis_results",
-      columns: ["id", "photo_id", "provider", "prompt_version", "raw_model_output_json", "validated_output_json", "confidence", "status", "error_message", "created_at"],
+      columns: ["id", "photo_id", "provider", "prompt_version", "raw_model_output_json", "validated_output_json", "confidence", "status", "error_message", "model_id", "latency_ms", "input_tokens", "output_tokens", "total_tokens", "estimated_cost_usd", "schema_valid", "fallback_used", "failure_category", "created_at"],
       rows: [...store.analyses.values()].map((record) => [
         record.id,
         record.photoId,
@@ -482,12 +628,21 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
         record.confidence,
         record.status,
         record.errorMessage,
+        record.modelId,
+        record.latencyMs,
+        record.inputTokens,
+        record.outputTokens,
+        record.totalTokens,
+        record.estimatedCostUsd,
+        record.schemaValid,
+        record.fallbackUsed,
+        record.failureCategory,
         record.createdAt
       ])
     },
     {
       table: "vision_suggestions",
-      columns: ["id", "inspection_id", "photo_id", "suggestion_type", "suggested_value_json", "confidence", "explanation", "status", "assigned_to_role", "assigned_to_user_id", "due_at", "reviewed_by", "reviewed_at", "resolved_at", "created_at"],
+      columns: ["id", "inspection_id", "photo_id", "suggestion_type", "suggested_value_json", "confidence", "explanation", "status", "assigned_to_role", "assigned_to_user_id", "due_at", "reviewed_by", "reviewed_at", "resolved_at", "created_at", "version"],
       rows: [...store.suggestions.values()].map((record) => [
         record.id,
         record.inspectionId,
@@ -503,7 +658,8 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
         record.reviewedBy,
         record.reviewedAt,
         record.resolvedAt,
-        record.createdAt
+        record.createdAt,
+        record.version
       ])
     },
     {
@@ -583,14 +739,34 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
     },
     {
       table: "final_reports",
-      columns: ["id", "inspection_id", "report_body", "finalized_by", "finalized_at", "version"],
+      columns: ["id", "inspection_id", "report_body", "finalized_by", "finalized_at", "version", "approval_status", "reviewer_comment", "approved_by", "approved_at"],
       rows: [...store.finalReports.values()].map((record) => [
         record.id,
         record.inspectionId,
         record.reportBody,
         record.finalizedBy,
         record.finalizedAt,
-        record.version
+        record.version,
+        record.approvalStatus,
+        record.reviewerComment,
+        record.approvedBy,
+        record.approvedAt
+      ])
+    },
+    {
+      table: "report_versions",
+      columns: ["id", "report_id", "inspection_id", "version", "report_body", "approval_status", "reviewer_comment", "changed_by", "change_type", "created_at"],
+      rows: [...store.reportVersions.values()].map((record) => [
+        record.id,
+        record.reportId,
+        record.inspectionId,
+        record.version,
+        record.reportBody,
+        record.approvalStatus,
+        record.reviewerComment,
+        record.changedBy,
+        record.changeType,
+        record.createdAt
       ])
     },
     {
@@ -603,6 +779,25 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
         record.eventType,
         record.detailsJson,
         record.createdAt
+      ])
+    },
+    {
+      table: "domain_events",
+      columns: ["id", "event_type", "schema_version", "inspection_id", "actor_id", "actor_role", "correlation_id", "payload_json", "status", "delivery_attempts", "last_error", "created_at", "delivered_at"],
+      rows: [...store.domainEvents.values()].map((record) => [
+        record.id,
+        record.eventType,
+        record.schemaVersion,
+        record.inspectionId,
+        record.actorId,
+        record.actorRole,
+        record.correlationId,
+        record.payloadJson,
+        record.status,
+        record.deliveryAttempts,
+        record.lastError,
+        record.createdAt,
+        record.deliveredAt
       ])
     }
   ];
@@ -647,7 +842,11 @@ async function writeChangedPostgresRowsFromStore(store: MemoryStore, client: Poo
     if (!batch) continue;
     const previousRows = before.get(name) ?? new Map<string, string>();
     const changedRows = batch.rows.filter((row) => previousRows.get(String(row[0])) !== tableSignature(row));
-    await upsertRows(client, batch.table, batch.columns, changedRows);
+    if (versionedTables.has(batch.table)) {
+      await writeVersionedChangedRows(client, batch, previousRows, changedRows);
+    } else {
+      await upsertRows(client, batch.table, batch.columns, changedRows);
+    }
   }
 
   rememberSnapshot(store);

@@ -1,10 +1,16 @@
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import AxeBuilder from "@axe-core/playwright";
+import pixelmatch from "pixelmatch";
 import { chromium } from "playwright-core";
+import { PNG } from "pngjs";
 
 const baseUrl = process.env.E2E_BASE_URL ?? "http://localhost:5173";
-const outputDir = process.env.SCREENSHOT_OUTPUT_DIR ?? "docs/images/regression";
+const outputDir = process.env.SCREENSHOT_OUTPUT_DIR ?? "output/screenshots";
+const baselineDir = process.env.SCREENSHOT_BASELINE_DIR ?? "apps/web/tests/visual-baselines";
+const updateBaselines = process.env.UPDATE_SCREENSHOT_BASELINES === "true";
+const maxDiffRatio = Number(process.env.VISUAL_DIFF_MAX_RATIO ?? "0.03");
 const chromePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
   ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const executablePath = existsSync(chromePath) ? chromePath : undefined;
@@ -106,6 +112,8 @@ async function createScreenshotInspection() {
 async function resolveScreenshotInspection() {
   const response = await api("/api/inspections", "reviewer");
   const inspections = response.data ?? [];
+  const documentedFord = inspections.find((inspection) => inspection.vin === "1FMCU9H6XNUB81389");
+  if (documentedFord) return documentedFord.id;
   const reusable = inspections.find((inspection) => (
     inspection.completenessPercentage === 100 &&
     inspection.status !== "DRAFT" &&
@@ -116,16 +124,76 @@ async function resolveScreenshotInspection() {
   return createScreenshotInspection();
 }
 
+async function compareScreenshot(name, outputPath) {
+  const baselinePath = path.join(baselineDir, `${name}.png`);
+  if (updateBaselines) {
+    await mkdir(baselineDir, { recursive: true });
+    await copyFile(outputPath, baselinePath);
+    return { name, diffRatio: 0, updated: true };
+  }
+  if (!existsSync(baselinePath)) {
+    throw new Error(`Missing visual baseline ${baselinePath}. Run UPDATE_SCREENSHOT_BASELINES=true npm run test:screenshots after reviewing the UI.`);
+  }
+  const [actualBytes, baselineBytes] = await Promise.all([readFile(outputPath), readFile(baselinePath)]);
+  const actual = PNG.sync.read(actualBytes);
+  const baseline = PNG.sync.read(baselineBytes);
+  if (actual.width !== baseline.width || actual.height !== baseline.height) {
+    throw new Error(`${name} dimensions changed from ${baseline.width}x${baseline.height} to ${actual.width}x${actual.height}.`);
+  }
+  const diff = new PNG({ width: actual.width, height: actual.height });
+  const changedPixels = pixelmatch(actual.data, baseline.data, diff.data, actual.width, actual.height, {
+    threshold: 0.14,
+    includeAA: false
+  });
+  const diffRatio = changedPixels / (actual.width * actual.height);
+  if (diffRatio > maxDiffRatio) {
+    const diffPath = path.join(outputDir, `${name}.diff.png`);
+    await writeFile(diffPath, PNG.sync.write(diff));
+    throw new Error(`${name} visual drift ${(diffRatio * 100).toFixed(2)}% exceeds ${(maxDiffRatio * 100).toFixed(2)}%. See ${diffPath}.`);
+  }
+  return { name, diffRatio, updated: false };
+}
+
+async function verifyPageQuality(page, name) {
+  const layout = await page.evaluate(() => ({
+    viewportWidth: document.documentElement.clientWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    emptyButtons: [...document.querySelectorAll("button")]
+      .filter((element) => !(element.textContent ?? "").trim() && !element.getAttribute("aria-label") && !element.getAttribute("title"))
+      .length,
+    unlabeledInputs: [...document.querySelectorAll("input, select, textarea")]
+      .filter((element) => !("labels" in element && element.labels?.length) && !element.getAttribute("aria-label") && !element.getAttribute("aria-labelledby"))
+      .length
+  }));
+  if (layout.documentWidth > layout.viewportWidth + 2) {
+    throw new Error(`${name} causes document-level horizontal overflow (${layout.documentWidth}px > ${layout.viewportWidth}px).`);
+  }
+  if (layout.emptyButtons > 0) throw new Error(`${name} contains ${layout.emptyButtons} unnamed buttons.`);
+  if (layout.unlabeledInputs > 0) throw new Error(`${name} contains ${layout.unlabeledInputs} unlabeled form controls.`);
+
+  const accessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  const blocking = accessibility.violations.filter((violation) => violation.impact === "critical" || violation.impact === "serious");
+  if (blocking.length > 0) {
+    throw new Error(`${name} has blocking accessibility violations:\n${blocking.map((violation) => `${violation.id}: ${violation.help} (${violation.nodes.length}) ${violation.nodes.map((node) => node.target.join(" ")).join(", ")}`).join("\n")}`);
+  }
+}
+
 async function capture(page, name, route, role, text, viewport = { width: 1440, height: 1000 }) {
   await page.setViewportSize(viewport);
   await page.goto(baseUrl, { waitUntil: "networkidle" });
   await setLocalRole(page, role);
   await page.goto(`${baseUrl}${route}`, { waitUntil: "networkidle" });
   await waitForText(page, text);
+  await page.addStyleTag({ content: "*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; caret-color: transparent !important; }" });
+  await verifyPageQuality(page, name);
+  const outputPath = path.join(outputDir, `${name}.png`);
   await page.screenshot({
-    path: path.join(outputDir, `${name}.png`),
+    path: outputPath,
     fullPage: true
   });
+  return compareScreenshot(name, outputPath);
 }
 
 await mkdir(outputDir, { recursive: true });
@@ -148,14 +216,16 @@ page.on("pageerror", (error) => consoleIssues.push(error.message));
 try {
   const inspectionId = await resolveScreenshotInspection();
 
-  await capture(page, "dashboard", "/", "inspector", "Capture queue");
-  await capture(page, "inspection-workbench", `/inspections/${inspectionId}`, "reviewer", "Workflow status");
-  await capture(page, "suggestions-queue", "/suggestions", "reviewer", "Suggestions");
-  await capture(page, "damage-page", "/damage", "reviewer", "Damage");
-  await capture(page, "reports-page", "/reports", "reviewer", "Report");
-  await capture(page, "audit-page", "/audit", "admin", "Audit");
-  await capture(page, "platform-health", "/platform-health", "admin", "Production proof");
-  await capture(page, "mobile-capture", `/inspections/${inspectionId}`, "inspector", "Required photo checklist", { width: 390, height: 844 });
+  const results = [];
+  results.push(await capture(page, "dashboard", "/", "inspector", "Capture queue"));
+  results.push(await capture(page, "inspection-workbench", `/inspections/${inspectionId}`, "reviewer", "Workflow status"));
+  results.push(await capture(page, "suggestions-queue", "/suggestions", "reviewer", "Suggestions"));
+  results.push(await capture(page, "damage-page", "/damage", "reviewer", "Damage"));
+  results.push(await capture(page, "reports-page", "/reports", "reviewer", "Report"));
+  results.push(await capture(page, "audit-page", "/audit", "admin", "Audit"));
+  results.push(await capture(page, "platform-health", "/platform-health", "admin", "Production proof"));
+  results.push(await capture(page, "tablet-workbench", `/inspections/${inspectionId}`, "reviewer", "Workflow status", { width: 1024, height: 768 }));
+  results.push(await capture(page, "mobile-capture", `/inspections/${inspectionId}`, "inspector", "Required photo checklist", { width: 390, height: 844 }));
 
   const relevantIssues = consoleIssues.filter((issue) => !issue.includes("Download the React DevTools"));
   if (relevantIssues.length > 0) {
@@ -165,16 +235,10 @@ try {
   console.log(JSON.stringify({
     ok: true,
     outputDir,
-    screenshots: [
-      "dashboard.png",
-      "inspection-workbench.png",
-      "suggestions-queue.png",
-      "damage-page.png",
-      "reports-page.png",
-      "audit-page.png",
-      "platform-health.png",
-      "mobile-capture.png"
-    ]
+    baselineDir,
+    updatedBaselines: updateBaselines,
+    maxDiffRatio,
+    screenshots: results
   }, null, 2));
 } finally {
   await context.close();

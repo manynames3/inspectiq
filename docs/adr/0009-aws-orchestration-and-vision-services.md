@@ -1,13 +1,12 @@
 # ADR 0009: AWS Orchestration And Vision Service Boundaries
 
-Decision: Use SQS + Lambda workers for image-analysis dispatch, Bedrock for multimodal inspection reasoning, and Postgres/audit rows as the workflow source of truth.
+Decision: Use SQS + Lambda for image-analysis work, EventBridge for versioned post-commit domain events, Bedrock for multimodal inspection reasoning, Neon Postgres for authoritative workflow/audit/outbox state, and DynamoDB for idempotent operational projections.
 
-Why: The current workflow needs durable fan-out, retry, DLQ handling, schema validation, and human review. SQS gives the needed delivery semantics with less operational surface than Step Functions for a single image-analysis worker path. Bedrock fits the advisory vision contract better than Rekognition because the output includes angle, image quality, OCR, damage reasoning, confidence, estimate rationale, and human-review routing in one schema.
+Why: Work queues and business events solve different problems. SQS provides durable competing-consumer delivery, retry, and DLQ handling for image jobs. EventBridge publishes minimal versioned facts after the relational transaction commits, allowing an independently retryable Python projector and future consumers without coupling them to the API transaction. Conditional DynamoDB writes suppress duplicate delivery and TTL limits operational history. Bedrock fits the advisory contract better than Rekognition because one validated response covers angle, quality, OCR, visible damage, confidence, estimates, and reviewer routing.
 
 Not used yet:
 
 - Step Functions: useful when report/image workflows need explicit waits, branching, compensation, or multi-provider fallback orchestration. Current image analysis is a queue worker path, and report generation is async-shaped but still simple.
-- EventBridge: useful for publishing domain events such as `inspection.finalized`, `image.retake_required`, or `arbitration.risk_flagged` to downstream systems. Current repo has one internal API/worker bounded context, so SQS is enough.
 - Rekognition: useful for narrow OCR, label, moderation, or quality fallback checks. It is not a full replacement for the advisory damage and disclosure contract.
 
-Consequence: The implemented architecture is smaller and easier to explain, test, and operate. The tradeoff is that broader enterprise integration, orchestration visualization, and multi-provider recovery remain planned extensions rather than active runtime behavior.
+Consequence: Neon remains the only business source of truth; DynamoDB can be rebuilt from the outbox and never decides grades/reports. EventBridge adds a small serverless control-plane surface but makes duplicate handling, replay, failure visibility, and consumer ownership explicit. Step Functions remains unjustified until the workflow needs durable waits, branches, compensation, or multi-provider orchestration.

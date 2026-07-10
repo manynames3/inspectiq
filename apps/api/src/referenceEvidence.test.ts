@@ -116,4 +116,167 @@ describe("reference evidence reconciliation", () => {
     expect(frontPhoto!.detectedAngleConfidence).toBe(0.78);
     expect(frontPhoto!.qualityStatus).toBe("warning");
   });
+
+  it("does not confirm an unsupported scratch on the Ford Escape reference evidence", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const ford = [...store.inspections.values()].find((inspection) => inspection.vin === "1FMCU9H6XNUB81389");
+    expect(ford).toBeTruthy();
+
+    expect(store.listDamage(ford!.id)).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        location: "Driver-side front door",
+        damageType: "scratch"
+      })
+    ]));
+    expect(store.latestFinalReport(ford!.id)?.reportBody).not.toContain("scratch");
+  });
+
+  it("does not create confirmed damage or OCR findings from reference metadata", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+
+    expect([...store.damageItems.values()]).toEqual([]);
+    expect([...store.suggestions.values()].filter((suggestion) => suggestion.suggestionType === "extracted_text")).toEqual([]);
+    expect([...store.photos.values()].every((photo) => photo.captureSource === "reference")).toBe(true);
+    expect([...store.analyses.values()].every((analysis) => analysis.provider === "referenceManifestProvider")).toBe(true);
+    expect([...store.auditEvents.values()].some((event) => event.eventType === "photo.analyzed")).toBe(false);
+    expect([...store.auditEvents.values()].some((event) => event.eventType === "reference_evidence.mapped")).toBe(true);
+  });
+
+  it("repairs the exact unsupported Ford scratch in an already-persisted reference record", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const ford = [...store.inspections.values()].find((inspection) => inspection.vin === "1FMCU9H6XNUB81389")!;
+    const driverPhoto = [...store.photos.values()].find((photo) =>
+      photo.inspectionId === ford.id && photo.declaredAngle === "driver_side"
+    )!;
+    const report = store.latestFinalReport(ford.id)!;
+    const timestamp = new Date().toISOString();
+
+    store.damageItems.set("legacy-unsupported-ford-scratch", {
+      id: "legacy-unsupported-ford-scratch",
+      inspectionId: ford.id,
+      photoId: driverPhoto.id,
+      location: "Driver-side front door",
+      damageType: "scratch",
+      severity: "minor",
+      notes: "Reviewer confirmed a light scratch on the driver-side front door from uploaded side evidence.",
+      source: "vision_suggestion",
+      confirmedBy: "review-lead",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    report.reportBody = "Notable defects:\n- minor scratch at Driver-side front door";
+
+    expect(reconcileReferenceEvidence(store)).toBe(true);
+    expect(store.listDamage(ford.id)).toEqual([]);
+    expect(report.reportBody).not.toContain("scratch");
+    expect(store.auditForInspection(ford.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "reference_evidence.corrected",
+        detailsJson: expect.objectContaining({ correction: "unsupported_damage_removed" })
+      })
+    ]));
+  });
+
+  it("removes unsupported Nissan and Honda claims without deleting the source photos", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const reviewer = { id: "review-lead", name: "Review Lead", role: "reviewer" as const };
+    const nissan = [...store.inspections.values()].find((inspection) => inspection.vin === "KNMAT2MV6KP514068")!;
+    const nissanRear = store.listPhotos(nissan.id).find((photo) => photo.originalFilename === "2019-nissan-rogue-rear.jpg")!;
+    const honda = [...store.inspections.values()].find((inspection) => inspection.vin === "1HGCV1F49LA129627")!;
+    const hondaRear = store.listPhotos(honda.id).find((photo) => photo.originalFilename === "2020-honda-accord-rear.jpg")!;
+    const timestamp = new Date().toISOString();
+
+    store.damageItems.set("legacy-nissan-dent", {
+      id: "legacy-nissan-dent",
+      inspectionId: nissan.id,
+      photoId: nissanRear.id,
+      location: "Rear bumper",
+      damageType: "dent",
+      severity: "moderate",
+      notes: "Reviewer confirmed rear bumper deformation visible in the rear evidence image.",
+      source: "vision_suggestion",
+      confirmedBy: reviewer.id,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    const hondaSuggestion = store.createSuggestion({
+      inspectionId: honda.id,
+      photoId: hondaRear.id,
+      suggestionType: "damage_candidate",
+      suggestedValueJson: {
+        location: "rear bumper",
+        damageType: "dent",
+        severityEstimate: "moderate",
+        confidence: 0.87,
+        explanation: "Source listing photo appears to show rear bumper deformation; reviewer confirmation required.",
+        repairEstimateUsd: { min: 500, max: 1200, rationale: "Legacy reference fixture." },
+        requiresHumanConfirmation: true
+      },
+      confidence: 0.87,
+      explanation: "Source listing photo appears to show rear bumper deformation; reviewer confirmation required."
+    });
+    store.acceptSuggestion(hondaSuggestion.id, reviewer);
+
+    expect(reconcileReferenceEvidence(store)).toBe(true);
+    expect(store.listDamage(nissan.id)).toEqual([]);
+    expect(store.listDamage(honda.id)).toEqual([]);
+    expect(store.listSuggestions(honda.id).some((suggestion) => suggestion.id === hondaSuggestion.id)).toBe(false);
+    expect(store.getPhoto(nissanRear.id).storageKey).toBeTruthy();
+    expect(store.getPhoto(hondaRear.id).storageKey).toBeTruthy();
+  });
+
+  it("removes metadata-derived OCR claims but preserves a later model analysis", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const reviewer = { id: "review-lead", name: "Review Lead", role: "reviewer" as const };
+    const toyota = [...store.inspections.values()].find((inspection) => inspection.vin === "4T1G11AK0MU520503")!;
+    const odometer = store.listPhotos(toyota.id).find((photo) => photo.declaredAngle === "odometer")!;
+    const metadataSuggestion = store.createSuggestion({
+      inspectionId: toyota.id,
+      photoId: odometer.id,
+      suggestionType: "extracted_text",
+      suggestedValueJson: { odometer: String(toyota.mileage) },
+      confidence: 0.98,
+      explanation: "Possible odometer or VIN text detected. Reviewer confirmation required before approval."
+    });
+    store.acceptSuggestion(metadataSuggestion.id, reviewer);
+
+    expect(reconcileReferenceEvidence(store)).toBe(true);
+    expect(store.listSuggestions(toyota.id).some((suggestion) => suggestion.id === metadataSuggestion.id)).toBe(false);
+    expect(store.listIdentityVerifications(toyota.id)).toEqual([]);
+
+    const modelResult = store.saveAnalysis(odometer, {
+      provider: "bedrockVisionProvider",
+      promptVersion: "photo-analysis-v2",
+      raw: { source: "bedrock" },
+      validated: {
+        photoAngle: "odometer",
+        confidence: 0.91,
+        imageQuality: {
+          grade: "pass",
+          blurScore: 0.9,
+          exposureScore: 0.9,
+          framingScore: 0.9,
+          resolutionScore: 0.9,
+          occlusionRisk: 0.05,
+          retakeRequired: false,
+          notes: []
+        },
+        qualityWarnings: [],
+        detectedDamageCandidates: [],
+        extractedText: { odometer: String(toyota.mileage) },
+        humanReviewRequired: true
+      },
+      force: true
+    }, reviewer);
+
+    reconcileReferenceEvidence(store);
+    expect(store.analyses.get(modelResult.id)?.provider).toBe("bedrockVisionProvider");
+    expect(store.getPhoto(odometer.id).detectedAngleConfidence).toBe(0.91);
+    expect(store.listSuggestions(toyota.id).some((suggestion) => suggestion.suggestionType === "extracted_text")).toBe(true);
+  });
 });

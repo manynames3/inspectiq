@@ -14,8 +14,27 @@ export type VisionProvider = {
     objectKey?: string | null;
     mimeType?: string | null;
     declaredAngle?: VisionOutput["photoAngle"] | null;
-  }): Promise<{ raw: unknown; validated: VisionOutput }>;
+  }): Promise<{ raw: unknown; validated: VisionOutput; metadata: VisionAnalysisMetadata }>;
 };
+
+export type VisionAnalysisMetadata = {
+  modelId: string;
+  latencyMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  schemaValid: boolean;
+  fallbackUsed: boolean;
+  failureCategory: string | null;
+};
+
+function estimatedBedrockCost(inputTokens: number, outputTokens: number): number {
+  const inputRate = Number(process.env.BEDROCK_INPUT_USD_PER_MILLION_TOKENS ?? "3");
+  const outputRate = Number(process.env.BEDROCK_OUTPUT_USD_PER_MILLION_TOKENS ?? "15");
+  const cost = inputTokens / 1_000_000 * inputRate + outputTokens / 1_000_000 * outputRate;
+  return Math.round(cost * 1_000_000) / 1_000_000;
+}
 
 function imageQuality(overrides: Partial<VisionOutput["imageQuality"]> = {}): VisionOutput["imageQuality"] {
   return {
@@ -166,12 +185,27 @@ export const localVisionProvider: VisionProvider = {
   name: "localVisionProvider",
   promptVersion: "photo-analysis-v2",
   async analyze(input) {
+    const startedAt = Date.now();
     const key = `${input.filename} ${input.storageKey}`.toLowerCase();
     let raw: VisionOutput;
 
-    if (key.includes("rear-severe-damage") || key.includes("honda-accord-rear")) {
+    if (key.includes("eval-retake-")) {
       raw = {
-        ...cleanOutput("rear", key.includes("honda-accord-rear") ? 0.94 : 0.96, imageQuality({
+        ...cleanOutput(input.declaredAngle ?? "unknown", 0.61, imageQuality({
+          grade: "retake",
+          blurScore: key.includes("blur") ? 0.32 : 0.68,
+          exposureScore: key.includes("low-light") ? 0.28 : 0.72,
+          framingScore: key.includes("occluded") ? 0.46 : 0.74,
+          occlusionRisk: key.includes("occluded") ? 0.62 : 0.12,
+          retakeRequired: true,
+          notes: ["The transformed challenge image does not meet buyer-visible capture quality."]
+        })),
+        qualityWarnings: ["Capture quality is below the release threshold; request a retake."],
+        humanReviewRequired: true
+      };
+    } else if (key.includes("rear-severe-damage")) {
+      raw = {
+        ...cleanOutput("rear", 0.96, imageQuality({
           grade: "review",
           framingScore: 0.89,
           notes: ["Rear angle is usable, but confirmed damage requires reviewer close inspection."]
@@ -179,11 +213,9 @@ export const localVisionProvider: VisionProvider = {
         detectedDamageCandidates: [damageCandidate({
           location: "rear bumper",
           damageType: "dent",
-          severityEstimate: key.includes("honda-accord-rear") ? "moderate" : "severe",
-          confidence: key.includes("honda-accord-rear") ? 0.87 : 0.9,
-          explanation: key.includes("honda-accord-rear")
-            ? "Source listing photo appears to show rear bumper deformation; reviewer confirmation required."
-            : "Inspection photo indicates a rear bumper deformation."
+          severityEstimate: "severe",
+          confidence: 0.9,
+          explanation: "Inspection photo indicates a rear bumper deformation."
         })],
         humanReviewRequired: true
       };
@@ -343,7 +375,18 @@ export const localVisionProvider: VisionProvider = {
 
     return {
       raw,
-      validated: normalizeVisionOutput(VisionOutputSchema.parse(raw), input.declaredAngle)
+      validated: normalizeVisionOutput(VisionOutputSchema.parse(raw), input.declaredAngle),
+      metadata: {
+        modelId: "deterministic-local-v2",
+        latencyMs: Date.now() - startedAt,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
+        schemaValid: true,
+        fallbackUsed: false,
+        failureCategory: null
+      }
     };
   }
 };
@@ -352,8 +395,10 @@ export const bedrockVisionProvider: VisionProvider = {
   name: "bedrockVisionProvider",
   promptVersion: "photo-analysis-v2",
   async analyze(input) {
+    const startedAt = Date.now();
     const image = await loadImageInput(input);
     const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1" });
+    const modelId = process.env.BEDROCK_MODEL_ID ?? "us.anthropic.claude-sonnet-4-6";
     const prompt = [
       "You are an automotive inspection image-analysis service.",
       `Filename: ${input.filename}.`,
@@ -368,7 +413,7 @@ export const bedrockVisionProvider: VisionProvider = {
       "Each note, warning, location, and rationale must be concise; keep each string under 120 characters."
     ].join("\n");
     const response = await client.send(new ConverseCommand({
-      modelId: process.env.BEDROCK_MODEL_ID ?? "us.anthropic.claude-sonnet-4-6",
+      modelId,
       messages: [{
         role: "user",
         content: [
@@ -390,6 +435,20 @@ export const bedrockVisionProvider: VisionProvider = {
       ?.map((block) => "text" in block && typeof block.text === "string" ? block.text : "")
       .join("\n")
       .trim() ?? "";
+    const inputTokens = response.usage?.inputTokens ?? 0;
+    const outputTokens = response.usage?.outputTokens ?? 0;
+    const totalTokens = response.usage?.totalTokens ?? inputTokens + outputTokens;
+    const metadata: VisionAnalysisMetadata = {
+      modelId,
+      latencyMs: response.metrics?.latencyMs ?? Date.now() - startedAt,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      estimatedCostUsd: estimatedBedrockCost(inputTokens, outputTokens),
+      schemaValid: true,
+      fallbackUsed: false,
+      failureCategory: null
+    };
     try {
       const parsed = parseJsonObject(rawText);
       const prepared = prepareBedrockOutput(parsed);
@@ -397,7 +456,8 @@ export const bedrockVisionProvider: VisionProvider = {
       const validated = normalizeVisionOutput(parsedOutput, input.declaredAngle);
       return {
         raw: { response, text: rawText, parsed, prepared },
-        validated
+        validated,
+        metadata
       };
     } catch (error) {
       if (process.env.BEDROCK_VISION_FALLBACK === "fail") {
@@ -411,7 +471,13 @@ export const bedrockVisionProvider: VisionProvider = {
           fallbackReason: error instanceof Error ? error.message : "Bedrock response failed schema validation.",
           fallback: fallback.raw
         },
-        validated: fallback.validated
+        validated: fallback.validated,
+        metadata: {
+          ...metadata,
+          schemaValid: false,
+          fallbackUsed: true,
+          failureCategory: "schema_validation"
+        }
       };
     }
   }

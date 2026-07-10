@@ -5,6 +5,9 @@ import { createPostgresPool } from "./postgresPool.js";
 import { resolveDatabaseUrl } from "./runtimeConfig.js";
 import { store } from "./store.js";
 import type { Actor } from "./domain.js";
+import { flushPendingDomainEvents } from "./awsEvents.js";
+import { savePostgresRows } from "./postgresPersistence.js";
+import { runWithRequestContext } from "./requestContext.js";
 
 type SqsRecord = {
   messageId?: string;
@@ -35,22 +38,29 @@ export async function handler(event: SqsEvent): Promise<{ batchItemFailures: Arr
         jobId?: string;
         jobIds?: string[];
         actor?: Actor;
+        correlationId?: string;
       };
       const jobIds = message.jobIds?.length ? message.jobIds : message.jobId ? [message.jobId] : [];
       if (jobIds.length === 0) throw new Error("Image analysis message did not include jobId or jobIds.");
-      await mutatePostgresRows(store, activePool, async () => {
-        await Promise.all(jobIds.map((jobId) =>
-          runImageAnalysisJob(store, jobId, message.actor ?? {
-            id: "image-worker",
-            name: "Image Analysis Worker",
-            role: "admin"
-          })
-        ));
+      const correlationId = message.correlationId ?? record.messageId ?? crypto.randomUUID();
+      await runWithRequestContext(correlationId, async () => {
+        await mutatePostgresRows(store, activePool, async () => {
+          await Promise.all(jobIds.map((jobId) =>
+            runImageAnalysisJob(store, jobId, message.actor ?? {
+              id: "image-worker",
+              name: "Image Analysis Worker",
+              role: "admin"
+            })
+          ));
+        });
+        await flushPendingDomainEvents(store);
+        await savePostgresRows(store, activePool);
       });
     } catch (error) {
       console.error(JSON.stringify({
         level: "error",
         event: "inspectiq.image_worker.failed",
+        correlationId: record.messageId ?? null,
         message: error instanceof Error ? error.message : "Unknown image worker failure."
       }));
       batchItemFailures.push({ itemIdentifier: record.messageId ?? String(index) });

@@ -114,6 +114,9 @@ try {
   await page.getByRole("button", { name: /draft report/i }).click();
   await waitForBodyText(page, "Draft summary");
   await pause(page);
+  await page.getByRole("button", { name: /approve report/i }).click();
+  await waitForBodyText(page, "Approved");
+  await pause(page);
   await page.getByRole("button", { name: /^finalize$/i }).click();
   await waitForBodyText(page, "Finalized");
   await waitForBodyText(page, "report.finalized");

@@ -1,47 +1,40 @@
 # Vision Evaluation
 
-InspectIQ treats image analysis as a contract that must be measurable before model or prompt changes are promoted.
+`apps/api/scripts/vision-eval.ts` expands the rights-cleared sources in `evals/vision-eval-set.json`, sends each pixel-distinct image through the selected provider, validates `VisionOutputSchema`, scores outcomes, and fails when a promotion gate is missed.
 
-## Command
+## Commands
+
+Deterministic contract gate used by ordinary CI:
 
 ```bash
 npm run eval:vision
-AWS_REGION=us-east-1 VISION_PROVIDER=bedrock BEDROCK_VISION_FALLBACK=fail npm run eval:vision
 ```
 
-The default command uses the deterministic local provider so CI can run without model credentials. Setting `VISION_PROVIDER=bedrock` runs the same cases against the Bedrock multimodal adapter.
+Real Bedrock promotion gate, run manually to control spend:
 
-## Dataset
+```bash
+AWS_REGION=us-east-1 \
+VISION_PROVIDER=bedrock \
+BEDROCK_VISION_FALLBACK=fail \
+VISION_EVAL_OUTPUT=output/model-evaluation/bedrock-report.json \
+npm run eval:vision
+```
 
-`evals/vision-eval-set.json` covers:
+Set `VISION_EVAL_CORPUS_DIR` to retain the rendered JPEG corpus. Set `VISION_EVAL_ALLOW_FAIL=true` only for diagnosis; promotion workflows must fail closed.
 
-- required-angle classification for front, rear, side, interior, engine bay, odometer, and VIN plate photos;
-- damage-positive cases for rear bumper dent and driver-side scratch;
-- damage-negative cases to catch false positives on clean angles;
-- OCR checks for generated odometer and VIN fixtures that contain the expected text;
-- retake policy for blurry capture, glare, low-light interiors, bad side angles, partial VIN plates, and dirty odometer views;
-- auction-lane/front-angle cases that should not create false damage findings.
+## Corpus Design
 
-## Metrics
+The suite has 12 independent source images and nine transforms per source: baseline, JPEG compression, resize, mild darkness, mild brightness, small rotation, heavy blur, low light, and center occlusion. It therefore executes 108 image inputs while reporting both counts so transformations are not misrepresented as independent field data.
 
-- `angleAccuracy`: correct required-angle classification.
-- `ocrAccuracy`: exact-match VIN/odometer extraction across OCR cases.
-- `damageRecall`: expected material damage findings detected.
-- `damageTypeAccuracy`: damage type and severity match for typed damage cases.
-- `damageFalsePositiveRate`: clean cases incorrectly producing damage candidates.
-- `retakePrecision`: predicted retakes that truly need retake.
-- `retakeRecall`: expected retakes caught by the provider.
+Coverage includes all required checklist angles, clean false-positive controls, visible dents/scratches, readable VIN/odometer evidence, partial VIN, dirty odometer, dark interior, blur, framing/occlusion, and auction-lane clutter.
 
-## Promotion Standard
+## Promotion Gates
 
-The repo thresholds are intentionally simple and visible:
+- 100% schema validity.
+- At least 90% macro angle accuracy and 85% for every angle.
+- At least 95% normalized VIN/odometer accuracy on readable evidence.
+- At least 90% damage precision, 80% damage recall, and 85% type/severity accuracy.
+- At least 90% retake precision and recall.
+- Zero hidden fallback calls in the Bedrock promotion run.
 
-- angle accuracy: `>= 0.90`
-- OCR accuracy: `>= 0.90`
-- damage recall: `>= 0.90`
-- damage type accuracy: `>= 0.85`
-- damage false-positive rate: `<= 0.10`
-- retake precision: `>= 0.80`
-- retake recall: `>= 0.80`
-
-For a production launch, this set should be expanded with labeled auction/offsite images by vehicle class, lighting, capture device, damage type, severity, and seller disclosure scenario. The important engineering shape is already present: every provider must pass the same schema and the same evaluation command before its output can create reviewer-facing suggestions.
+The report also records p95 latency, token counts, estimated cost, provider/model/prompt version, failure category, and every case result. Model output remains advisory even after promotion; reviewer acceptance is the boundary where a suggestion can become an operational fact.

@@ -10,7 +10,7 @@
   --surface-2: #f1f5f9;
   --border: #d6dde7;
   --text: #18212f;
-  --muted: #64748b;
+  --muted: #5b6b80;
   --teal: #0f766e;
   --blue: #2563eb;
   --amber: #b45309;
@@ -71,9 +71,13 @@ button {
   line-height: 1;
 }
 
-.topbar span,
 .page-heading p,
 td small {
+  color: var(--muted);
+}
+
+.role-select > span,
+.session-summary small {
   color: var(--muted);
 }
 
@@ -255,7 +259,7 @@ td small {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #059669;
+  background: #0f766e;
   color: #ffffff;
   font-weight: 800;
 }
@@ -328,6 +332,178 @@ td small {
   font: inherit;
   font-weight: 800;
   cursor: pointer;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.queue-bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid #b8d2f7;
+  border-left: 3px solid #1162c8;
+  background: #f5f9ff;
+}
+
+.queue-bulk-actions strong {
+  margin-right: auto;
+  font-size: 13px;
+}
+
+.review-table th:first-child,
+.review-table td:first-child {
+  width: 42px;
+  text-align: center;
+}
+
+.review-table input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #1162c8;
+}
+
+.report-review-state {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.35fr) minmax(240px, 1fr);
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  background: #f7f9fc;
+}
+
+.report-review-state > div,
+.report-review-state label {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+
+.report-review-state label > span,
+.report-review-state > div > strong {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.report-review-state textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.report-version-history {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.report-version-list {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 3px;
+}
+
+.report-version-list button {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 2px 6px;
+  min-width: 150px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  text-align: left;
+}
+
+.report-version-list button.active {
+  border-color: #1162c8;
+  background: #eef5ff;
+}
+
+.report-version-list button span,
+.report-version-list button time {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.report-version-list button time {
+  grid-column: 1 / -1;
+}
+
+.report-version-comparison {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border-left: 3px solid #1162c8;
+  background: #f5f9ff;
+}
+
+.report-version-comparison pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .queue-bulk-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .queue-bulk-actions strong {
+    margin-right: 0;
+  }
+
+  .report-review-state {
+    grid-template-columns: 1fr;
+  }
+}
+
+.event-operations-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.event-operation-actions,
+.cost-guard-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cost-guard-row > span {
+  display: grid;
+  min-width: 180px;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.cost-guard-row small {
+  color: var(--muted);
 }
 
 .auth-gate {
@@ -1361,7 +1537,7 @@ td small {
 .status-ai-draft-pending,
 .review-flag {
   background: #fff0d6;
-  color: #b25f00;
+  color: #884400;
 }
 
 .status-needs-photos,
@@ -3931,6 +4107,16 @@ pre {
 }
 
 @media (max-width: 1500px) {
+  .detail-titlebar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .detail-titlebar .heading-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
   .field-capture-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

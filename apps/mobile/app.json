@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "InspectIQ Mobile",
+    "slug": "inspectiq-mobile",
+    "scheme": "inspectiq",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.aidenrhaa.inspectiq",
+      "infoPlist": {
+        "NSCameraUsageDescription": "InspectIQ uses the camera to capture required vehicle inspection evidence."
+      }
+    },
+    "android": {
+      "package": "com.aidenrhaa.inspectiq",
+      "permissions": ["CAMERA"],
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-dev-client",
+      "expo-secure-store",
+      "expo-sqlite",
+      "expo-web-browser",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow InspectIQ to capture vehicle inspection evidence."
+        }
+      ]
+    ]
+  }
+}

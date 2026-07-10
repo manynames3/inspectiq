@@ -108,6 +108,7 @@ try {
   await page.goto(inspectionUrl, { waitUntil: "networkidle" });
   await page.locator(".role-select select").selectOption("reviewer");
   await page.waitForFunction(() => document.querySelector(".role-select select")?.value === "reviewer");
+  await page.getByRole("button", { name: /assign findings to me/i }).click();
   await page.locator(".suggestion-card .accept-button:not([disabled])").first().waitFor({ timeout: 120_000 });
   await acceptVisibleSuggestions(page);
   await waitForBodyText(page, "Grade ready");
@@ -117,6 +118,8 @@ try {
   await waitForBodyText(page, "Ready for report");
   await page.getByRole("button", { name: /draft report/i }).click();
   await waitForBodyText(page, "Draft summary");
+  await page.getByRole("button", { name: /^approve$/i }).click();
+  await waitForBodyText(page, "Approved");
   await page.getByRole("button", { name: /^finalize$/i }).click();
   await waitForBodyText(page, "Finalized");
   await waitForBodyText(page, "Buyer-visible");
@@ -142,7 +145,7 @@ try {
 
   console.log(JSON.stringify({
     ok: true,
-    flow: "create_attach_analyze_review_grade_draft_finalize",
+    flow: "create_attach_analyze_review_grade_draft_approve_finalize",
     url: page.url()
   }));
 } finally {

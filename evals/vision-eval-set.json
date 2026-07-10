@@ -1,194 +1,40 @@
 {
-  "name": "inspectiq-vision-contract-v1",
+  "name": "inspectiq-rights-cleared-vision-challenge-v2",
+  "minimumCaseCount": 100,
   "thresholds": {
-    "angleAccuracy": 0.9,
-    "ocrAccuracy": 0.9,
-    "damageRecall": 0.9,
+    "schemaValidity": 1,
+    "macroAngleAccuracy": 0.9,
+    "minimumPerAngleAccuracy": 0.85,
+    "ocrAccuracy": 0.95,
+    "damagePrecision": 0.9,
+    "damageRecall": 0.8,
     "damageTypeAccuracy": 0.85,
-    "damageFalsePositiveRate": 0.1,
-    "retakePrecision": 0.8,
-    "retakeRecall": 0.8
+    "retakePrecision": 0.9,
+    "retakeRecall": 0.9
   },
-  "cases": [
-    {
-      "id": "front_clean_required_angle",
-      "sampleKey": "front-clean",
-      "expectedAngle": "front",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "front_clean_vdp_ready_no_false_damage",
-      "sampleKey": "front-clean",
-      "expectedAngle": "front",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "rear_bumper_damage",
-      "sampleKey": "rear-severe-damage",
-      "expectedAngle": "rear",
-      "expectedDamagePresent": true,
-      "expectedDamageType": "dent",
-      "expectedDamageSeverity": "severe",
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "rear_damage_arbitration_risk",
-      "sampleKey": "rear-severe-damage",
-      "expectedAngle": "rear",
-      "expectedDamagePresent": true,
-      "expectedDamageType": "dent",
-      "expectedDamageSeverity": "severe",
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "driver_side_scratch",
-      "sampleKey": "driver-side-scratch",
-      "expectedAngle": "driver_side",
-      "expectedDamagePresent": true,
-      "expectedDamageType": "scratch",
-      "expectedDamageSeverity": "minor",
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "driver_side_scratch_recon_estimate",
-      "sampleKey": "driver-side-scratch",
-      "expectedAngle": "driver_side",
-      "expectedDamagePresent": true,
-      "expectedDamageType": "scratch",
-      "expectedDamageSeverity": "minor",
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "passenger_side_clean",
-      "sampleKey": "passenger-side-clean",
-      "expectedAngle": "passenger_side",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "passenger_side_vdp_ready_no_false_damage",
-      "sampleKey": "passenger-side-clean",
-      "expectedAngle": "passenger_side",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "interior_overview_review",
-      "sampleKey": "interior-overview",
-      "expectedAngle": "interior",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "interior_overview_no_false_damage",
-      "sampleKey": "interior-overview",
-      "expectedAngle": "interior",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "engine_bay_clean",
-      "sampleKey": "engine-bay-clean",
-      "expectedAngle": "engine_bay",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "engine_bay_no_mechanical_false_positive",
-      "sampleKey": "engine-bay-clean",
-      "expectedAngle": "engine_bay",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "odometer_ocr",
-      "sampleKey": "odometer-closeup-64231",
-      "expectedAngle": "odometer",
-      "expectedOdometer": "64231",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "odometer_lender_repo_ocr",
-      "sampleKey": "odometer-closeup-64231",
-      "expectedAngle": "odometer",
-      "expectedOdometer": "64231",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "vin_ocr",
-      "sampleKey": "vin-plate-4t1g11ak8mu123456",
-      "expectedAngle": "vin_plate",
-      "expectedVin": "4T1G11AK8MU123456",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "vin_seller_disclosure_ocr",
-      "sampleKey": "vin-plate-4t1g11ak8mu123456",
-      "expectedAngle": "vin_plate",
-      "expectedVin": "4T1G11AK8MU123456",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    },
-    {
-      "id": "blurry_front_retake",
-      "sampleKey": "blurry-front",
-      "expectedAngle": "front",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": true
-    },
-    {
-      "id": "offsite_mobile_front_retake",
-      "sampleKey": "blurry-front",
-      "expectedAngle": "front",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": true
-    },
-    {
-      "id": "glare_front_retake_guidance",
-      "sampleKey": "glare-front",
-      "expectedAngle": "front",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": true
-    },
-    {
-      "id": "bad_side_angle_retake_guidance",
-      "sampleKey": "bad-angle-side",
-      "expectedAngle": "driver_side",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": true
-    },
-    {
-      "id": "dark_interior_retake_guidance",
-      "sampleKey": "dark-interior",
-      "expectedAngle": "interior",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": true
-    },
-    {
-      "id": "partial_vin_plate_retake",
-      "sampleKey": "partial-vin-plate",
-      "expectedAngle": "vin_plate",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": true
-    },
-    {
-      "id": "dirty_odometer_retake",
-      "sampleKey": "dirty-odometer",
-      "expectedAngle": "odometer",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": true
-    },
-    {
-      "id": "auction_lane_front_no_false_damage",
-      "sampleKey": "auction-lane-front",
-      "expectedAngle": "front",
-      "expectedDamagePresent": false,
-      "expectedRetakeRequired": false
-    }
+  "sources": [
+    { "id": "clean_front", "sampleKey": "front-clean", "rightsStatus": "rights-cleared", "expectedAngle": "front", "expectedDamagePresent": false },
+    { "id": "rear_bumper_dent", "sampleKey": "rear-severe-damage", "rightsStatus": "rights-cleared", "expectedAngle": "rear", "expectedDamagePresent": true, "expectedDamageType": "dent", "expectedDamageSeverity": "severe" },
+    { "id": "driver_door_scratch", "sampleKey": "driver-side-scratch", "rightsStatus": "rights-cleared", "expectedAngle": "driver_side", "expectedDamagePresent": true, "expectedDamageType": "scratch", "expectedDamageSeverity": "minor" },
+    { "id": "clean_passenger_side", "sampleKey": "passenger-side-clean", "rightsStatus": "rights-cleared", "expectedAngle": "passenger_side", "expectedDamagePresent": false },
+    { "id": "interior_overview", "sampleKey": "interior-overview", "rightsStatus": "rights-cleared", "expectedAngle": "interior", "expectedDamagePresent": false },
+    { "id": "interior_wear_control", "sampleKey": "interior-wear", "rightsStatus": "rights-cleared", "expectedAngle": "interior", "expectedDamagePresent": false },
+    { "id": "clean_engine_bay", "sampleKey": "engine-bay-clean", "rightsStatus": "rights-cleared", "expectedAngle": "engine_bay", "expectedDamagePresent": false },
+    { "id": "readable_odometer", "sampleKey": "odometer-closeup-64231", "rightsStatus": "rights-cleared", "expectedAngle": "odometer", "expectedOdometer": "64231", "expectedDamagePresent": false },
+    { "id": "readable_vin", "sampleKey": "vin-plate-4t1g11ak8mu123456", "rightsStatus": "rights-cleared", "expectedAngle": "vin_plate", "expectedVin": "4T1G11AK8MU123456", "expectedDamagePresent": false },
+    { "id": "motion_blur_front", "sampleKey": "blurry-front", "rightsStatus": "rights-cleared", "expectedAngle": "front", "expectedDamagePresent": false, "baseRetakeRequired": true },
+    { "id": "partial_vin", "sampleKey": "partial-vin-plate", "rightsStatus": "rights-cleared", "expectedAngle": "vin_plate", "expectedDamagePresent": false, "baseRetakeRequired": true },
+    { "id": "dirty_odometer", "sampleKey": "dirty-odometer", "rightsStatus": "rights-cleared", "expectedAngle": "odometer", "expectedDamagePresent": false, "baseRetakeRequired": true }
+  ],
+  "variants": [
+    { "id": "baseline", "transform": "baseline", "expectedRetakeRequired": false },
+    { "id": "jpeg-65", "transform": "jpeg_65", "expectedRetakeRequired": false },
+    { "id": "resize-960", "transform": "resize_960", "expectedRetakeRequired": false },
+    { "id": "mild-dark", "transform": "mild_dark", "expectedRetakeRequired": false },
+    { "id": "mild-bright", "transform": "mild_bright", "expectedRetakeRequired": false },
+    { "id": "rotate-3", "transform": "rotate_3", "expectedRetakeRequired": false },
+    { "id": "retake-blur-heavy", "transform": "blur_heavy", "expectedRetakeRequired": true },
+    { "id": "retake-low-light", "transform": "low_light", "expectedRetakeRequired": true },
+    { "id": "retake-occluded", "transform": "occluded", "expectedRetakeRequired": true }
   ]
 }
