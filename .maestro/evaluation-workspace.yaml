@@ -2,6 +2,9 @@ appId: com.aidenrhaa.inspectiq
 ---
 - launchApp:
     clearState: true
+- tapOn:
+    text: "Wait"
+    optional: true
 - assertVisible: "InspectIQ"
 - assertVisible: "Open Evaluation Workspace"
 - tapOn: "Open Evaluation Workspace"

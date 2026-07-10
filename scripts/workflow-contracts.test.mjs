@@ -56,3 +56,25 @@ test("the Android emulator enables KVM before Maestro starts", async () => {
   assert.ok(kvmPermissionIndex >= 0, "GitHub's runner user needs access to /dev/kvm");
   assert.ok(kvmPermissionIndex < emulatorRunnerIndex, "KVM access must be configured before emulator startup");
 });
+
+test("the Maestro flow dismisses the API 35 Quickstep ANR before app assertions", async () => {
+  const flow = await readFile(
+    new URL("../.maestro/evaluation-workspace.yaml", import.meta.url),
+    "utf8",
+  );
+  const launchIndex = flow.indexOf("- launchApp:");
+  const quickstepWaitIndex = flow.indexOf('text: "Wait"');
+  const firstProductAssertionIndex = flow.indexOf('- assertVisible: "InspectIQ"');
+
+  assert.ok(launchIndex >= 0, "the evaluation flow must launch InspectIQ");
+  assert.ok(quickstepWaitIndex > launchIndex, "the system-dialog guard belongs after app launch");
+  assert.ok(
+    quickstepWaitIndex < firstProductAssertionIndex,
+    "the Quickstep overlay must be dismissed before checking product UI",
+  );
+  assert.match(
+    flow.slice(quickstepWaitIndex, firstProductAssertionIndex),
+    /optional: true/,
+    "real devices without the emulator-only dialog must continue immediately",
+  );
+});
