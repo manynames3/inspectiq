@@ -8,7 +8,8 @@ import { PNG } from "pngjs";
 
 const baseUrl = process.env.E2E_BASE_URL ?? "http://localhost:5173";
 const outputDir = process.env.SCREENSHOT_OUTPUT_DIR ?? "output/screenshots";
-const baselineDir = process.env.SCREENSHOT_BASELINE_DIR ?? "apps/web/tests/visual-baselines";
+const baselinePlatform = process.platform === "darwin" ? "macos" : "linux";
+const baselineDir = process.env.SCREENSHOT_BASELINE_DIR ?? `apps/web/tests/visual-baselines/${baselinePlatform}`;
 const updateBaselines = process.env.UPDATE_SCREENSHOT_BASELINES === "true";
 const maxDiffRatio = Number(process.env.VISUAL_DIFF_MAX_RATIO ?? "0.03");
 const chromePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
