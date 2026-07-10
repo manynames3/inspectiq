@@ -58,14 +58,17 @@ test("the Android emulator enables KVM before Maestro starts", async () => {
 });
 
 test("the Android E2E artifact preserves native crash diagnostics", async () => {
-  const workflow = await readFile(
-    new URL("../.github/workflows/mobile-android-e2e.yml", import.meta.url),
-    "utf8",
-  );
+  const [workflow, runner] = await Promise.all([
+    readFile(new URL("../.github/workflows/mobile-android-e2e.yml", import.meta.url), "utf8"),
+    readFile(new URL("./run-maestro-android.sh", import.meta.url), "utf8"),
+  ]);
 
-  assert.match(workflow, /adb logcat -d -v threadtime > output\/maestro\/android-logcat\.txt/);
-  assert.match(workflow, /adb shell dumpsys activity exit-info com\.aidenrhaa\.inspectiq > output\/maestro\/exit-info\.txt/);
+  assert.match(workflow, /script: bash scripts\/run-maestro-android\.sh/);
   assert.match(workflow, /output\/maestro\/\*\*/);
+  assert.match(runner, /adb logcat -d -v threadtime > "\$diagnostic_dir\/android-logcat\.txt"/);
+  assert.match(runner, /adb shell dumpsys activity exit-info com\.aidenrhaa\.inspectiq > "\$diagnostic_dir\/exit-info\.txt"/);
+  assert.match(runner, /status=\$\?/);
+  assert.match(runner, /exit "\$status"/);
 });
 
 test("the Maestro flow dismisses the API 35 Quickstep ANR before app assertions", async () => {
