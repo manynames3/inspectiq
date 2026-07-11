@@ -1,0 +1,52 @@
+{
+  "proofVersion": "marketplace-damage-proof-v1",
+  "observedAt": "2026-07-11T03:42:04.175Z",
+  "source": {
+    "marketplace": "Copart",
+    "listingUrl": "https://www.copart.com/lot/51175056/Photos/salvage-2022-ford-escape-se-ca-hayward",
+    "lotNumber": "51175056",
+    "imageUrl": "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0526/60d00ff45c6743e5b4b3ad6a1b8ef40c_hrs.jpg",
+    "rightsStatus": "external-marketplace-reference-not-committed",
+    "listingFacts": {
+      "year": 2022,
+      "make": "Ford",
+      "model": "Escape",
+      "trim": "SE",
+      "vin": "1FMCU0G6XNU******",
+      "odometerMiles": 72901,
+      "odometerStatus": "actual",
+      "primaryDamage": "Rear End",
+      "location": "CA - Hayward"
+    }
+  },
+  "liveInspectionId": "b416f8fa-3e89-4c44-9c1a-3788c7da2f09",
+  "analysis": {
+    "provider": "bedrockVisionProvider",
+    "modelId": "us.anthropic.claude-sonnet-4-6",
+    "promptVersion": "photo-analysis-v2",
+    "fallbackUsed": false,
+    "schemaValid": true,
+    "latencyMs": 6176,
+    "inputTokens": 2114,
+    "outputTokens": 384,
+    "estimatedCostUsd": 0.012102,
+    "photoAngle": "rear",
+    "photoAngleConfidence": 0.97,
+    "damageCandidate": {
+      "location": "Rear liftgate and bumper fascia - center and full width",
+      "damageType": "dent",
+      "severity": "severe",
+      "confidence": 0.98,
+      "rawModelEstimateUsd": {
+        "min": 4500,
+        "max": 9000
+      },
+      "policyTriageRangeUsd": {
+        "min": 1200,
+        "max": 2500
+      },
+      "reviewStatus": "accepted"
+    }
+  },
+  "scope": "One traceable live workflow proof. This is not a statistical accuracy claim or a repair estimate authorization. Confirm marketplace image-use permission before commercial distribution."
+}

@@ -541,6 +541,9 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const photos = keys.map((key) => {
       const sample = findSampleImage(key);
       if (!sample) throw validation(`Unknown reference image: ${key}`);
+      if (sample.evaluationOnly) {
+        throw validation("Offline evaluation images cannot be attached to an inspection.");
+      }
       const storageKey = sample.storageKey ?? `/sample-images/${sample.filename}`;
       return appStore.addPhoto({
         inspectionId: req.params.id,

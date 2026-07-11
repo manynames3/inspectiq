@@ -8,7 +8,7 @@ Unsplash photos are free to use under the Unsplash License. Attribution is not r
 | --- | --- | --- |
 | `front-clean.jpg` | https://unsplash.com/photos/the-front-of-a-car-mlPlAg_hvw4 | Erik Mclean |
 | `blurry-front.jpg` | https://unsplash.com/photos/the-front-of-a-car-mlPlAg_hvw4 | Erik Mclean |
-| `skoda-roomster-rear-quarter-dent.jpg` | https://commons.wikimedia.org/wiki/File:%C5%A0koda_Roomster_Blue_Dented.jpg (CC0 1.0) | AVDLCZ |
+| `skoda-roomster-rear-quarter-dent.jpg` | https://commons.wikimedia.org/wiki/File:%C5%A0koda_Roomster_Blue_Dented.jpg (CC0 1.0; offline evaluator only, never attachable inspection evidence) | AVDLCZ |
 | `passenger-door-severe-dent.jpg` | https://commons.wikimedia.org/wiki/File:Damaged_car_door.jpg (public domain) | Garitzko |
 | `passenger-side-clean.jpg` | https://unsplash.com/photos/a-close-up-of-the-side-of-a-sports-car-PcL1r4f83TI | DAVIDCOHEN |
 | `interior-overview.jpg` | https://unsplash.com/photos/the-interior-of-a-car-6Fa1uCl7aNs | Markus Spiske |
@@ -37,6 +37,12 @@ Exact-model and listing sources used by reference inspections:
 | 2019 Nissan Rogue SV exterior/interior/odometer/VIN-label area | https://www.westherr.com/inventory/used-2019-nissan-rogue-sv-awd-sport-utility-knmat2mv6kp514068/ |
 | 2019 Nissan Rogue SV engine bay reference | https://www.carsdirect.com/nissan/rogue/2019/pictures |
 | 2023 Subaru Outback Premium exterior/interior/engine bay/odometer/VIN-label area | https://www.akarautosales.com/details-2023-subaru-outback-premium_cvt-used-4s4btafc8p3204430.html |
+
+Live marketplace damage proof:
+
+| Vehicle | Source | Repository handling |
+| --- | --- | --- |
+| 2022 Ford Escape SE, Copart lot `51175056`, rear-end damage | https://www.copart.com/lot/51175056/Photos/salvage-2022-ford-escape-se-ca-hayward | Direct rear photo uploaded to private S3 for the live inspection; external image URL and model trace are recorded in `evals/marketplace-bedrock-proof.json`; image bytes are not committed. |
 
 Notes:
 

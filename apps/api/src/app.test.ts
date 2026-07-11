@@ -218,6 +218,19 @@ describe("InspectIQ API", () => {
     expect(response.body.error.message).toBe("Reference evidence loading is disabled. Upload captured photos for this inspection.");
   });
 
+  it("keeps rights-cleared evaluator images out of inspection evidence", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+
+    const response = await request(api)
+      .post(`/api/inspections/${inspectionId}/photos/sample`)
+      .set(inspectorHeaders)
+      .send({ sampleKey: "skoda-roomster-rear-quarter-dent" })
+      .expect(400);
+
+    expect(response.body.error.message).toBe("Offline evaluation images cannot be attached to an inspection.");
+  });
+
   it("allows read-only evaluation access without a bearer token and blocks workflow mutation", async () => {
     process.env.AUTH_MODE = "jwt";
     process.env.ENABLE_EVALUATION_MODE = "true";

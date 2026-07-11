@@ -17,6 +17,7 @@ export type SampleImage = {
   referenceRetakeRequired?: boolean;
   referenceQualityWarnings?: string[];
   referenceQualityNotes?: string[];
+  evaluationOnly?: boolean;
 };
 
 export type SamplePhotoSet = {
@@ -179,7 +180,7 @@ export const sampleImages: SampleImage[] = [
   dealerListing("subaru-outback-vin-label", "2023-subaru-outback-vin-label.jpg", "https://cdn.ebizautos.media/used-2023-subaru-outback-premiumcvt-14413-23008396-10-640.jpg", "2023 Subaru Outback Premium driver-door VIN label area", "vin_plate", subaruOutbackDealerListingUrl, "A-Kar Auto Sales dealer listing"),
 
   { key: "front-clean", filename: "front-clean.jpg", label: "Front clean", angle: "front", mimeType: "image/jpeg", sourceName: "InspectIQ local fixture" },
-  { key: "skoda-roomster-rear-quarter-dent", filename: "skoda-roomster-rear-quarter-dent.jpg", label: "Rear bumper dent and paint damage", angle: "rear", mimeType: "image/jpeg", sourceName: "Wikimedia Commons - AVDLCZ", sourceUrl: skodaRoomsterDamageSourceUrl, sourceLicense: cc0License },
+  { key: "skoda-roomster-rear-quarter-dent", filename: "skoda-roomster-rear-quarter-dent.jpg", label: "Offline rear-damage evaluation case", angle: "rear", mimeType: "image/jpeg", sourceName: "Wikimedia Commons - AVDLCZ", sourceUrl: skodaRoomsterDamageSourceUrl, sourceLicense: cc0License, evaluationOnly: true },
   { key: "odometer-closeup-64231", filename: "odometer-closeup-64231.png", label: "Odometer 64,231", angle: "odometer", mimeType: "image/png", sourceName: "Reference identity capture" },
   { key: "vin-plate-4t1g11ak8mu123456", filename: "vin-plate-4t1g11ak8mu123456.png", label: "VIN plate", angle: "vin_plate", mimeType: "image/png", sourceName: "Reference identity capture" },
   { key: "passenger-door-severe-dent", filename: "passenger-door-severe-dent.jpg", label: "Passenger door collision damage", angle: "passenger_side", mimeType: "image/jpeg", sourceName: "Wikimedia Commons - Garitzko", sourceUrl: passengerDoorDamageSourceUrl, sourceLicense: publicDomainLicense },
@@ -274,7 +275,6 @@ export const sampleBundles: Record<string, string[]> = {
     "odometer-closeup-64231"
   ],
   "arbitration-risk-set": [
-    "skoda-roomster-rear-quarter-dent",
     "passenger-door-severe-dent",
     "interior-overview",
     "odometer-closeup-64231",
@@ -282,7 +282,6 @@ export const sampleBundles: Record<string, string[]> = {
   ],
   "gate-imaging-partial-set": [
     "front-clean",
-    "skoda-roomster-rear-quarter-dent",
     "passenger-side-clean",
     "vin-plate-4t1g11ak8mu123456"
   ],

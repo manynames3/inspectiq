@@ -62,24 +62,24 @@ npm run eval:vision
 
 No Bedrock accuracy numbers are asserted in this document until that workflow produces a passing artifact for the exact model and prompt version under review.
 
-## Verified Bedrock Damage Spot Check
+## Verified Marketplace Bedrock Damage Spot Check
 
-A deployed, no-fallback spot check used the CC0 Skoda Roomster source documented in `sample-data/IMAGE_CREDITS.md`. The exact VIN, mileage, and model year are not available from the source and are therefore not asserted.
+A deployed, no-fallback spot check used a direct rear photo from Copart lot `51175056`, a U.S. salvage listing for a 2022 Ford Escape SE with 72,901 actual miles and primary rear-end damage. Copart masks the VIN, so the inspection records `VIN-NOT-PROVIDED`. The source image is uploaded to private S3 for this evidence record and is not committed to the repository; `evals/marketplace-bedrock-proof.json` preserves the source URL, observed facts, and model trace.
 
 | Field | Observed result |
 | --- | --- |
 | Provider / model | `bedrockVisionProvider` / `us.anthropic.claude-sonnet-4-6` |
 | Prompt / schema | `photo-analysis-v2` / valid |
 | Fallback | No |
-| Visible candidate | Moderate dent, rear bumper lower centre/passenger-side corner |
-| Confidence | 91% |
-| Raw model repair range | $150-$450, retained for audit |
-| Validated policy range | $500-$1,200 for a moderate dent |
-| Latency / estimated model cost | 6.467 s / $0.012195 |
+| Visible candidate | Severe dent/deformation across the rear liftgate and bumper fascia |
+| Confidence | 98% |
+| Raw model repair range | $4,500-$9,000, retained for audit and not treated as authorization |
+| Validated policy range | $1,200-$2,500 severe-dent triage band; estimator supplement required for multi-panel collision work |
+| Latency / estimated model cost | 6.176 s / $0.012102 |
 | Human review | Accepted after visual comparison with the source image |
-| Live inspection | `444ba70f-330c-4333-9461-7365bad6da5f` |
+| Live inspection | `b416f8fa-3e89-4c44-9c1a-3788c7da2f09` |
 
-This proves that an uploaded S3 image can pass through SQS, the Lambda worker, Bedrock, schema validation, reviewer acceptance, and damage materialization. It is one traceable workflow proof, not a statistical accuracy claim.
+This proves that an actual marketplace photo can pass through S3, SQS, the Lambda worker, Bedrock, schema validation, reviewer acceptance, and damage materialization. It is one traceable workflow proof, not a statistical accuracy claim or a claim that marketplace imagery may be redistributed without permission.
 
 ## Known Limits
 

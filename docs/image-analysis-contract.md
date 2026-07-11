@@ -4,7 +4,7 @@
 
 Image analysis is advisory evidence triage. It helps reviewers find missing angles, quality problems, damage candidates, and OCR values faster, but it does not directly change condition report facts until a human accepts or edits the suggestion.
 
-The example payload below is a real Bedrock result from the CC0 Skoda Roomster damage fixture, not a VIN-specific listing. The source does not provide a VIN, mileage, or exact model year, so those facts must remain unverified. Reference-manifest mappings bypass model claims: they carry source/checklist provenance, no model confidence presentation, no metadata-derived OCR, and no pre-confirmed damage.
+The example payload below is a real Bedrock result from a Copart U.S. salvage listing for a 2022 Ford Escape SE, lot `51175056`. Copart publishes the VIN only in masked form, so InspectIQ stores `VIN-NOT-PROVIDED` instead of fabricating the missing characters. The source photo is referenced in `evals/marketplace-bedrock-proof.json` and stored only as uploaded S3 evidence; it is not redistributed in this repository. Reference-manifest mappings bypass model claims: they carry source/checklist provenance, no model confidence presentation, no metadata-derived OCR, and no pre-confirmed damage.
 
 ## Provider Contract
 
@@ -38,30 +38,30 @@ Required validated fields:
 ```json
 {
   "photoAngle": "rear",
-  "confidence": 0.95,
+  "confidence": 0.97,
   "imageQuality": {
     "grade": "pass",
-    "blurScore": 0.93,
-    "exposureScore": 0.91,
-    "framingScore": 0.88,
-    "resolutionScore": 0.95,
+    "blurScore": 0.92,
+    "exposureScore": 0.88,
+    "framingScore": 0.93,
+    "resolutionScore": 0.91,
     "occlusionRisk": 0.05,
     "retakeRequired": false,
     "notes": [
-      "Sharp, well-exposed rear three-quarter image; damage area on lower rear bumper clearly visible."
+      "Clear rear view of Ford Escape with extensive collision damage visible across liftgate and bumper."
     ]
   },
   "qualityWarnings": [],
   "detectedDamageCandidates": [
     {
-      "location": "Rear bumper lower-centre / passenger-side corner",
+      "location": "Rear liftgate and bumper fascia - center and full width",
       "damageType": "dent",
-      "severityEstimate": "moderate",
-      "confidence": 0.91,
-      "explanation": "Visible deformation and paint scraping on lower rear bumper with white scuff marks indicating impact damage.",
+      "severityEstimate": "severe",
+      "confidence": 0.98,
+      "explanation": "Large intrusion dent across the liftgate, with a crushed license-plate recess and crumpled, partially detached bumper fascia.",
       "repairEstimateUsd": {
-        "min": 500,
-        "max": 1200,
+        "min": 1200,
+        "max": 2500,
         "rationale": "Policy range derived from the reviewed damage type and severity; raw model estimate is retained for audit."
       },
       "requiresHumanConfirmation": true
@@ -71,6 +71,8 @@ Required validated fields:
   "humanReviewRequired": true
 }
 ```
+
+The raw model response estimated `$4,500-$9,000`; that value remains in the audit record. The validated payload applies the shared severe-dent triage band for queue consistency. Neither range is a buyer-facing authorization: multi-panel collision repair requires an estimator or body-shop supplement.
 
 ## Governance Rules
 
