@@ -42,7 +42,7 @@ Live marketplace damage proof:
 
 | Vehicle | Source | Repository handling |
 | --- | --- | --- |
-| 2022 Ford Escape SE, Copart lot `51175056`, rear-end damage | https://www.copart.com/lot/51175056/Photos/salvage-2022-ford-escape-se-ca-hayward | Direct rear photo uploaded to private S3 for the live inspection; external image URL and model trace are recorded in `evals/marketplace-bedrock-proof.json`; image bytes are not committed. |
+| 2022 Ford Escape SE, Copart lot `51175056`, rear-end damage and VIN-label context | https://www.copart.com/lot/51175056/Photos/salvage-2022-ford-escape-se-ca-hayward | Rear and interior/VIN-label-context photos uploaded to private S3; external image URLs and model traces are recorded in `evals/marketplace-bedrock-proof.json`; image bytes are not committed. |
 
 Notes:
 
@@ -56,5 +56,6 @@ Notes:
 - The Nissan Rogue reference record uses VIN-specific West Herr dealer listing photos for front, rear, driver side, passenger side, interior, odometer, and the driver-door/VIN-label area. The listing did not publish an engine-bay photo, so the engine-bay slot remains an exact-model CarsDirect reference.
 - The Subaru Outback reference record uses VIN-specific A-Kar Auto Sales listing photos for front, rear, driver side, passenger side, interior, engine bay, odometer, and the driver-door/VIN-label area.
 - External images are source-provenance references. They are not copied into this repository and should be replaced by customer-uploaded S3 objects in production.
+- The Copart VIN label is present but not OCR-legible at the listing resolution. Full VIN `1FMCU0G6XNUB32593` is documented through a matching lot-history record and a clean NHTSA vPIC decode; the image remains marked for retake rather than being presented as successful OCR.
 - Generated OCR fixtures still exist for local tests and retake edge cases where exact expected text is required.
 - Damage-positive labels are limited to images whose visible condition and source descriptions support the label. The prior Prius "severe dent" and duplicated clean-panel "scratch" labels were removed because the pixels did not support those claims.

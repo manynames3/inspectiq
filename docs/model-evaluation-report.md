@@ -64,7 +64,7 @@ No Bedrock accuracy numbers are asserted in this document until that workflow pr
 
 ## Verified Marketplace Bedrock Damage Spot Check
 
-A deployed, no-fallback spot check used a direct rear photo from Copart lot `51175056`, a U.S. salvage listing for a 2022 Ford Escape SE with 72,901 actual miles and primary rear-end damage. Copart masks the VIN, so the inspection records `VIN-NOT-PROVIDED`. The source image is uploaded to private S3 for this evidence record and is not committed to the repository; `evals/marketplace-bedrock-proof.json` preserves the source URL, observed facts, and model trace.
+A deployed, no-fallback spot check used a direct rear photo from Copart lot `51175056`, a U.S. salvage listing for a 2022 Ford Escape SE with 72,901 actual miles and primary rear-end damage. The listing's interior photo contains the door-jamb VIN label, but Bedrock classified it as unreadable and requested a retake at 41% confidence. A separate listing-history record tied full VIN `1FMCU0G6XNUB32593` to the same lot and mileage; NHTSA vPIC then decoded it cleanly and confirmed the check digit, year, make, model, and trim. The source images are uploaded to private S3 for this evidence record and are not committed to the repository; `evals/marketplace-bedrock-proof.json` preserves the evidence chain and model trace.
 
 | Field | Observed result |
 | --- | --- |
@@ -77,6 +77,7 @@ A deployed, no-fallback spot check used a direct rear photo from Copart lot `511
 | Validated policy range | $1,200-$2,500 severe-dent triage band; estimator supplement required for multi-panel collision work |
 | Latency / estimated model cost | 6.176 s / $0.012102 |
 | Human review | Accepted after visual comparison with the source image |
+| VIN evidence | Label present but OCR rejected as unreadable; full VIN independently lot-matched and NHTSA-validated |
 | Live inspection | `b416f8fa-3e89-4c44-9c1a-3788c7da2f09` |
 
 This proves that an actual marketplace photo can pass through S3, SQS, the Lambda worker, Bedrock, schema validation, reviewer acceptance, and damage materialization. It is one traceable workflow proof, not a statistical accuracy claim or a claim that marketplace imagery may be redistributed without permission.

@@ -12,11 +12,21 @@
       "make": "Ford",
       "model": "Escape",
       "trim": "SE",
-      "vin": "1FMCU0G6XNU******",
+      "copartDisplayedVin": "1FMCU0G6XNU******",
+      "verifiedVin": "1FMCU0G6XNUB32593",
       "odometerMiles": 72901,
       "odometerStatus": "actual",
       "primaryDamage": "Rear End",
       "location": "CA - Hayward"
+    },
+    "vinEvidence": {
+      "contextImageUrl": "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0526/24840c35b09e41e2a7344b35eca47e84_hrs.jpg",
+      "bedrockOcrResult": "unreadable-retake-required",
+      "bedrockConfidence": 0.41,
+      "matchedListingHistoryUrl": "https://en.autoconsultant.com.ua/automobile/ford/escape/529182510c124fc-2022-ford-escape-1fmcu0g6xnub32593/",
+      "nhtsaDecodeUrl": "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/1FMCU0G6XNUB32593?format=json",
+      "nhtsaResult": "VIN decoded clean; check digit is correct; 2022 Ford Escape SE",
+      "verificationPolicy": "Do not infer unreadable characters from pixels. Require a matching lot, mileage, vehicle configuration, and independent VIN validation."
     }
   },
   "liveInspectionId": "b416f8fa-3e89-4c44-9c1a-3788c7da2f09",
@@ -48,5 +58,5 @@
       "reviewStatus": "accepted"
     }
   },
-  "scope": "One traceable live workflow proof. This is not a statistical accuracy claim or a repair estimate authorization. Confirm marketplace image-use permission before commercial distribution."
+  "scope": "One traceable live workflow proof. This is not a statistical accuracy claim, OCR-success claim, or repair estimate authorization. Confirm marketplace image-use permission before commercial distribution."
 }

@@ -4,7 +4,7 @@
 
 Image analysis is advisory evidence triage. It helps reviewers find missing angles, quality problems, damage candidates, and OCR values faster, but it does not directly change condition report facts until a human accepts or edits the suggestion.
 
-The example payload below is a real Bedrock result from a Copart U.S. salvage listing for a 2022 Ford Escape SE, lot `51175056`. Copart publishes the VIN only in masked form, so InspectIQ stores `VIN-NOT-PROVIDED` instead of fabricating the missing characters. The source photo is referenced in `evals/marketplace-bedrock-proof.json` and stored only as uploaded S3 evidence; it is not redistributed in this repository. Reference-manifest mappings bypass model claims: they carry source/checklist provenance, no model confidence presentation, no metadata-derived OCR, and no pre-confirmed damage.
+The example payload below is a real Bedrock result from a Copart U.S. salvage listing for a 2022 Ford Escape SE, lot `51175056`. Copart displays a masked VIN and includes a wide interior photo containing the door-jamb label. Bedrock correctly marked that label image unreadable and requested a tighter retake instead of inventing characters. The full VIN, `1FMCU0G6XNUB32593`, was added only after a separate listing-history record matched the Copart lot, mileage, model, location, and damage, and NHTSA vPIC decoded the VIN cleanly with a correct check digit. The source photos are referenced in `evals/marketplace-bedrock-proof.json` and stored only as uploaded S3 evidence; they are not redistributed in this repository. Reference-manifest mappings bypass model claims: they carry source/checklist provenance, no model confidence presentation, no metadata-derived OCR, and no pre-confirmed damage.
 
 ## Provider Contract
 
@@ -78,6 +78,7 @@ The raw model response estimated `$4,500-$9,000`; that value remains in the audi
 
 - Raw model output and validated output are stored separately.
 - Invalid schema output is rejected and recorded as a failed analysis.
+- A visible but unreadable VIN label creates a retake requirement; external metadata can update the record only when independently matched and validated, never by guessing obscured characters.
 - Image quality is evaluated separately from damage confidence.
 - Material damage candidates below the configured threshold, default `MIN_DAMAGE_CONFIDENCE=0.80`, are discarded before reviewer suggestions are created.
 - Retake-required photos create quality-warning suggestions and block buyer-visible release until resolved.
