@@ -8,10 +8,11 @@ Unsplash photos are free to use under the Unsplash License. Attribution is not r
 | --- | --- | --- |
 | `front-clean.jpg` | https://unsplash.com/photos/the-front-of-a-car-mlPlAg_hvw4 | Erik Mclean |
 | `blurry-front.jpg` | https://unsplash.com/photos/the-front-of-a-car-mlPlAg_hvw4 | Erik Mclean |
-| `rear-severe-damage.jpg` | https://unsplash.com/photos/damaged-toyota-prius-rear-with-a-dent-is8MAQ5uLxc | Macourt Media |
-| `driver-side-scratch.jpg` | https://unsplash.com/photos/a-close-up-of-the-side-of-a-sports-car-PcL1r4f83TI | DAVIDCOHEN |
+| `skoda-roomster-rear-quarter-dent.jpg` | https://commons.wikimedia.org/wiki/File:%C5%A0koda_Roomster_Blue_Dented.jpg (CC0 1.0) | AVDLCZ |
+| `passenger-door-severe-dent.jpg` | https://commons.wikimedia.org/wiki/File:Damaged_car_door.jpg (public domain) | Garitzko |
 | `passenger-side-clean.jpg` | https://unsplash.com/photos/a-close-up-of-the-side-of-a-sports-car-PcL1r4f83TI | DAVIDCOHEN |
 | `interior-overview.jpg` | https://unsplash.com/photos/the-interior-of-a-car-6Fa1uCl7aNs | Markus Spiske |
+| `interior-wear.jpg` | https://commons.wikimedia.org/wiki/File:Car_gear_shift_in_an_old_vehicle_interior_showing_signs_of_wear_and_tear_during_a_repair_session_in_an_auto_shop.jpg (CC BY 2.0) | Shixart1985 |
 | `engine-bay-clean.jpg` | https://unsplash.com/photos/car-engine-bay-VurHDpO4VYI | Tim Mossholder |
 | `odometer-64231.jpg` | https://unsplash.com/photos/a-close-up-of-a-dashboard-of-a-car-ezk7U9drpWA | Jason Leung |
 | `vin-plate.jpg` | https://unsplash.com/photos/yellow-and-black-car-license-plate-doVWn0pJ4ic | Oleksandr Horbach |
@@ -50,3 +51,4 @@ Notes:
 - The Subaru Outback reference record uses VIN-specific A-Kar Auto Sales listing photos for front, rear, driver side, passenger side, interior, engine bay, odometer, and the driver-door/VIN-label area.
 - External images are source-provenance references. They are not copied into this repository and should be replaced by customer-uploaded S3 objects in production.
 - Generated OCR fixtures still exist for local tests and retake edge cases where exact expected text is required.
+- Damage-positive labels are limited to images whose visible condition and source descriptions support the label. The prior Prius "severe dent" and duplicated clean-panel "scratch" labels were removed because the pixels did not support those claims.

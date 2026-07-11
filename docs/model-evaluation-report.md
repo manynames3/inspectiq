@@ -1,6 +1,6 @@
 # Model Evaluation Report
 
-Last updated: July 9, 2026
+Last updated: July 10, 2026
 
 InspectIQ evaluates vision providers through the same `VisionOutputSchema` used by the image worker and reviewer workflow. The checked-in suite is a promotion gate, not a claim of production automotive model accuracy.
 
@@ -61,6 +61,25 @@ npm run eval:vision
 ```
 
 No Bedrock accuracy numbers are asserted in this document until that workflow produces a passing artifact for the exact model and prompt version under review.
+
+## Verified Bedrock Damage Spot Check
+
+A deployed, no-fallback spot check used the CC0 Skoda Roomster source documented in `sample-data/IMAGE_CREDITS.md`. The exact VIN, mileage, and model year are not available from the source and are therefore not asserted.
+
+| Field | Observed result |
+| --- | --- |
+| Provider / model | `bedrockVisionProvider` / `us.anthropic.claude-sonnet-4-6` |
+| Prompt / schema | `photo-analysis-v2` / valid |
+| Fallback | No |
+| Visible candidate | Moderate dent, rear bumper lower centre/passenger-side corner |
+| Confidence | 91% |
+| Raw model repair range | $150-$450, retained for audit |
+| Validated policy range | $500-$1,200 for a moderate dent |
+| Latency / estimated model cost | 6.467 s / $0.012195 |
+| Human review | Accepted after visual comparison with the source image |
+| Live inspection | `444ba70f-330c-4333-9461-7365bad6da5f` |
+
+This proves that an uploaded S3 image can pass through SQS, the Lambda worker, Bedrock, schema validation, reviewer acceptance, and damage materialization. It is one traceable workflow proof, not a statistical accuracy claim.
 
 ## Known Limits
 

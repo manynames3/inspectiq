@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
@@ -73,6 +74,33 @@ async function loadEvalSet() {
   return { root, evalSet: EvalSetSchema.parse(JSON.parse(raw)) };
 }
 
+async function assertIndependentSourcePixels(sources: SourceCase[]): Promise<void> {
+  const fingerprints = await Promise.all(sources.map(async (source) => {
+    const sample = findSampleImage(source.sampleKey);
+    if (!sample) throw new Error(`Unknown sample image: ${source.sampleKey}`);
+    if (sample.storageKey?.startsWith("https://")) {
+      throw new Error(`Evaluation source ${source.sampleKey} is externally referenced, not rights-cleared local evidence.`);
+    }
+    const sourcePath = sampleImageFilePath(sample.storageKey ?? sample.filename);
+    const { data, info } = await sharp(sourcePath).rotate().raw().toBuffer({ resolveWithObject: true });
+    const fingerprint = createHash("sha256")
+      .update(`${info.width}x${info.height}x${info.channels}:`)
+      .update(data)
+      .digest("hex");
+    return { sourceId: source.id, sampleKey: source.sampleKey, fingerprint };
+  }));
+  const duplicateGroups = new Map<string, Array<{ sourceId: string; sampleKey: string }>>();
+  for (const source of fingerprints) {
+    const group = duplicateGroups.get(source.fingerprint) ?? [];
+    group.push({ sourceId: source.sourceId, sampleKey: source.sampleKey });
+    duplicateGroups.set(source.fingerprint, group);
+  }
+  const duplicates = [...duplicateGroups.values()].filter((group) => group.length > 1);
+  if (duplicates.length > 0) {
+    throw new Error(`Evaluation sources must be pixel-distinct: ${duplicates.map((group) => group.map((item) => `${item.sourceId} (${item.sampleKey})`).join(", ")).join("; ")}`);
+  }
+}
+
 async function renderVariant(source: SourceCase, variant: Variant, outputDirectory?: string): Promise<{ filename: string; dataUrl: string }> {
   const sample = findSampleImage(source.sampleKey);
   if (!sample) throw new Error(`Unknown sample image: ${source.sampleKey}`);
@@ -108,6 +136,7 @@ async function renderVariant(source: SourceCase, variant: Variant, outputDirecto
 }
 
 const { root, evalSet } = await loadEvalSet();
+await assertIndependentSourcePixels(evalSet.sources);
 const provider = getVisionProvider();
 const outputDirectory = process.env.VISION_EVAL_CORPUS_DIR
   ? path.resolve(process.env.VISION_EVAL_CORPUS_DIR)

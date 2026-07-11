@@ -4,7 +4,7 @@
 
 Image analysis is advisory evidence triage. It helps reviewers find missing angles, quality problems, damage candidates, and OCR values faster, but it does not directly change condition report facts until a human accepts or edits the suggestion.
 
-The example payload below describes the dedicated damage challenge fixture, not any VIN-specific reference listing. Reference-manifest mappings bypass model claims: they carry source/checklist provenance, no model confidence presentation, no metadata-derived OCR, and no pre-confirmed damage.
+The example payload below is a real Bedrock result from the CC0 Skoda Roomster damage fixture, not a VIN-specific listing. The source does not provide a VIN, mileage, or exact model year, so those facts must remain unverified. Reference-manifest mappings bypass model claims: they carry source/checklist provenance, no model confidence presentation, no metadata-derived OCR, and no pre-confirmed damage.
 
 ## Provider Contract
 
@@ -38,31 +38,31 @@ Required validated fields:
 ```json
 {
   "photoAngle": "rear",
-  "confidence": 0.96,
+  "confidence": 0.95,
   "imageQuality": {
-    "grade": "review",
-    "blurScore": 0.96,
-    "exposureScore": 0.94,
-    "framingScore": 0.89,
-    "resolutionScore": 0.97,
-    "occlusionRisk": 0.04,
+    "grade": "pass",
+    "blurScore": 0.93,
+    "exposureScore": 0.91,
+    "framingScore": 0.88,
+    "resolutionScore": 0.95,
+    "occlusionRisk": 0.05,
     "retakeRequired": false,
     "notes": [
-      "Rear angle is usable, but confirmed damage requires reviewer close inspection."
+      "Sharp, well-exposed rear three-quarter image; damage area on lower rear bumper clearly visible."
     ]
   },
   "qualityWarnings": [],
   "detectedDamageCandidates": [
     {
-      "location": "rear bumper",
+      "location": "Rear bumper lower-centre / passenger-side corner",
       "damageType": "dent",
-      "severityEstimate": "severe",
-      "confidence": 0.9,
-      "explanation": "Inspection photo indicates a rear bumper deformation.",
+      "severityEstimate": "moderate",
+      "confidence": 0.91,
+      "explanation": "Visible deformation and paint scraping on lower rear bumper with white scuff marks indicating impact damage.",
       "repairEstimateUsd": {
-        "min": 1200,
-        "max": 2500,
-        "rationale": "Estimated from damage type and severity for reviewer triage."
+        "min": 500,
+        "max": 1200,
+        "rationale": "Policy range derived from the reviewed damage type and severity; raw model estimate is retained for audit."
       },
       "requiresHumanConfirmation": true
     }

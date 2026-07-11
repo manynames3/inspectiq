@@ -102,9 +102,24 @@ export async function reserveBedrockUsage(kind: BedrockUsageKind, idempotencyKey
       Key: { pk: { S: `USAGE#${reservationKey}` }, sk: { S: "RESERVATION" } },
       ConsistentRead: true
     }));
-    if (!existing.Item) {
+    if (existing.Item) return getMonthlyBedrockUsage();
+
+    const usage = await getMonthlyBedrockUsage();
+    if (usage[kind] >= limit) {
       throw costGuardReached(kind === "imageAnalyses" ? "Image analysis" : "Report drafting", limit);
     }
+
+    console.error(JSON.stringify({
+      level: "error",
+      event: "inspectiq.bedrock_usage_reservation_failed",
+      kind,
+      month,
+      currentUsage: usage[kind],
+      limit,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: error instanceof Error ? error.message : String(error)
+    }));
+    throw error;
   }
   return getMonthlyBedrockUsage();
 }

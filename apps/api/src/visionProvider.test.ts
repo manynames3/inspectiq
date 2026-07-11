@@ -15,18 +15,49 @@ describe("localVisionProvider", () => {
     expect(result.validated.detectedDamageCandidates).toEqual([]);
   });
 
-  it("keeps the explicitly labeled damage challenge fixture for evaluator coverage", async () => {
+  it("keeps the source-documented damage challenge fixture for evaluator coverage", async () => {
     const result = await localVisionProvider.analyze({
-      filename: "rear-severe-damage.jpg",
-      storageKey: "/sample-images/rear-severe-damage.jpg",
+      filename: "skoda-roomster-rear-quarter-dent.jpg",
+      storageKey: "/sample-images/skoda-roomster-rear-quarter-dent.jpg",
       declaredAngle: "rear"
     });
 
     expect(result.validated.detectedDamageCandidates).toEqual([
       expect.objectContaining({
-        location: "rear bumper",
+        location: "rear bumper lower centre and passenger-side corner",
         damageType: "dent",
-        severityEstimate: "severe",
+        severityEstimate: "moderate",
+        repairEstimateUsd: {
+          min: 500,
+          max: 1200,
+          rationale: "Policy range derived from the reviewed damage type and severity; raw model estimate is retained for audit."
+        },
+        requiresHumanConfirmation: true
+      })
+    ]);
+  });
+
+  it("does not treat the prior clean side-panel fixture as a scratch", async () => {
+    const result = await localVisionProvider.analyze({
+      filename: "passenger-side-clean.jpg",
+      storageKey: "/sample-images/passenger-side-clean.jpg",
+      declaredAngle: "passenger_side"
+    });
+
+    expect(result.validated.detectedDamageCandidates).toEqual([]);
+  });
+
+  it("keeps the source-documented interior wear case distinct from the clean interior control", async () => {
+    const result = await localVisionProvider.analyze({
+      filename: "interior-wear.jpg",
+      storageKey: "/sample-images/interior-wear.jpg",
+      declaredAngle: "interior"
+    });
+
+    expect(result.validated.detectedDamageCandidates).toEqual([
+      expect.objectContaining({
+        damageType: "interior_wear",
+        severityEstimate: "moderate",
         requiresHumanConfirmation: true
       })
     ]);

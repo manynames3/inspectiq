@@ -390,7 +390,9 @@ resource "aws_iam_role_policy" "lambda_app" {
         Effect = "Allow"
         Action = [
           "dynamodb:GetItem",
+          "dynamodb:PutItem",
           "dynamodb:Query",
+          "dynamodb:UpdateItem",
           "dynamodb:TransactWriteItems"
         ]
         Resource = [

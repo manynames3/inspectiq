@@ -93,14 +93,25 @@ function normalizeVisionOutput(output: VisionOutput, declaredAngle?: VisionOutpu
     || output.photoAngle === "vin_plate"
     || declaredAngle === "odometer"
     || declaredAngle === "vin_plate";
-  const credibleDamage = evidenceAngle ? [] : output.detectedDamageCandidates
+  const credibleDamage = (evidenceAngle ? [] : output.detectedDamageCandidates
     .filter((candidate) =>
       candidate.confidence >= damageConfidenceThreshold()
       && candidate.damageType !== "unknown"
       && candidate.severityEstimate !== "unknown"
     )
     .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, 1);
+    .slice(0, 1))
+    .map((candidate) => {
+      const estimate = estimateDamageRepairCost(candidate.damageType, candidate.severityEstimate);
+      return {
+        ...candidate,
+        repairEstimateUsd: {
+          min: estimate.min,
+          max: estimate.max,
+          rationale: "Policy range derived from the reviewed damage type and severity; raw model estimate is retained for audit."
+        }
+      };
+    });
 
   const extractedText: VisionOutput["extractedText"] = {};
   const odometer = output.extractedText.odometer?.trim().replace(/[^\d]/g, "");
@@ -203,36 +214,36 @@ export const localVisionProvider: VisionProvider = {
         qualityWarnings: ["Capture quality is below the release threshold; request a retake."],
         humanReviewRequired: true
       };
-    } else if (key.includes("rear-severe-damage")) {
+    } else if (key.includes("skoda-roomster-rear-quarter-dent")) {
       raw = {
         ...cleanOutput("rear", 0.96, imageQuality({
           grade: "review",
           framingScore: 0.89,
-          notes: ["Rear angle is usable, but confirmed damage requires reviewer close inspection."]
+          notes: ["Rear three-quarter angle clearly shows the lower bumper damage area."]
         })),
         detectedDamageCandidates: [damageCandidate({
-          location: "rear bumper",
+          location: "rear bumper lower centre and passenger-side corner",
           damageType: "dent",
-          severityEstimate: "severe",
-          confidence: 0.9,
-          explanation: "Inspection photo indicates a rear bumper deformation."
+          severityEstimate: "moderate",
+          confidence: 0.91,
+          explanation: "Visible bumper deformation and paint scraping are present in the source-documented image."
         })],
         humanReviewRequired: true
       };
-    } else if (key.includes("driver-side-scratch")) {
+    } else if (key.includes("passenger-door-severe-dent")) {
       raw = {
-        ...cleanOutput("driver_side", 0.93, imageQuality({
+        ...cleanOutput("passenger_side", 0.93, imageQuality({
           grade: "review",
           blurScore: 0.9,
           framingScore: 0.9,
-          notes: ["Side panel is visible; scratch candidate should be confirmed against glare."]
+          notes: ["Passenger-side door collision damage is clearly framed for reviewer assessment."]
         })),
         detectedDamageCandidates: [damageCandidate({
-          location: "driver side door",
-          damageType: "scratch",
-          severityEstimate: "minor",
-          confidence: 0.86,
-          explanation: "Inspection photo indicates a visible linear scratch on the driver door."
+          location: "front passenger door",
+          damageType: "dent",
+          severityEstimate: "severe",
+          confidence: 0.96,
+          explanation: "The passenger door has major deformation and broken window-area components."
         })]
       };
     } else if (key.includes("glare")) {
@@ -295,7 +306,23 @@ export const localVisionProvider: VisionProvider = {
         extractedText: {},
         humanReviewRequired: true
       };
-    } else if (key.includes("interior-overview") || key.includes("interior-wear")) {
+    } else if (key.includes("interior-wear")) {
+      raw = {
+        ...cleanOutput("interior", 0.91, imageQuality({
+          grade: "review",
+          exposureScore: 0.86,
+          occlusionRisk: 0.12,
+          notes: ["The centre-console trim is removed and the shifter boot shows visible wear."]
+        })),
+        detectedDamageCandidates: [damageCandidate({
+          location: "centre console and shifter boot",
+          damageType: "interior_wear",
+          severityEstimate: "moderate",
+          confidence: 0.9,
+          explanation: "The console is disassembled and the shifter boot and surrounding trim show material wear."
+        })]
+      };
+    } else if (key.includes("interior-overview")) {
       raw = cleanOutput("interior", 0.91, imageQuality({
         grade: "review",
         exposureScore: 0.86,

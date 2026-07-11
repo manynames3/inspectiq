@@ -33,6 +33,11 @@ export type SamplePhotoSet = {
 
 const externalGalleryLicense = "External OEM gallery URL; image is referenced for model-matched review and not copied into this repository.";
 const externalListingLicense = "External dealer listing URL; image is referenced for source provenance and not copied into this repository.";
+const cc0License = "CC0 1.0 Universal Public Domain Dedication; resized for the evaluation corpus.";
+const publicDomainLicense = "Public domain; resized for the evaluation corpus.";
+const skodaRoomsterDamageSourceUrl = "https://commons.wikimedia.org/wiki/File:%C5%A0koda_Roomster_Blue_Dented.jpg";
+const passengerDoorDamageSourceUrl = "https://commons.wikimedia.org/wiki/File:Damaged_car_door.jpg";
+const interiorWearSourceUrl = "https://commons.wikimedia.org/wiki/File:Car_gear_shift_in_an_old_vehicle_interior_showing_signs_of_wear_and_tear_during_a_repair_session_in_an_auto_shop.jpg";
 const hyundaiTucsonCarfaxListingUrl = "https://www.carfax.com/vehicle/5NMJF3DE5RH407769";
 const toyotaCamryCarfaxListingUrl = "https://www.carfax.com/vehicle/4T1G11AK6MU422639";
 const toyotaCamryAutoNationListingUrl = "https://www.mercedesbenzofbellevue.com/used/Toyota/2021-Toyota-Camry-c2974925ac182b914f329186316cc6dd.htm";
@@ -174,13 +179,13 @@ export const sampleImages: SampleImage[] = [
   dealerListing("subaru-outback-vin-label", "2023-subaru-outback-vin-label.jpg", "https://cdn.ebizautos.media/used-2023-subaru-outback-premiumcvt-14413-23008396-10-640.jpg", "2023 Subaru Outback Premium driver-door VIN label area", "vin_plate", subaruOutbackDealerListingUrl, "A-Kar Auto Sales dealer listing"),
 
   { key: "front-clean", filename: "front-clean.jpg", label: "Front clean", angle: "front", mimeType: "image/jpeg", sourceName: "InspectIQ local fixture" },
-  { key: "rear-severe-damage", filename: "rear-severe-damage.jpg", label: "Rear damage", angle: "rear", mimeType: "image/jpeg", sourceName: "InspectIQ local fixture" },
+  { key: "skoda-roomster-rear-quarter-dent", filename: "skoda-roomster-rear-quarter-dent.jpg", label: "Rear bumper dent and paint damage", angle: "rear", mimeType: "image/jpeg", sourceName: "Wikimedia Commons - AVDLCZ", sourceUrl: skodaRoomsterDamageSourceUrl, sourceLicense: cc0License },
   { key: "odometer-closeup-64231", filename: "odometer-closeup-64231.png", label: "Odometer 64,231", angle: "odometer", mimeType: "image/png", sourceName: "Reference identity capture" },
   { key: "vin-plate-4t1g11ak8mu123456", filename: "vin-plate-4t1g11ak8mu123456.png", label: "VIN plate", angle: "vin_plate", mimeType: "image/png", sourceName: "Reference identity capture" },
-  { key: "driver-side-scratch", filename: "driver-side-scratch.jpg", label: "Driver side scratch", angle: "driver_side", mimeType: "image/jpeg", sourceName: "InspectIQ local fixture" },
+  { key: "passenger-door-severe-dent", filename: "passenger-door-severe-dent.jpg", label: "Passenger door collision damage", angle: "passenger_side", mimeType: "image/jpeg", sourceName: "Wikimedia Commons - Garitzko", sourceUrl: passengerDoorDamageSourceUrl, sourceLicense: publicDomainLicense },
   { key: "passenger-side-clean", filename: "passenger-side-clean.jpg", label: "Passenger side clean", angle: "passenger_side", mimeType: "image/jpeg", sourceName: "InspectIQ local fixture" },
   { key: "interior-overview", filename: "interior-overview.jpg", label: "Interior overview", angle: "interior", mimeType: "image/jpeg", sourceName: "InspectIQ local fixture" },
-  { key: "interior-wear", filename: "interior-wear.jpg", label: "Interior wear review", angle: "interior", mimeType: "image/jpeg", sourceName: "InspectIQ local fixture" },
+  { key: "interior-wear", filename: "interior-wear.jpg", label: "Interior wear and disassembly review", angle: "interior", mimeType: "image/jpeg", sourceName: "Wikimedia Commons - Shixart1985", sourceUrl: interiorWearSourceUrl, sourceLicense: "CC BY 2.0; resized for the evaluation corpus." },
   { key: "engine-bay-clean", filename: "engine-bay-clean.jpg", label: "Engine bay clean", angle: "engine_bay", mimeType: "image/jpeg", sourceName: "InspectIQ local fixture" },
   { key: "blurry-front", filename: "blurry-front.jpg", label: "Blurry front retake", angle: "front", mimeType: "image/jpeg", sourceName: "InspectIQ local fixture" },
   { key: "glare-front", filename: "glare-front.jpg", storageKey: "/sample-images/front-clean.jpg", label: "Front glare review", angle: "front", mimeType: "image/jpeg", sourceName: "InspectIQ local fixture" },
@@ -269,15 +274,15 @@ export const sampleBundles: Record<string, string[]> = {
     "odometer-closeup-64231"
   ],
   "arbitration-risk-set": [
-    "rear-severe-damage",
-    "driver-side-scratch",
+    "skoda-roomster-rear-quarter-dent",
+    "passenger-door-severe-dent",
     "interior-overview",
     "odometer-closeup-64231",
     "vin-plate-4t1g11ak8mu123456"
   ],
   "gate-imaging-partial-set": [
     "front-clean",
-    "rear-severe-damage",
+    "skoda-roomster-rear-quarter-dent",
     "passenger-side-clean",
     "vin-plate-4t1g11ak8mu123456"
   ],
