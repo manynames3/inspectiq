@@ -798,6 +798,11 @@ describe("InspectIQ API", () => {
         action: expect.stringContaining("replacement image")
       })
     ]));
+    expect(bundleAfterAccept.body.data.readinessIssues).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "image_analysis_failed"
+      })
+    ]));
 
     const audit = await request(api).get(`/api/inspections/${inspectionId}/audit-events`).set(inspectorHeaders).expect(200);
     const analyzedEvent = audit.body.data.find((event: { eventType: string }) => event.eventType === "photo.analyzed");

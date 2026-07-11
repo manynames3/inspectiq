@@ -1568,7 +1568,7 @@ export class MemoryStore {
         action: "Capture or accept a photo-angle suggestion."
       });
     }
-    const failedPhotos = photos.filter((photo) => photo.analysisStatus === "failed" || photo.qualityStatus === "fail");
+    const failedPhotos = photos.filter((photo) => photo.analysisStatus === "failed");
     for (const photo of failedPhotos) {
       issues.push({
         type: "image_analysis_failed",
