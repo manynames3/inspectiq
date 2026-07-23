@@ -51,6 +51,7 @@ import { findSampleImage, findSamplePhotoSet, sampleBundles, sampleImageDirector
 import { identityDataUrl, identitySourceLicense, identitySourceName, seedStore } from "./seedData.js";
 import { MemoryStore, store as defaultStore } from "./store.js";
 import { runWithRequestContext } from "./requestContext.js";
+import { decodeVehicleReference } from "./vpicClient.js";
 import type { Actor, DamageItem, FinalReport, Inspection, VehiclePhoto, VisionSuggestion } from "./domain.js";
 
 type AsyncRoute = (req: Request, res: Response, next: NextFunction) => Promise<void> | void;
@@ -859,6 +860,13 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     }, actor);
     await persistMutation(options);
     sendData(res, damage, 201);
+  }));
+
+  app.get("/api/inspections/:id/vehicle-reference", asyncRoute(async (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    const inspection = inspectionForRequest(appStore, req.params.id, actor, "view NHTSA VIN reference data for this inspection");
+    const vehicleReference = await decodeVehicleReference(inspection.vin, inspection.year);
+    sendData(res, vehicleReference);
   }));
 
   app.patch("/api/damage/:id", asyncRoute(async (req, res) => {

@@ -1,7 +1,7 @@
-import { AlertTriangle, ArrowDown, Bot, Check, ChevronLeft, ChevronRight, Download, FileText, Filter, GitCompare, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, BadgeInfo, Bot, Check, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Filter, GitCompare, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X } from "lucide-react";
 import { estimateDamageRepairCost, maxImageUploadBytes, maxLocalPreviewUploadBytes, requiredPhotoAngles, supportedImageUploadMimeTypes } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiClientError, apiUrl, assetUrl, requestHeaders } from "../api.js";
 import { useActor } from "../App.js";
 import { isEvaluationSession, storedLocalSession } from "../auth.js";
@@ -9,7 +9,7 @@ import { StatusPill } from "../components/StatusPill.js";
 import { conditionGradeView, formatConditionGrade } from "../conditionGrade.js";
 import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider } from "../evidenceProvenance.js";
 import { deriveMarketplaceReadiness, formatReportReadiness } from "../marketplaceReadiness.js";
-import type { Inspection, InspectionBundle, PhotoAnalysisResult, ReportVersion, SamplePhotoSet, VehiclePhoto, VisionSuggestion } from "../types.js";
+import type { Inspection, InspectionBundle, PhotoAnalysisResult, ReportVersion, SamplePhotoSet, VehiclePhoto, VehicleReference, VisionSuggestion } from "../types.js";
 import { inspectionNeedsWork, isReviewQueueInspection } from "../workflowMetrics.js";
 
 const requiredAngles = [...requiredPhotoAngles];
@@ -587,6 +587,7 @@ async function waitForPhotoAnalysisCompletion(inspectionId: string, photoIds: st
 
 export function InspectionDetailPage() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const { actor, can } = useActor();
   const [bundle, setBundle] = useState<InspectionBundle | null>(null);
   const [inspections, setInspections] = useState<Inspection[]>([]);
@@ -612,6 +613,10 @@ export function InspectionDetailPage() {
   const [reportComment, setReportComment] = useState("");
   const [reportVersions, setReportVersions] = useState<ReportVersion[]>([]);
   const [comparedReportVersion, setComparedReportVersion] = useState<ReportVersion | null>(null);
+  const [vehicleReferenceOpen, setVehicleReferenceOpen] = useState(searchParams.get("reference") === "nhtsa");
+  const [vehicleReference, setVehicleReference] = useState<VehicleReference | null>(null);
+  const [vehicleReferenceLoading, setVehicleReferenceLoading] = useState(false);
+  const [vehicleReferenceError, setVehicleReferenceError] = useState<string | null>(null);
 
   async function load() {
     if (!id) return;
@@ -659,9 +664,34 @@ export function InspectionDetailPage() {
     }
   }
 
+  async function loadVehicleReference() {
+    if (!id || vehicleReferenceLoading) return;
+    setVehicleReferenceLoading(true);
+    setVehicleReferenceError(null);
+    try {
+      setVehicleReference(await api<VehicleReference>(`/api/inspections/${id}/vehicle-reference`, {}, actor));
+    } catch (err) {
+      setVehicleReferenceError(err instanceof Error ? err.message : "NHTSA VIN decoding is unavailable.");
+    } finally {
+      setVehicleReferenceLoading(false);
+    }
+  }
+
   useEffect(() => {
     void load().catch((err) => setError(err instanceof Error ? err.message : "Failed to load inspection."));
   }, [id, actor]);
+
+  useEffect(() => {
+    setVehicleReference(null);
+    setVehicleReferenceError(null);
+    setVehicleReferenceOpen(searchParams.get("reference") === "nhtsa");
+  }, [id, searchParams]);
+
+  useEffect(() => {
+    if (vehicleReferenceOpen && !vehicleReference && !vehicleReferenceLoading && !vehicleReferenceError) {
+      void loadVehicleReference();
+    }
+  }, [vehicleReferenceOpen, vehicleReference, vehicleReferenceLoading, vehicleReferenceError, id, actor]);
 
   const confirmedAngles = useMemo(() => {
     const values = new Set<string>();
@@ -803,6 +833,10 @@ export function InspectionDetailPage() {
   const analysisDisabled = busy !== null || isFinalizedInspection || !canAnalyzePhotos;
   const reviewDisabled = busy !== null || isFinalizedInspection || !canReviewSuggestions;
   const damageDisabled = busy !== null || isFinalizedInspection || !canConfirmDamage;
+  const damageDisabledReason = isEvaluationWorkspace
+    ? "Read-only evaluation workspace. Sign in with Cognito to record confirmed damage."
+    : finalizedActionTitle
+      ?? (!canConfirmDamage ? "Inspector, Reviewer, or Admin access required." : undefined);
   const gradeDisabled = busy !== null || isFinalizedInspection || !canGrade;
   const approveGradeDisabled = busy !== null || isFinalizedInspection || !canApproveGrade || gradeView?.reviewState !== "suggested" || gradeEvidenceBlockers.length > 0;
   const draftReportDisabled = busy !== null || isFinalizedInspection || !canDraftReport || !canRequestReportDraft;
@@ -1001,6 +1035,14 @@ export function InspectionDetailPage() {
               <button className={`secondary-button dense-toggle ${queueCollapsed ? "active" : ""}`} onClick={() => setQueueCollapsed((current) => !current)}>{queueCollapsed ? "Show queue" : "Hide queue"}</button>
               <button className={`secondary-button dense-toggle ${reviewRailCollapsed ? "active" : ""}`} onClick={() => setReviewRailCollapsed((current) => !current)}>{reviewRailCollapsed ? "Show review" : "Hide review"}</button>
               <button
+                className={`secondary-button ${vehicleReferenceOpen ? "active" : ""}`}
+                aria-expanded={vehicleReferenceOpen}
+                aria-controls="vehicle-reference-panel"
+                onClick={() => setVehicleReferenceOpen((current) => !current)}
+              >
+                <BadgeInfo size={16} /> VIN details
+              </button>
+              <button
                 className="secondary-button"
                 disabled={isFinalizedInspection || !canAssignSuggestions || pendingSuggestions.length === 0 || busy !== null}
                 title={finalizedActionTitle ?? (!canAssignSuggestions ? "Reviewer or Admin access required" : pendingSuggestions.length === 0 ? "No open findings to assign" : undefined)}
@@ -1020,6 +1062,56 @@ export function InspectionDetailPage() {
             </div>
           </div>
           <div className="detail-readiness-header">
+            {vehicleReferenceOpen ? (
+              <section id="vehicle-reference-panel" className="vehicle-reference-panel" aria-label="NHTSA VIN reference">
+                <div className="vehicle-reference-heading">
+                  <div>
+                    <span className="eyebrow">Vehicle reference</span>
+                    <strong>NHTSA vPIC VIN decode</strong>
+                    <small>Manufacturer-submitted specifications. This is not an accident, title, ownership, or condition-history report.</small>
+                  </div>
+                  <button className="icon-button" aria-label="Close VIN details" onClick={() => setVehicleReferenceOpen(false)}>
+                    <X size={16} />
+                  </button>
+                </div>
+                {vehicleReferenceLoading ? <p className="vehicle-reference-state">Retrieving NHTSA vehicle specifications...</p> : null}
+                {vehicleReferenceError ? (
+                  <div className="vehicle-reference-error">
+                    <span>{vehicleReferenceError}</span>
+                    <button className="secondary-button" onClick={() => void loadVehicleReference()}><RefreshCw size={14} /> Retry</button>
+                  </div>
+                ) : null}
+                {vehicleReference ? (
+                  <>
+                    <div className={`vehicle-reference-validation ${vehicleReference.validVin ? "valid" : "review"}`}>
+                      <strong>{vehicleReference.validVin ? "VIN decoded cleanly" : "VIN needs review"}</strong>
+                      <span>{vehicleReference.validationMessage}</span>
+                    </div>
+                    <dl className="vehicle-reference-grid">
+                      {[
+                        ["Vehicle", [vehicleReference.specifications.modelYear, vehicleReference.specifications.make, vehicleReference.specifications.model].filter(Boolean).join(" ")],
+                        ["Trim / series", [vehicleReference.specifications.trim, vehicleReference.specifications.series].filter((value, index, values) => value && values.indexOf(value) === index).join(" · ")],
+                        ["Body class", vehicleReference.specifications.bodyClass],
+                        ["Drive type", vehicleReference.specifications.driveType],
+                        ["Fuel", vehicleReference.specifications.fuelType],
+                        ["Engine", vehicleReference.specifications.engine],
+                        ["Manufacturer", vehicleReference.specifications.manufacturer],
+                        ["Assembly plant", vehicleReference.specifications.plant]
+                      ].filter((item) => item[1]).map(([label, value]) => (
+                        <div key={label}>
+                          <dt>{label}</dt>
+                          <dd>{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <div className="vehicle-reference-source">
+                      <span>Retrieved {new Date(vehicleReference.retrievedAt).toLocaleString()} from {vehicleReference.provider}</span>
+                      <a href={vehicleReference.sourceUrl} target="_blank" rel="noreferrer">View NHTSA response <ExternalLink size={13} /></a>
+                    </div>
+                  </>
+                ) : null}
+              </section>
+            ) : null}
             <div className="marketplace-readiness-strip" aria-label="Marketplace readiness">
               <span className={marketplaceReadiness.crStatus === "CR ready" ? "ready" : "blocked"}>
                 <strong>{reportReadiness.label}</strong>
@@ -1300,10 +1392,11 @@ export function InspectionDetailPage() {
                     <select disabled={damageDisabled} value={damageForm.severity} onChange={(event) => setDamageForm((current) => ({ ...current, severity: event.target.value }))}>
                       {["minor", "moderate", "severe", "unknown"].map((value) => <option key={value}>{value}</option>)}
                     </select>
-                    <button className="secondary-button" disabled={damageDisabled} title={finalizedActionTitle ?? (canConfirmDamage ? undefined : "Reviewer or Admin access required")} onClick={() => void runAction("damage", () => api(`/api/inspections/${id}/damage`, { method: "POST", body: JSON.stringify(damageForm) }, actor))}>
+                    <button className="secondary-button" disabled={damageDisabled} title={damageDisabledReason} onClick={() => void runAction("damage", () => api(`/api/inspections/${id}/damage`, { method: "POST", body: JSON.stringify(damageForm) }, actor))}>
                       <Pencil size={16} /> Add
                     </button>
                   </div>
+                  {damageDisabledReason ? <p className="damage-permission-note">{damageDisabledReason}</p> : null}
                 </div>
               )}
             </article>

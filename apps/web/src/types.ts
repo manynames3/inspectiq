@@ -211,6 +211,30 @@ export type InspectionBundle = {
   buyerVisibleReady: boolean;
 };
 
+export type VehicleReference = {
+  provider: "NHTSA vPIC";
+  sourceUrl: string;
+  retrievedAt: string;
+  cached: boolean;
+  vin: string;
+  validVin: boolean;
+  validationMessage: string;
+  specifications: {
+    modelYear: string | null;
+    make: string | null;
+    model: string | null;
+    trim: string | null;
+    series: string | null;
+    bodyClass: string | null;
+    vehicleType: string | null;
+    driveType: string | null;
+    fuelType: string | null;
+    engine: string | null;
+    manufacturer: string | null;
+    plant: string | null;
+  };
+};
+
 export type SampleImage = {
   key: string;
   filename: string;

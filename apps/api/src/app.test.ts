@@ -226,6 +226,49 @@ describe("InspectIQ API", () => {
     ]));
   });
 
+  it("lets the assigned inspector and an admin add manual damage while evaluation roles remain read-only", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+
+    await request(api)
+      .post(`/api/inspections/${inspectionId}/damage`)
+      .set(inspectorHeaders)
+      .send({
+        location: "right rear wheel",
+        damageType: "wheel_damage",
+        severity: "minor",
+        notes: "Inspector-confirmed curb rash."
+      })
+      .expect(201);
+
+    await request(api)
+      .post(`/api/inspections/${inspectionId}/damage`)
+      .set(adminHeaders)
+      .send({
+        location: "front bumper",
+        damageType: "scratch",
+        severity: "minor",
+        notes: "Admin-confirmed paint transfer."
+      })
+      .expect(201);
+
+    process.env.ENABLE_EVALUATION_MODE = "true";
+    for (const role of ["inspector", "admin"]) {
+      await request(api)
+        .post(`/api/evaluation/inspections/${inspectionId}/damage`)
+        .set("x-actor-role", role)
+        .send({
+          location: "left rear door",
+          damageType: "dent",
+          severity: "minor",
+          notes: "Evaluation attempt."
+        })
+        .expect(403);
+    }
+
+    expect(store.listDamage(inspectionId)).toHaveLength(2);
+  });
+
   it("enforces consignor scope and completes overrun and failed-QC recovery through the API", async () => {
     const queue = await request(api)
       .get("/api/operations/recon")

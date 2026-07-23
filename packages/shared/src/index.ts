@@ -220,7 +220,8 @@ export const rolePermissions: Record<UserRole, RoleAction[]> = {
     "inspection:workflow",
     "vehicle:check_in",
     "photo:capture",
-    "photo:analyze"
+    "photo:analyze",
+    "damage:create"
   ],
   reviewer: [
     "inspection:workflow",
@@ -283,7 +284,7 @@ export const roleActionLabels: Record<RoleAction, string> = {
 };
 
 export const roleDescriptions: Record<UserRole, string> = {
-  inspector: "Capture vehicle evidence and run image analysis.",
+  inspector: "Capture vehicle evidence, record observed damage, and run image analysis.",
   reviewer: "Confirm AI findings, grade inspections, and finalize reports.",
   recon_coordinator: "Prepare recon estimates, manage authorized work, and verify completion.",
   consignor_approver: "Approve or decline recon spending for authorized consignor accounts.",

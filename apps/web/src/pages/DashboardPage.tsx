@@ -99,7 +99,12 @@ export function DashboardPage() {
                   <strong>{inspection.year} {inspection.make} {inspection.model}</strong>
                   <small>{inspection.trim || "Base"} · {inspection.mileage.toLocaleString()} mi</small>
                 </td>
-                <td>{inspection.vin}</td>
+                <td>
+                  <span className="vin-cell">{inspection.vin}</span>
+                  <Link className="vin-reference-link" to={`/inspections/${inspection.id}?reference=nhtsa`}>
+                    NHTSA decode
+                  </Link>
+                </td>
                 <td><StatusPill status={inspection.status} /></td>
                 <td>
                   <div className="progress-cell">
