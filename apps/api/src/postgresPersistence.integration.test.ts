@@ -37,6 +37,11 @@ integration("Postgres row persistence", () => {
       inspectorName: "CI Inspector"
     }, actor);
     inspectionId = inspection.id;
+    store.recon.createConsignorAccount({
+      name: "Postgres JSON Account",
+      accountType: "DEALERSHIP",
+      authorizedUserIds: [actor.id]
+    }, actor);
     await savePostgresRows(store, pool);
 
     const migrations = await pool.query<{ version: string }>("select version from schema_migrations order by version");
@@ -52,6 +57,11 @@ integration("Postgres row persistence", () => {
     expect(Number(persisted.rows[0]?.inspections)).toBe(1);
     expect(Number(persisted.rows[0]?.audits)).toBe(1);
     expect(Number(persisted.rows[0]?.events)).toBe(1);
+    const account = await pool.query<{ authorized_user_ids_json: string[] }>(
+      "select authorized_user_ids_json from consignor_accounts where name = $1",
+      ["Postgres JSON Account"]
+    );
+    expect(account.rows[0]?.authorized_user_ids_json).toEqual([actor.id]);
   });
 
   it("rejects a stale reviewer update and rolls back its audit row", async () => {

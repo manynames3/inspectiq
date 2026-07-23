@@ -96,7 +96,10 @@ function delay(ms: number): Promise<void> {
 
 async function upsertRows(client: PoolClient, table: string, columns: string[], rows: unknown[][]): Promise<void> {
   if (rows.length === 0) return;
-  const values = rows.flat();
+  const values = rows.flatMap((row) => row.map((value, columnIndex) => {
+    if (!columns[columnIndex]?.endsWith("_json") || value === null || value === undefined) return value;
+    return JSON.stringify(value);
+  }));
   const rowSql = rows.map((row, rowIndex) => {
     const slots = row.map((_, colIndex) => `$${rowIndex * columns.length + colIndex + 1}`);
     return `(${slots.join(", ")})`;
