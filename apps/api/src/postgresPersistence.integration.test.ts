@@ -43,7 +43,8 @@ integration("Postgres row persistence", () => {
     expect(migrations.rows.map((row) => row.version)).toEqual([
       "0001_event_foundation.sql",
       "0002_report_versions.sql",
-      "0003_analysis_metadata.sql"
+      "0003_analysis_metadata.sql",
+      "0004_inspection_recon.sql"
     ]);
     const persisted = await pool.query(
       "select (select count(*) from inspections) inspections, (select count(*) from audit_events) audits, (select count(*) from domain_events) events"

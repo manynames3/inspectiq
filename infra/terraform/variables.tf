@@ -18,7 +18,8 @@ variable "allowed_web_origins" {
   type = list(string)
   default = [
     "https://inspectiq.pages.dev",
-    "https://d2d7ad14.inspectiq.pages.dev"
+    "https://d2d7ad14.inspectiq.pages.dev",
+    "https://agent-inspection-recon-opera.inspectiq.pages.dev"
   ]
 }
 
