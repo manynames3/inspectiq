@@ -109,3 +109,15 @@ test("visual regression freezes browser time before capturing SLA-sensitive view
   assert.ok(fixedTimeIndex >= 0, "SLA labels and session expiry must not depend on CI wall-clock time");
   assert.ok(fixedTimeIndex < firstCaptureIndex, "browser time must be frozen before any screenshot is captured");
 });
+
+test("manual Cloudflare deployment can deliberately target production", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/deploy-cloudflare-pages.yml", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(workflow, /production:\n\s+description: Deploy the selected ref to the production Pages branch/);
+  assert.match(workflow, /if \[ "\$GITHUB_EVENT_NAME" = "push" \] \|\| \[ "\$DEPLOY_PRODUCTION" = "true" \]/);
+  assert.match(workflow, /echo "branch=main" >> "\$GITHUB_OUTPUT"/);
+  assert.match(workflow, /--branch="\$\{\{ steps\.pages\.outputs\.branch \}\}"/);
+});

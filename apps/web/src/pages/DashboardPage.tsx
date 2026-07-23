@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { useActor } from "../App.js";
 import { StatusPill } from "../components/StatusPill.js";
+import { formatConditionGrade } from "../conditionGrade.js";
 import type { Inspection } from "../types.js";
 import { isCaptureQueueInspection, isReviewQueueInspection } from "../workflowMetrics.js";
 
@@ -107,7 +108,7 @@ export function DashboardPage() {
                   </div>
                 </td>
                 <td>{inspection.conditionGrade
-                  ? `${(inspection.conditionGrade.approvedGrade ?? inspection.conditionGrade.suggestedGrade).toFixed(1)} / 5.0${inspection.conditionGrade.approvedGrade == null ? " suggested" : ""}`
+                  ? formatConditionGrade(inspection.conditionGrade, true)
                   : "Not graded"}</td>
                 <td>{inspection.buyerVisibleReady ? "Buyer-visible" : inspection.humanReviewFlag ? <span className="review-flag"><AlertTriangle size={14} /> Review hold</span> : `${inspection.readinessIssueCount ?? 0} blockers`}</td>
                 <td>{new Date(inspection.updatedAt).toLocaleString()}</td>

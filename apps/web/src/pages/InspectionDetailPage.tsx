@@ -6,6 +6,7 @@ import { api, ApiClientError, apiUrl, assetUrl, requestHeaders } from "../api.js
 import { useActor } from "../App.js";
 import { isEvaluationSession, storedLocalSession } from "../auth.js";
 import { StatusPill } from "../components/StatusPill.js";
+import { conditionGradeView, formatConditionGrade } from "../conditionGrade.js";
 import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider } from "../evidenceProvenance.js";
 import { deriveMarketplaceReadiness, formatReportReadiness } from "../marketplaceReadiness.js";
 import type { Inspection, InspectionBundle, PhotoAnalysisResult, ReportVersion, SamplePhotoSet, VehiclePhoto, VisionSuggestion } from "../types.js";
@@ -765,6 +766,10 @@ export function InspectionDetailPage() {
   const watchIssues = (bundle.readinessIssues ?? []).filter((issue) => issue.severity === "watch");
   const visibleReadinessIssues = [...blockerIssues, ...watchIssues].slice(0, 3);
   const gradeDeductions = conditionGradeDeductions(bundle.conditionGrade);
+  const gradeView = conditionGradeView(bundle.conditionGrade);
+  const gradeEvidenceBlockers = Array.isArray(bundle.conditionGrade?.evidenceBlockers)
+    ? bundle.conditionGrade.evidenceBlockers
+    : [];
   const reportOutput = reportOutputView(bundle.aiReportDraft);
   const reportSummary = reportOutput.summary
     ?? bundle.finalReport?.reportBody.split("\n").find((line) => line.trim().length > 0)?.replace(/^Summary:\s*/i, "")
@@ -799,7 +804,7 @@ export function InspectionDetailPage() {
   const reviewDisabled = busy !== null || isFinalizedInspection || !canReviewSuggestions;
   const damageDisabled = busy !== null || isFinalizedInspection || !canConfirmDamage;
   const gradeDisabled = busy !== null || isFinalizedInspection || !canGrade;
-  const approveGradeDisabled = busy !== null || isFinalizedInspection || !canApproveGrade || !bundle.conditionGrade || bundle.conditionGrade.approvedGrade != null || bundle.conditionGrade.evidenceBlockers.length > 0;
+  const approveGradeDisabled = busy !== null || isFinalizedInspection || !canApproveGrade || gradeView?.reviewState !== "suggested" || gradeEvidenceBlockers.length > 0;
   const draftReportDisabled = busy !== null || isFinalizedInspection || !canDraftReport || !canRequestReportDraft;
   const editReportDisabled = isFinalizedInspection || !canEditReport;
   const approveReportDisabled = !bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || isFinalizedInspection || !canApproveReport || busy !== null;
@@ -1235,11 +1240,11 @@ export function InspectionDetailPage() {
                 <div className="dock-body grading-dock-body">
                   <div className="panel-header">
                     <h2>Condition grading</h2>
-                    <span>{bundle.conditionGrade?.approvedGrade != null ? "Reviewer approved" : bundle.conditionGrade ? "Approval required" : "Not calculated"}</span>
+                    <span>{gradeView?.reviewState === "approved" ? "Reviewer approved" : gradeView ? "Approval required" : bundle.conditionGrade ? "Grade unavailable" : "Not calculated"}</span>
                   </div>
                   <div className="grade-result-card">
-                    <strong>{bundle.conditionGrade ? `${(bundle.conditionGrade.approvedGrade ?? bundle.conditionGrade.suggestedGrade).toFixed(1)} / 5.0` : "Grade pending"}</strong>
-                    <span>{bundle.conditionGrade ? "Reference grade based on required evidence and reviewer-confirmed condition findings." : "Calculate the grade after required photo evidence is confirmed."}</span>
+                    <strong>{bundle.conditionGrade ? formatConditionGrade(bundle.conditionGrade) : "Grade pending"}</strong>
+                    <span>{gradeView ? "Reference grade based on required evidence and reviewer-confirmed condition findings." : bundle.conditionGrade ? "This grade record is incompatible and must be recalculated." : "Calculate the grade after required photo evidence is confirmed."}</span>
                   </div>
                   <div className="grading-stat-grid">
                     <span><strong>{capturedEvidencePercent}%</strong><small>Evidence complete</small></span>
@@ -1254,7 +1259,7 @@ export function InspectionDetailPage() {
                         <small>-{deduction.amount.toFixed(1)}</small>
                       </span>
                     )) : <p className="empty-dock-state">No damage deductions recorded.</p>}
-                    {bundle.conditionGrade?.evidenceBlockers.map((blocker) => (
+                    {gradeEvidenceBlockers.map((blocker) => (
                       <span key={blocker}><strong>Evidence blocker</strong><small>{blocker}</small></span>
                     ))}
                   </div>
@@ -1262,12 +1267,12 @@ export function InspectionDetailPage() {
                     <button className="secondary-button" disabled={gradeDisabled} title={finalizedActionTitle ?? (canGrade ? undefined : "Reviewer or Admin access required")} onClick={() => void runAction("grade", () => api(`/api/inspections/${id}/grade`, { method: "POST", body: JSON.stringify({ idempotencyKey: `grade-${id}` }) }, actor))}>
                       <ShieldCheck size={16} /> Calculate grade
                     </button>
-                    {bundle.conditionGrade?.approvedGrade == null && bundle.conditionGrade ? (
-                      <button className="primary-button" disabled={approveGradeDisabled} title={bundle.conditionGrade.evidenceBlockers.length > 0 ? "Resolve evidence blockers before approval." : undefined} onClick={() => void runAction("approve-grade", () => api(`/api/inspections/${id}/condition-grade/approve`, {
+                    {gradeView?.reviewState === "suggested" ? (
+                      <button className="primary-button" disabled={approveGradeDisabled} title={gradeEvidenceBlockers.length > 0 ? "Resolve evidence blockers before approval." : undefined} onClick={() => void runAction("approve-grade", () => api(`/api/inspections/${id}/condition-grade/approve`, {
                         method: "POST",
-                        body: JSON.stringify({ approvedGrade: bundle.conditionGrade!.suggestedGrade })
+                        body: JSON.stringify({ approvedGrade: gradeView.value })
                       }, actor))}>
-                        <Check size={16} /> Approve {bundle.conditionGrade.suggestedGrade.toFixed(1)}
+                        <Check size={16} /> Approve {gradeView.value.toFixed(1)}
                       </button>
                     ) : null}
                   </div>
@@ -1323,8 +1328,8 @@ export function InspectionDetailPage() {
                     </div>
                   ) : null}
                   <div className="grade-strip">
-                    <strong>{bundle.conditionGrade ? `${(bundle.conditionGrade.approvedGrade ?? bundle.conditionGrade.suggestedGrade).toFixed(1)} / 5.0` : "Grade not calculated"}</strong>
-                    <span>{bundle.conditionGrade?.approvedGrade != null ? "Reviewer-approved reference grade." : bundle.conditionGrade ? "Suggested grade requires reviewer approval." : "Condition grade appears after grading."}</span>
+                    <strong>{bundle.conditionGrade ? formatConditionGrade(bundle.conditionGrade) : "Grade not calculated"}</strong>
+                    <span>{gradeView?.reviewState === "approved" ? "Reviewer-approved reference grade." : gradeView ? "Suggested grade requires reviewer approval." : bundle.conditionGrade ? "Recalculate this incompatible grade record." : "Condition grade appears after grading."}</span>
                   </div>
                   {bundle.aiReportDraft ? (
                     <div className="ai-draft" tabIndex={0} role="region" aria-label="AI report draft summary">
