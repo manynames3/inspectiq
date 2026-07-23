@@ -8,7 +8,7 @@ create table if not exists schema_migrations (
 create table if not exists users (
   id text primary key default gen_random_uuid()::text,
   name text not null,
-  role text not null check (role in ('inspector', 'reviewer', 'admin')),
+  role text not null check (role in ('inspector', 'reviewer', 'recon_coordinator', 'consignor_approver', 'technician', 'admin')),
   created_at timestamptz not null default now()
 );
 
@@ -171,11 +171,18 @@ create table if not exists identity_verifications (
 create table if not exists condition_grades (
   id text primary key default gen_random_uuid()::text,
   inspection_id text not null references inspections(id) on delete cascade,
-  score integer not null,
-  grade text not null check (grade in ('A', 'B', 'C', 'D', 'F')),
+  suggested_grade numeric(2, 1) not null check (suggested_grade between 0 and 5),
+  approved_grade numeric(2, 1) check (approved_grade is null or approved_grade between 0 and 5),
+  condition_grade_before_recon numeric(2, 1) not null check (condition_grade_before_recon between 0 and 5),
+  estimated_grade_after_recon numeric(2, 1) not null check (estimated_grade_after_recon between 0 and 5),
+  reviewed_by text references users(id),
+  override_reason text,
+  evidence_blockers_json jsonb not null default '[]'::jsonb,
   explanation_json jsonb not null,
   grading_version text not null,
-  created_at timestamptz not null default now()
+  version integer not null default 1 check (version > 0),
+  created_at timestamptz not null default now(),
+  reviewed_at timestamptz
 );
 
 create table if not exists ai_report_jobs (
@@ -250,7 +257,7 @@ create table if not exists domain_events (
   schema_version text not null default '1.0',
   inspection_id text not null references inspections(id) on delete cascade,
   actor_id text not null,
-  actor_role text not null check (actor_role in ('inspector', 'reviewer', 'admin')),
+  actor_role text not null check (actor_role in ('inspector', 'reviewer', 'recon_coordinator', 'consignor_approver', 'technician', 'admin')),
   correlation_id text not null,
   payload_json jsonb not null,
   status text not null default 'pending' check (status in ('pending', 'delivered', 'failed')),

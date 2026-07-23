@@ -1,4 +1,4 @@
-import { Activity, Check, CircleHelp, ClipboardCheck, Clock3, FileText, LayoutDashboard, Menu, Plus, Search, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
+import { Activity, Check, CircleHelp, ClipboardCheck, Clock3, FileText, LayoutDashboard, Menu, Plus, Search, ShieldCheck, Sparkles, TriangleAlert, Warehouse, Wrench } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { canRole, rolePermissions, type RoleAction } from "@inspectiq/shared";
@@ -36,15 +36,17 @@ export function useActor(): ActorContextValue {
   return context;
 }
 
-const navItems = [
+const navItems: Array<{ to: string; label: string; icon: typeof LayoutDashboard; roles?: Actor["role"][] }> = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/new", label: "New Inspection", icon: Plus },
-  { to: "/inspections", label: "Inspection", icon: Search },
-  { to: "/suggestions", label: "Suggestions", icon: Sparkles },
-  { to: "/damage", label: "Damage", icon: TriangleAlert },
-  { to: "/reports", label: "Report", icon: FileText },
+  { to: "/new", label: "New Inspection", icon: Plus, roles: ["inspector", "admin"] },
+  { to: "/inspections", label: "Inspection", icon: Search, roles: ["inspector", "reviewer", "admin"] },
+  { to: "/suggestions", label: "Suggestions", icon: Sparkles, roles: ["inspector", "reviewer", "admin"] },
+  { to: "/damage", label: "Damage", icon: TriangleAlert, roles: ["reviewer", "recon_coordinator", "admin"] },
+  { to: "/reports", label: "Report", icon: FileText, roles: ["reviewer", "recon_coordinator", "consignor_approver", "admin"] },
+  { to: "/operations", label: "Recon Operations", icon: Warehouse, roles: ["reviewer", "recon_coordinator", "consignor_approver", "technician", "admin"] },
+  { to: "/shop", label: "Shop Board", icon: Wrench, roles: ["recon_coordinator", "technician", "admin"] },
   { to: "/audit", label: "Audit", icon: ShieldCheck },
-  { to: "/platform-health", label: "Platform Health", icon: Activity }
+  { to: "/platform-health", label: "Platform Health", icon: Activity, roles: ["admin"] }
 ];
 
 const topbarMetrics = [
@@ -162,7 +164,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!isOidcEnabled || !authReady || authSession || !canUseEvaluationMode) return;
+    if (!authReady || authSession || !canUseEvaluationMode) return;
 
     const url = new URL(window.location.href);
     const wantsReviewAccess = url.searchParams.get("review") === "1" || url.searchParams.get("evaluation") === "1";
@@ -172,7 +174,7 @@ export function App() {
     url.searchParams.delete("evaluation");
     window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
     startEvaluation();
-  }, [authReady, authSession, canUseEvaluationMode, isOidcEnabled, startEvaluation]);
+  }, [authReady, authSession, canUseEvaluationMode, startEvaluation]);
 
   const sessionSummaryText = activeSession
     ? isEvaluationMode
@@ -187,6 +189,8 @@ export function App() {
     if (label === "Suggestions") return location.pathname === "/suggestions";
     if (label === "Damage") return location.pathname === "/damage";
     if (label === "Report") return location.pathname === "/reports";
+    if (label === "Recon Operations") return location.pathname.startsWith("/operations");
+    if (label === "Shop Board") return location.pathname === "/shop";
     if (label === "Audit") return location.pathname === "/audit";
     if (label === "Platform Health") return location.pathname === "/platform-health";
     return false;
@@ -215,7 +219,7 @@ export function App() {
               <strong>InspectIQ</strong>
             </Link>
             <nav className="nav-list" aria-label="Main navigation">
-              {navItems.map((item) => {
+              {navItems.filter((item) => !item.roles || item.roles.includes(actor.role)).map((item) => {
                 const Icon = item.icon;
                 return (
                   <Link key={`${item.label}-${item.to}`} to={item.to} className={isActive(item.label, item.to) ? "active" : ""}>
@@ -237,6 +241,9 @@ export function App() {
                   <select value={actor.role} disabled={Boolean(authSession) || !activeSession} onChange={(event) => changeRole(event.target.value as Actor["role"])}>
                     <option value="inspector">Inspector</option>
                     <option value="reviewer">Reviewer</option>
+                    <option value="recon_coordinator">Recon Coordinator</option>
+                    <option value="consignor_approver">Consignor Approver</option>
+                    <option value="technician">Technician</option>
                     <option value="admin">Admin</option>
                   </select>
                 </label>
@@ -365,6 +372,27 @@ function LocalSessionGate({ onStart }: { onStart: (role: Actor["role"]) => void 
       name: "Review Lead",
       scope: "Human review queue",
       work: "Resolve AI suggestions, confirm damage, grade, draft, and finalize reports."
+    },
+    {
+      role: "recon_coordinator",
+      title: "Recon Coordinator",
+      name: "Alex Rivera",
+      scope: "Authorization and shop coordination",
+      work: "Prepare estimates, route approvals, manage work orders, and verify sale readiness."
+    },
+    {
+      role: "consignor_approver",
+      title: "Consignor Approver",
+      name: "Morgan Ellis",
+      scope: "Authorized consignor accounts",
+      work: "Approve, decline, or request revision of recon spending before work begins."
+    },
+    {
+      role: "technician",
+      title: "Technician",
+      name: "Sam Patel",
+      scope: "Assigned facility work",
+      work: "Start assigned work, report blockers, revise estimates, and send completed tasks to QC."
     },
     {
       role: "admin",

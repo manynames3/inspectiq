@@ -9,7 +9,7 @@ const executablePath = existsSync(chromePath) ? chromePath : undefined;
 
 function generatedReviewVin() {
   const suffix = Date.now().toString(36).toUpperCase().replace(/[IOQ]/g, "X").slice(-9);
-  return `5NMS2DAJ${suffix}`.padEnd(17, "0").slice(0, 17);
+  return `1FMCU9H6${suffix}`.padEnd(17, "0").slice(0, 17);
 }
 
 function fail(message) {
@@ -61,6 +61,11 @@ page.on("console", (message) => {
 page.on("pageerror", (error) => {
   consoleIssues.push(`pageerror: ${error.message}`);
 });
+page.on("response", (response) => {
+  if (response.status() >= 400) {
+    consoleIssues.push(`http ${response.status()}: ${response.url()}`);
+  }
+});
 
 try {
   const uniqueVin = generatedReviewVin();
@@ -78,12 +83,12 @@ try {
   await waitForBodyText(page, "New Inspection");
 
   await page.getByLabel(/^vin$/i).fill(uniqueVin);
-  await page.getByLabel(/^year$/i).fill("2024");
-  await page.getByLabel(/^make$/i).fill("Hyundai");
-  await page.getByLabel(/^model$/i).fill("Tucson");
+  await page.getByLabel(/^year$/i).fill("2022");
+  await page.getByLabel(/^make$/i).fill("Ford");
+  await page.getByLabel(/^model$/i).fill("Escape");
   await page.getByLabel(/^trim$/i).fill("SEL");
-  await page.getByLabel(/^mileage$/i).fill("14250");
-  await page.getByLabel(/exterior color/i).fill("Gray");
+  await page.getByLabel(/^mileage$/i).fill("31992");
+  await page.getByLabel(/exterior color/i).fill("Iced Blue Silver Metallic");
   await page.getByLabel(/seller source/i).fill("Wholesale offsite lane");
   await page.getByLabel(/inspector name/i).fill("E2E Inspector");
   await page.getByRole("button", { name: /create inspection/i }).click();
@@ -114,7 +119,9 @@ try {
   await waitForBodyText(page, "Grade ready");
 
   await page.getByRole("button", { name: /calculate grade/i }).click();
-  await waitForBodyText(page, "Score based on evidence completeness");
+  await waitForBodyText(page, "Reference grade based on required evidence and reviewer-confirmed condition findings");
+  await page.getByRole("button", { name: /^approve \d\.\d$/i }).click();
+  await waitForBodyText(page, "Reviewer approved");
   await waitForBodyText(page, "Ready for report");
   await page.getByRole("button", { name: /draft report/i }).click();
   await waitForBodyText(page, "Draft summary");

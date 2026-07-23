@@ -305,6 +305,27 @@ resource "aws_cognito_user_group" "reviewer" {
   precedence   = 20
 }
 
+resource "aws_cognito_user_group" "recon_coordinator" {
+  name         = "recon_coordinator"
+  user_pool_id = aws_cognito_user_pool.inspectiq.id
+  description  = "Can prepare recon estimates, coordinate authorized work, record QC, and assess sale readiness."
+  precedence   = 21
+}
+
+resource "aws_cognito_user_group" "consignor_approver" {
+  name         = "consignor_approver"
+  user_pool_id = aws_cognito_user_pool.inspectiq.id
+  description  = "Can authorize or decline recon spending for represented consignor accounts."
+  precedence   = 22
+}
+
+resource "aws_cognito_user_group" "technician" {
+  name         = "technician"
+  user_pool_id = aws_cognito_user_pool.inspectiq.id
+  description  = "Can update assigned and authorized facility work orders."
+  precedence   = 23
+}
+
 resource "aws_cognito_user_group" "admin" {
   name         = "admin"
   user_pool_id = aws_cognito_user_pool.inspectiq.id

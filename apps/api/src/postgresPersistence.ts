@@ -21,6 +21,20 @@ import type {
 } from "./domain.js";
 import type { MemoryStore } from "./store.js";
 import { versionConflict } from "./errors.js";
+import type {
+  ConsignorAccount,
+  InspectionAssignment,
+  QualityControlResult,
+  ReconAuthorization,
+  ReconAuthorizationPolicy,
+  ReconRecommendation,
+  SaleAssignment,
+  SaleReadinessAssessment,
+  VehicleIntake,
+  VehicleLocationEvent,
+  WorkOrder,
+  WorkOrderTask
+} from "./reconDomain.js";
 
 const POSTGRES_ROW_STORE_LOCK_KEY = "7803144587035695001";
 const retryablePostgresCodes = new Set(["40001", "40P01", "55P03"]);
@@ -112,7 +126,19 @@ type StoreMapName =
   | "finalReports"
   | "reportVersions"
   | "auditEvents"
-  | "domainEvents";
+  | "domainEvents"
+  | "consignorAccounts"
+  | "reconPolicies"
+  | "vehicleIntakes"
+  | "inspectionAssignments"
+  | "saleAssignments"
+  | "vehicleLocationEvents"
+  | "reconRecommendations"
+  | "reconAuthorizations"
+  | "workOrders"
+  | "workOrderTasks"
+  | "qualityControlResults"
+  | "saleReadinessAssessments";
 
 type TableBatch = {
   table: string;
@@ -137,7 +163,19 @@ const storeMapNames: StoreMapName[] = [
   "finalReports",
   "reportVersions",
   "auditEvents",
-  "domainEvents"
+  "domainEvents",
+  "consignorAccounts",
+  "reconPolicies",
+  "vehicleIntakes",
+  "inspectionAssignments",
+  "saleAssignments",
+  "vehicleLocationEvents",
+  "reconRecommendations",
+  "reconAuthorizations",
+  "workOrders",
+  "workOrderTasks",
+  "qualityControlResults",
+  "saleReadinessAssessments"
 ];
 const storeMapToTable: Record<StoreMapName, string> = {
   users: "users",
@@ -154,7 +192,19 @@ const storeMapToTable: Record<StoreMapName, string> = {
   finalReports: "final_reports",
   reportVersions: "report_versions",
   auditEvents: "audit_events",
-  domainEvents: "domain_events"
+  domainEvents: "domain_events",
+  consignorAccounts: "consignor_accounts",
+  reconPolicies: "recon_authorization_policies",
+  vehicleIntakes: "vehicle_intakes",
+  inspectionAssignments: "inspection_assignments",
+  saleAssignments: "sale_assignments",
+  vehicleLocationEvents: "vehicle_location_events",
+  reconRecommendations: "recon_recommendations",
+  reconAuthorizations: "recon_authorizations",
+  workOrders: "work_orders",
+  workOrderTasks: "work_order_tasks",
+  qualityControlResults: "quality_control_results",
+  saleReadinessAssessments: "sale_readiness_assessments"
 };
 const postgresSnapshots = new WeakMap<MemoryStore, StoreSnapshot>();
 
@@ -207,7 +257,16 @@ export async function migratePostgres(pool: Pool, filePath = schemaPath()): Prom
   migratedPools.add(pool);
 }
 
-const versionedTables = new Set(["inspections", "vision_suggestions", "final_reports"]);
+const versionedTables = new Set([
+  "inspections",
+  "vision_suggestions",
+  "condition_grades",
+  "final_reports",
+  "recon_authorization_policies",
+  "recon_recommendations",
+  "recon_authorizations",
+  "work_orders"
+]);
 
 async function writeVersionedChangedRows(
   client: PoolClient,
@@ -416,11 +475,18 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
       store.conditionGrades.set(record.id, {
         id: record.id,
         inspectionId: record.inspection_id,
-        score: record.score,
-        grade: record.grade,
+        suggestedGrade: num(record.suggested_grade),
+        approvedGrade: record.approved_grade == null ? null : num(record.approved_grade),
+        conditionGradeBeforeRecon: num(record.condition_grade_before_recon),
+        estimatedGradeAfterRecon: num(record.estimated_grade_after_recon),
+        reviewedBy: record.reviewed_by,
+        overrideReason: record.override_reason,
+        evidenceBlockers: record.evidence_blockers_json ?? [],
         explanationJson: record.explanation_json,
         gradingVersion: record.grading_version,
-        createdAt: iso(record.created_at)
+        version: record.version ?? 1,
+        createdAt: iso(record.created_at),
+        reviewedAt: record.reviewed_at ? iso(record.reviewed_at) : null
       } satisfies ConditionGrade);
     }
 
@@ -516,6 +582,198 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         createdAt: iso(record.created_at),
         deliveredAt: record.delivered_at ? iso(record.delivered_at) : null
       } satisfies DomainEventOutbox);
+    }
+
+    for (const row of (await client.query("select * from consignor_accounts order by created_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.consignorAccounts.set(record.id, {
+        id: record.id,
+        name: record.name,
+        accountType: record.account_type,
+        authorizedUserIds: record.authorized_user_ids_json ?? [],
+        createdAt: iso(record.created_at),
+        updatedAt: iso(record.updated_at)
+      } satisfies ConsignorAccount);
+    }
+
+    for (const row of (await client.query("select * from recon_authorization_policies order by created_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.reconPolicies.set(record.id, {
+        id: record.id,
+        consignorAccountId: record.consignor_account_id,
+        name: record.name,
+        approvalMode: record.approval_mode,
+        totalVehicleLimit: num(record.total_vehicle_limit),
+        serviceRules: record.service_rules_json,
+        costOverrunTolerance: num(record.cost_overrun_tolerance),
+        version: record.version,
+        createdAt: iso(record.created_at),
+        updatedAt: iso(record.updated_at)
+      } satisfies ReconAuthorizationPolicy);
+    }
+
+    for (const row of (await client.query("select * from vehicle_intakes order by created_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.vehicleIntakes.set(record.id, {
+        id: record.id,
+        inspectionId: record.inspection_id,
+        consignorAccountId: record.consignor_account_id,
+        facility: record.facility,
+        yardZone: record.yard_zone,
+        parkingSpace: record.parking_space,
+        lastLocationTimestamp: iso(record.last_location_timestamp),
+        inspectionType: record.inspection_type,
+        inspectionWorkflowStatus: record.inspection_workflow_status,
+        createdAt: iso(record.created_at),
+        updatedAt: iso(record.updated_at)
+      } satisfies VehicleIntake);
+    }
+
+    for (const row of (await client.query("select * from inspection_assignments order by created_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.inspectionAssignments.set(record.id, {
+        id: record.id,
+        inspectionId: record.inspection_id,
+        assignedToUserId: record.assigned_to_user_id,
+        assignedByUserId: record.assigned_by_user_id,
+        dueAt: iso(record.due_at),
+        status: record.status,
+        createdAt: iso(record.created_at),
+        updatedAt: iso(record.updated_at)
+      } satisfies InspectionAssignment);
+    }
+
+    for (const row of (await client.query("select * from sale_assignments order by created_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.saleAssignments.set(record.id, {
+        id: record.id,
+        inspectionId: record.inspection_id,
+        saleDateTime: iso(record.sale_date_time),
+        lane: record.lane,
+        runNumber: record.run_number,
+        saleEventId: record.sale_event_id,
+        status: record.status,
+        createdAt: iso(record.created_at),
+        updatedAt: iso(record.updated_at)
+      } satisfies SaleAssignment);
+    }
+
+    for (const row of (await client.query("select * from vehicle_location_events order by created_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.vehicleLocationEvents.set(record.id, {
+        id: record.id,
+        inspectionId: record.inspection_id,
+        facility: record.facility,
+        yardZone: record.yard_zone,
+        parkingSpace: record.parking_space,
+        reason: record.reason,
+        actorId: record.actor_id,
+        createdAt: iso(record.created_at)
+      } satisfies VehicleLocationEvent);
+    }
+
+    for (const row of (await client.query("select * from recon_recommendations order by created_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.reconRecommendations.set(record.id, {
+        id: record.id,
+        inspectionId: record.inspection_id,
+        damageItemId: record.damage_item_id,
+        serviceType: record.service_type,
+        recommendedAction: record.recommended_action,
+        estimatedCost: num(record.estimated_cost),
+        estimatedDurationHours: num(record.estimated_duration_hours),
+        expectedGradeLift: num(record.expected_grade_lift),
+        estimateCreatorId: record.estimate_creator_id,
+        supportingPhotoIds: record.supporting_photo_ids_json ?? [],
+        notes: record.notes,
+        status: record.status,
+        version: record.version,
+        createdAt: iso(record.created_at),
+        updatedAt: iso(record.updated_at)
+      } satisfies ReconRecommendation);
+    }
+
+    for (const row of (await client.query("select * from recon_authorizations order by created_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.reconAuthorizations.set(record.id, {
+        id: record.id,
+        inspectionId: record.inspection_id,
+        recommendationId: record.recommendation_id,
+        decision: record.decision,
+        authorizedAmount: num(record.authorized_amount),
+        authorizationSource: record.authorization_source,
+        consignorUserId: record.consignor_user_id,
+        policySnapshot: record.policy_snapshot_json,
+        decisionReason: record.decision_reason,
+        decisionTimestamp: record.decision_timestamp ? iso(record.decision_timestamp) : null,
+        expiresAt: record.expires_at ? iso(record.expires_at) : null,
+        version: record.version,
+        createdAt: iso(record.created_at),
+        updatedAt: iso(record.updated_at)
+      } satisfies ReconAuthorization);
+    }
+
+    for (const row of (await client.query("select * from work_orders order by created_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.workOrders.set(record.id, {
+        id: record.id,
+        workOrderNumber: record.work_order_number,
+        inspectionId: record.inspection_id,
+        facility: record.facility,
+        serviceDepartment: record.service_department,
+        authorizedAmount: num(record.authorized_amount),
+        currentEstimatedCost: num(record.current_estimated_cost),
+        actualCost: nullableNum(record.actual_cost),
+        assignedTechnician: record.assigned_technician,
+        instructions: record.instructions,
+        saleDeadline: iso(record.sale_deadline),
+        status: record.status,
+        blockedReason: record.blocked_reason,
+        version: record.version ?? 1,
+        createdAt: iso(record.created_at),
+        startedAt: record.started_at ? iso(record.started_at) : null,
+        completedAt: record.completed_at ? iso(record.completed_at) : null,
+        updatedAt: iso(record.updated_at)
+      } satisfies WorkOrder);
+    }
+
+    for (const row of (await client.query("select * from work_order_tasks order by created_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.workOrderTasks.set(record.id, {
+        id: record.id,
+        workOrderId: record.work_order_id,
+        recommendationId: record.recommendation_id,
+        description: record.description,
+        authorizedAmount: num(record.authorized_amount),
+        status: record.status,
+        createdAt: iso(record.created_at),
+        updatedAt: iso(record.updated_at)
+      } satisfies WorkOrderTask);
+    }
+
+    for (const row of (await client.query("select * from quality_control_results order by inspected_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.qualityControlResults.set(record.id, {
+        id: record.id,
+        workOrderId: record.work_order_id,
+        status: record.status,
+        notes: record.notes,
+        inspectedByUserId: record.inspected_by_user_id,
+        inspectedAt: iso(record.inspected_at)
+      } satisfies QualityControlResult);
+    }
+
+    for (const row of (await client.query("select * from sale_readiness_assessments order by assessed_at, id")).rows) {
+      const record = row as QueryResultRow;
+      store.saleReadinessAssessments.set(record.id, {
+        id: record.id,
+        inspectionId: record.inspection_id,
+        saleReady: record.sale_ready,
+        status: record.status,
+        blockers: record.blockers_json ?? [],
+        assessedByUserId: record.assessed_by_user_id,
+        assessedAt: iso(record.assessed_at)
+      } satisfies SaleReadinessAssessment);
     }
 
     rememberSnapshot(store);
@@ -695,15 +953,22 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
     },
     {
       table: "condition_grades",
-      columns: ["id", "inspection_id", "score", "grade", "explanation_json", "grading_version", "created_at"],
+      columns: ["id", "inspection_id", "suggested_grade", "approved_grade", "condition_grade_before_recon", "estimated_grade_after_recon", "reviewed_by", "override_reason", "evidence_blockers_json", "explanation_json", "grading_version", "version", "created_at", "reviewed_at"],
       rows: [...store.conditionGrades.values()].map((record) => [
         record.id,
         record.inspectionId,
-        record.score,
-        record.grade,
+        record.suggestedGrade,
+        record.approvedGrade,
+        record.conditionGradeBeforeRecon,
+        record.estimatedGradeAfterRecon,
+        record.reviewedBy,
+        record.overrideReason,
+        record.evidenceBlockers,
         record.explanationJson,
         record.gradingVersion,
-        record.createdAt
+        record.version,
+        record.createdAt,
+        record.reviewedAt
       ])
     },
     {
@@ -798,6 +1063,198 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
         record.lastError,
         record.createdAt,
         record.deliveredAt
+      ])
+    },
+    {
+      table: "consignor_accounts",
+      columns: ["id", "name", "account_type", "authorized_user_ids_json", "created_at", "updated_at"],
+      rows: [...store.consignorAccounts.values()].map((record) => [
+        record.id,
+        record.name,
+        record.accountType,
+        record.authorizedUserIds,
+        record.createdAt,
+        record.updatedAt
+      ])
+    },
+    {
+      table: "recon_authorization_policies",
+      columns: ["id", "consignor_account_id", "name", "approval_mode", "total_vehicle_limit", "service_rules_json", "cost_overrun_tolerance", "version", "created_at", "updated_at"],
+      rows: [...store.reconPolicies.values()].map((record) => [
+        record.id,
+        record.consignorAccountId,
+        record.name,
+        record.approvalMode,
+        record.totalVehicleLimit,
+        record.serviceRules,
+        record.costOverrunTolerance,
+        record.version,
+        record.createdAt,
+        record.updatedAt
+      ])
+    },
+    {
+      table: "vehicle_intakes",
+      columns: ["id", "inspection_id", "consignor_account_id", "facility", "yard_zone", "parking_space", "last_location_timestamp", "inspection_type", "inspection_workflow_status", "created_at", "updated_at"],
+      rows: [...store.vehicleIntakes.values()].map((record) => [
+        record.id,
+        record.inspectionId,
+        record.consignorAccountId,
+        record.facility,
+        record.yardZone,
+        record.parkingSpace,
+        record.lastLocationTimestamp,
+        record.inspectionType,
+        record.inspectionWorkflowStatus,
+        record.createdAt,
+        record.updatedAt
+      ])
+    },
+    {
+      table: "inspection_assignments",
+      columns: ["id", "inspection_id", "assigned_to_user_id", "assigned_by_user_id", "due_at", "status", "created_at", "updated_at"],
+      rows: [...store.inspectionAssignments.values()].map((record) => [
+        record.id,
+        record.inspectionId,
+        record.assignedToUserId,
+        record.assignedByUserId,
+        record.dueAt,
+        record.status,
+        record.createdAt,
+        record.updatedAt
+      ])
+    },
+    {
+      table: "sale_assignments",
+      columns: ["id", "inspection_id", "sale_date_time", "lane", "run_number", "sale_event_id", "status", "created_at", "updated_at"],
+      rows: [...store.saleAssignments.values()].map((record) => [
+        record.id,
+        record.inspectionId,
+        record.saleDateTime,
+        record.lane,
+        record.runNumber,
+        record.saleEventId,
+        record.status,
+        record.createdAt,
+        record.updatedAt
+      ])
+    },
+    {
+      table: "vehicle_location_events",
+      columns: ["id", "inspection_id", "facility", "yard_zone", "parking_space", "reason", "actor_id", "created_at"],
+      rows: [...store.vehicleLocationEvents.values()].map((record) => [
+        record.id,
+        record.inspectionId,
+        record.facility,
+        record.yardZone,
+        record.parkingSpace,
+        record.reason,
+        record.actorId,
+        record.createdAt
+      ])
+    },
+    {
+      table: "recon_recommendations",
+      columns: ["id", "inspection_id", "damage_item_id", "service_type", "recommended_action", "estimated_cost", "estimated_duration_hours", "expected_grade_lift", "estimate_creator_id", "supporting_photo_ids_json", "notes", "status", "version", "created_at", "updated_at"],
+      rows: [...store.reconRecommendations.values()].map((record) => [
+        record.id,
+        record.inspectionId,
+        record.damageItemId,
+        record.serviceType,
+        record.recommendedAction,
+        record.estimatedCost,
+        record.estimatedDurationHours,
+        record.expectedGradeLift,
+        record.estimateCreatorId,
+        record.supportingPhotoIds,
+        record.notes,
+        record.status,
+        record.version,
+        record.createdAt,
+        record.updatedAt
+      ])
+    },
+    {
+      table: "recon_authorizations",
+      columns: ["id", "inspection_id", "recommendation_id", "decision", "authorized_amount", "authorization_source", "consignor_user_id", "policy_snapshot_json", "decision_reason", "decision_timestamp", "expires_at", "version", "created_at", "updated_at"],
+      rows: [...store.reconAuthorizations.values()].map((record) => [
+        record.id,
+        record.inspectionId,
+        record.recommendationId,
+        record.decision,
+        record.authorizedAmount,
+        record.authorizationSource,
+        record.consignorUserId,
+        record.policySnapshot,
+        record.decisionReason,
+        record.decisionTimestamp,
+        record.expiresAt,
+        record.version,
+        record.createdAt,
+        record.updatedAt
+      ])
+    },
+    {
+      table: "work_orders",
+      columns: ["id", "work_order_number", "inspection_id", "facility", "service_department", "authorized_amount", "current_estimated_cost", "actual_cost", "assigned_technician", "instructions", "sale_deadline", "status", "blocked_reason", "version", "created_at", "started_at", "completed_at", "updated_at"],
+      rows: [...store.workOrders.values()].map((record) => [
+        record.id,
+        record.workOrderNumber,
+        record.inspectionId,
+        record.facility,
+        record.serviceDepartment,
+        record.authorizedAmount,
+        record.currentEstimatedCost,
+        record.actualCost,
+        record.assignedTechnician,
+        record.instructions,
+        record.saleDeadline,
+        record.status,
+        record.blockedReason,
+        record.version,
+        record.createdAt,
+        record.startedAt,
+        record.completedAt,
+        record.updatedAt
+      ])
+    },
+    {
+      table: "work_order_tasks",
+      columns: ["id", "work_order_id", "recommendation_id", "description", "authorized_amount", "status", "created_at", "updated_at"],
+      rows: [...store.workOrderTasks.values()].map((record) => [
+        record.id,
+        record.workOrderId,
+        record.recommendationId,
+        record.description,
+        record.authorizedAmount,
+        record.status,
+        record.createdAt,
+        record.updatedAt
+      ])
+    },
+    {
+      table: "quality_control_results",
+      columns: ["id", "work_order_id", "status", "notes", "inspected_by_user_id", "inspected_at"],
+      rows: [...store.qualityControlResults.values()].map((record) => [
+        record.id,
+        record.workOrderId,
+        record.status,
+        record.notes,
+        record.inspectedByUserId,
+        record.inspectedAt
+      ])
+    },
+    {
+      table: "sale_readiness_assessments",
+      columns: ["id", "inspection_id", "sale_ready", "status", "blockers_json", "assessed_by_user_id", "assessed_at"],
+      rows: [...store.saleReadinessAssessments.values()].map((record) => [
+        record.id,
+        record.inspectionId,
+        record.saleReady,
+        record.status,
+        record.blockers,
+        record.assessedByUserId,
+        record.assessedAt
       ])
     }
   ];

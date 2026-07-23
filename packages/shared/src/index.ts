@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { InspectionTypeSchema } from "./recon.js";
+export * from "./recon.js";
 
 export const inspectionStatuses = [
   "DRAFT",
@@ -38,7 +40,14 @@ export const damageTypes = [
 
 export const damageSeverities = ["minor", "moderate", "severe", "unknown"] as const;
 export const suggestionStatuses = ["pending", "accepted", "rejected", "edited"] as const;
-export const userRoles = ["inspector", "reviewer", "admin"] as const;
+export const userRoles = [
+  "inspector",
+  "reviewer",
+  "recon_coordinator",
+  "consignor_approver",
+  "technician",
+  "admin"
+] as const;
 export const imageUploadStatuses = ["pending", "uploaded", "failed"] as const;
 export const imageAnalysisJobStatuses = ["queued", "running", "completed", "failed", "dead_letter"] as const;
 export const supportedImageUploadMimeTypes = ["image/jpeg", "image/png", "image/webp"] as const;
@@ -57,6 +66,10 @@ export const readinessIssueTypes = [
 export const roleActions = [
   "inspection:create",
   "inspection:update",
+  "inspection:assign",
+  "inspection:workflow",
+  "vehicle:check_in",
+  "vehicle:update_location",
   "photo:capture",
   "photo:analyze",
   "suggestion:review",
@@ -65,11 +78,18 @@ export const roleActions = [
   "damage:update",
   "damage:delete",
   "grade:calculate",
+  "grade:approve",
   "report:draft",
   "report:edit",
   "report:approve",
   "report:finalize",
   "report:retry",
+  "recon:estimate",
+  "recon:authorize",
+  "recon:policy_manage",
+  "work_order:update",
+  "quality_control:decide",
+  "sale_readiness:assess",
   "ops:view",
   "ops:recover"
 ] as const;
@@ -197,19 +217,36 @@ export function estimateTotalRepairRange(
 export const rolePermissions: Record<UserRole, RoleAction[]> = {
   inspector: [
     "inspection:create",
+    "inspection:workflow",
+    "vehicle:check_in",
     "photo:capture",
     "photo:analyze"
   ],
   reviewer: [
+    "inspection:workflow",
     "suggestion:review",
     "suggestion:assign",
     "damage:create",
     "grade:calculate",
+    "grade:approve",
     "report:draft",
     "report:edit",
     "report:approve",
     "report:finalize",
     "report:retry"
+  ],
+  recon_coordinator: [
+    "recon:estimate",
+    "work_order:update",
+    "quality_control:decide",
+    "sale_readiness:assess",
+    "ops:view"
+  ],
+  consignor_approver: [
+    "recon:authorize"
+  ],
+  technician: [
+    "work_order:update"
   ],
   admin: [...roleActions]
 };
@@ -217,6 +254,10 @@ export const rolePermissions: Record<UserRole, RoleAction[]> = {
 export const roleActionLabels: Record<RoleAction, string> = {
   "inspection:create": "create inspections",
   "inspection:update": "edit inspection records",
+  "inspection:assign": "assign inspections",
+  "inspection:workflow": "advance inspection workflow states",
+  "vehicle:check_in": "check in vehicles",
+  "vehicle:update_location": "update vehicle facility locations",
   "photo:capture": "attach or upload photo evidence",
   "photo:analyze": "run image analysis",
   "suggestion:review": "accept, reject, or edit AI suggestions",
@@ -225,11 +266,18 @@ export const roleActionLabels: Record<RoleAction, string> = {
   "damage:update": "edit confirmed damage",
   "damage:delete": "delete confirmed damage",
   "grade:calculate": "calculate condition grades",
+  "grade:approve": "approve or override condition grades",
   "report:draft": "draft condition reports",
   "report:edit": "edit report drafts",
   "report:approve": "approve report drafts",
   "report:finalize": "finalize condition reports",
   "report:retry": "retry report jobs",
+  "recon:estimate": "create or revise recon estimates",
+  "recon:authorize": "authorize or decline recon spending",
+  "recon:policy_manage": "manage consignor authorization policies",
+  "work_order:update": "update authorized work orders",
+  "quality_control:decide": "record quality-control decisions",
+  "sale_readiness:assess": "recalculate sale readiness",
   "ops:view": "view operational projections",
   "ops:recover": "recover failed operations jobs"
 };
@@ -237,6 +285,9 @@ export const roleActionLabels: Record<RoleAction, string> = {
 export const roleDescriptions: Record<UserRole, string> = {
   inspector: "Capture vehicle evidence and run image analysis.",
   reviewer: "Confirm AI findings, grade inspections, and finalize reports.",
+  recon_coordinator: "Prepare recon estimates, manage authorized work, and verify completion.",
+  consignor_approver: "Approve or decline recon spending for authorized consignor accounts.",
+  technician: "Perform and update assigned facility work orders.",
   admin: "Full workflow access, including record correction and exceptions."
 };
 
@@ -394,6 +445,11 @@ export const GradeRequestSchema = z.object({
   idempotencyKey: z.string().trim().max(120).optional()
 }).default({});
 
+export const ApproveConditionGradeSchema = z.object({
+  approvedGrade: z.number().min(0).max(5),
+  overrideReason: z.string().trim().min(1).max(1000).nullable().optional()
+});
+
 export const ReadinessIssueSchema = z.object({
   type: ReadinessIssueTypeSchema,
   severity: z.enum(["blocker", "watch"]),
@@ -418,17 +474,15 @@ export const GradingInputSchema = z.object({
 });
 
 export const GradingOutputSchema = z.object({
-  score: z.number().int().min(0).max(100),
-  grade: z.enum(["A", "B", "C", "D", "F"]),
+  suggestedGrade: z.number().min(0).max(5),
+  conditionGradeBeforeRecon: z.number().min(0).max(5),
+  evidenceBlockers: z.array(z.string()),
   explanation: z.object({
-    baseScore: z.number(),
+    baseGrade: z.number().min(0).max(5),
     deductions: z.array(z.object({
       reason: z.string(),
-      points: z.number()
-    })),
-    completionPenalty: z.number(),
-    mileageAdjustment: z.number(),
-    ageAdjustment: z.number().optional()
+      amount: z.number().min(0).max(5)
+    }))
   }),
   gradingVersion: z.string()
 });
@@ -436,11 +490,43 @@ export const GradingOutputSchema = z.object({
 export type GradingInput = z.infer<typeof GradingInputSchema>;
 export type GradingOutput = z.infer<typeof GradingOutputSchema>;
 
+export const ConditionReportSectionSchema = z.object({
+  key: z.enum([
+    "VIN_VERIFICATION",
+    "ODOMETER_VERIFICATION",
+    "EXTERIOR_CONDITION",
+    "INTERIOR_CONDITION",
+    "STRUCTURAL_OBSERVATIONS",
+    "DAMAGE_LINE_ITEMS",
+    "TIRES_AND_TREAD",
+    "WHEELS",
+    "WINDSHIELD_AND_GLASS",
+    "KEYS",
+    "WARNING_LIGHTS",
+    "DIAGNOSTIC_TROUBLE_CODES",
+    "PRIOR_PAINT_OR_REPAIR",
+    "ODOR",
+    "EMISSIONS",
+    "AIR_CONDITIONING",
+    "SRS_AIRBAG",
+    "FLOOD_INDICATORS",
+    "REVIEWER_NOTES",
+    "ANNOUNCEMENTS_AND_DISCLOSURES"
+  ]),
+  title: z.string().trim().min(1).max(120),
+  status: z.enum(["VERIFIED", "OBSERVED", "NOT_OBSERVED", "NOT_APPLICABLE", "REQUIRES_REVIEW"]),
+  observations: z.array(z.string().trim().min(1).max(500)).max(20)
+}).strict();
+
+export type ConditionReportSection = z.infer<typeof ConditionReportSectionSchema>;
+
 export const AiReportOutputSchema = z.object({
+  inspectionType: InspectionTypeSchema.default("VISUAL_CONDITION_REPORT"),
   summary: z.string().trim().min(1).max(2000),
   notableDefects: z.array(z.string().trim().min(1).max(400)),
   missingEvidence: z.array(z.string().trim().min(1).max(200)),
   recommendedDisclosure: z.string().trim().min(1).max(1000),
+  conditionReportSections: z.array(ConditionReportSectionSchema).default([]),
   confidence: z.number().min(0).max(1),
   humanReviewRequired: z.boolean(),
   reasoningSummary: z.string().trim().min(1).max(1200)
@@ -461,11 +547,30 @@ export const ReportApprovalSchema = z.object({
 
 export const DomainEventTypeSchema = z.enum([
   "inspection.created",
+  "vehicle.checked_in",
+  "vehicle.location_updated",
+  "inspection.assigned",
+  "inspection.completed",
   "photo.uploaded",
   "image.analysis.completed",
   "image.analysis.failed",
   "image.retake.required",
   "suggestion.reviewed",
+  "condition_report.published",
+  "recon.estimate_created",
+  "recon.estimate_revision_requested",
+  "recon.authorization_requested",
+  "recon.item_auto_authorized",
+  "recon.item_authorized",
+  "recon.item_declined",
+  "recon.reauthorization_required",
+  "work_order.created",
+  "work_order.started",
+  "work_order.blocked",
+  "work_order.completed",
+  "quality_control.failed",
+  "quality_control.passed",
+  "vehicle.sale_readiness_changed",
   "report.finalized"
 ]);
 

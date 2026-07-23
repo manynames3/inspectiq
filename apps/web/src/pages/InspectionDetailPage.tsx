@@ -22,10 +22,8 @@ type ConditionDockTab = "grading" | "damage";
 type ReportDockTab = "draft" | "summary";
 
 type GradeExplanationView = {
-  deductions?: Array<{ reason?: string; points?: number }>;
-  completionPenalty?: number;
-  mileageAdjustment?: number;
-  ageAdjustment?: number;
+  baseGrade?: number;
+  deductions?: Array<{ reason?: string; amount?: number }>;
 };
 
 type ReportOutputView = {
@@ -34,6 +32,12 @@ type ReportOutputView = {
   missingEvidence?: string[];
   recommendedDisclosure?: string;
   reasoningSummary?: string;
+  conditionReportSections?: Array<{
+    key: string;
+    title: string;
+    status: "VERIFIED" | "OBSERVED" | "NOT_OBSERVED" | "NOT_APPLICABLE" | "REQUIRES_REVIEW";
+    observations: string[];
+  }>;
 };
 
 function formatAngleLabel(value: string | null | undefined) {
@@ -184,8 +188,8 @@ function conditionGradeExplanation(grade: InspectionBundle["conditionGrade"]): G
 function conditionGradeDeductions(grade: InspectionBundle["conditionGrade"]) {
   const explanation = conditionGradeExplanation(grade);
   if (!Array.isArray(explanation.deductions)) return [];
-  return explanation.deductions.filter((item): item is { reason: string; points: number } => (
-    typeof item.reason === "string" && typeof item.points === "number"
+  return explanation.deductions.filter((item): item is { reason: string; amount: number } => (
+    typeof item.reason === "string" && typeof item.amount === "number"
   ));
 }
 
@@ -760,7 +764,6 @@ export function InspectionDetailPage() {
   const blockerIssues = (bundle.readinessIssues ?? []).filter((issue) => issue.severity === "blocker");
   const watchIssues = (bundle.readinessIssues ?? []).filter((issue) => issue.severity === "watch");
   const visibleReadinessIssues = [...blockerIssues, ...watchIssues].slice(0, 3);
-  const gradeExplanation = conditionGradeExplanation(bundle.conditionGrade);
   const gradeDeductions = conditionGradeDeductions(bundle.conditionGrade);
   const reportOutput = reportOutputView(bundle.aiReportDraft);
   const reportSummary = reportOutput.summary
@@ -780,6 +783,7 @@ export function InspectionDetailPage() {
   const canAssignSuggestions = can("suggestion:assign");
   const canConfirmDamage = can("damage:create");
   const canGrade = can("grade:calculate");
+  const canApproveGrade = can("grade:approve");
   const canDraftReport = can("report:draft");
   const canEditReport = can("report:edit");
   const canApproveReport = can("report:approve");
@@ -795,6 +799,7 @@ export function InspectionDetailPage() {
   const reviewDisabled = busy !== null || isFinalizedInspection || !canReviewSuggestions;
   const damageDisabled = busy !== null || isFinalizedInspection || !canConfirmDamage;
   const gradeDisabled = busy !== null || isFinalizedInspection || !canGrade;
+  const approveGradeDisabled = busy !== null || isFinalizedInspection || !canApproveGrade || !bundle.conditionGrade || bundle.conditionGrade.approvedGrade != null || bundle.conditionGrade.evidenceBlockers.length > 0;
   const draftReportDisabled = busy !== null || isFinalizedInspection || !canDraftReport || !canRequestReportDraft;
   const editReportDisabled = isFinalizedInspection || !canEditReport;
   const approveReportDisabled = !bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || isFinalizedInspection || !canApproveReport || busy !== null;
@@ -1230,11 +1235,11 @@ export function InspectionDetailPage() {
                 <div className="dock-body grading-dock-body">
                   <div className="panel-header">
                     <h2>Condition grading</h2>
-                    <span>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} grade` : "Not calculated"}</span>
+                    <span>{bundle.conditionGrade?.approvedGrade != null ? "Reviewer approved" : bundle.conditionGrade ? "Approval required" : "Not calculated"}</span>
                   </div>
                   <div className="grade-result-card">
-                    <strong>{bundle.conditionGrade ? `${bundle.conditionGrade.score}/100` : "Grade pending"}</strong>
-                    <span>{bundle.conditionGrade ? "Deterministic score based on required evidence, mileage, age, and confirmed damage." : "Calculate the grade after required photo evidence is confirmed."}</span>
+                    <strong>{bundle.conditionGrade ? `${(bundle.conditionGrade.approvedGrade ?? bundle.conditionGrade.suggestedGrade).toFixed(1)} / 5.0` : "Grade pending"}</strong>
+                    <span>{bundle.conditionGrade ? "Reference grade based on required evidence and reviewer-confirmed condition findings." : "Calculate the grade after required photo evidence is confirmed."}</span>
                   </div>
                   <div className="grading-stat-grid">
                     <span><strong>{capturedEvidencePercent}%</strong><small>Evidence complete</small></span>
@@ -1244,23 +1249,27 @@ export function InspectionDetailPage() {
                   </div>
                   <div className="grade-detail-list compact-list" tabIndex={0} role="region" aria-label="Condition grade details">
                     {gradeDeductions.length > 0 ? gradeDeductions.map((deduction) => (
-                      <span key={`${deduction.reason}-${deduction.points}`}>
+                      <span key={`${deduction.reason}-${deduction.amount}`}>
                         <strong>{deduction.reason}</strong>
-                        <small>-{deduction.points} pts</small>
+                        <small>-{deduction.amount.toFixed(1)}</small>
                       </span>
                     )) : <p className="empty-dock-state">No damage deductions recorded.</p>}
-                    {bundle.conditionGrade ? (
-                      <>
-                        <span><strong>Evidence completion penalty</strong><small>-{gradeExplanation.completionPenalty ?? 0} pts</small></span>
-                        <span><strong>Mileage adjustment</strong><small>-{gradeExplanation.mileageAdjustment ?? 0} pts</small></span>
-                        <span><strong>Age adjustment</strong><small>-{gradeExplanation.ageAdjustment ?? 0} pts</small></span>
-                      </>
-                    ) : null}
+                    {bundle.conditionGrade?.evidenceBlockers.map((blocker) => (
+                      <span key={blocker}><strong>Evidence blocker</strong><small>{blocker}</small></span>
+                    ))}
                   </div>
                   <div className="dock-actions">
                     <button className="secondary-button" disabled={gradeDisabled} title={finalizedActionTitle ?? (canGrade ? undefined : "Reviewer or Admin access required")} onClick={() => void runAction("grade", () => api(`/api/inspections/${id}/grade`, { method: "POST", body: JSON.stringify({ idempotencyKey: `grade-${id}` }) }, actor))}>
                       <ShieldCheck size={16} /> Calculate grade
                     </button>
+                    {bundle.conditionGrade?.approvedGrade == null && bundle.conditionGrade ? (
+                      <button className="primary-button" disabled={approveGradeDisabled} title={bundle.conditionGrade.evidenceBlockers.length > 0 ? "Resolve evidence blockers before approval." : undefined} onClick={() => void runAction("approve-grade", () => api(`/api/inspections/${id}/condition-grade/approve`, {
+                        method: "POST",
+                        body: JSON.stringify({ approvedGrade: bundle.conditionGrade!.suggestedGrade })
+                      }, actor))}>
+                        <Check size={16} /> Approve {bundle.conditionGrade.suggestedGrade.toFixed(1)}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ) : (
@@ -1314,8 +1323,8 @@ export function InspectionDetailPage() {
                     </div>
                   ) : null}
                   <div className="grade-strip">
-                    <strong>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} · ${bundle.conditionGrade.score}` : "Grade not calculated"}</strong>
-                    <span>{bundle.conditionGrade ? "Score based on evidence completeness, mileage, age, and confirmed damage." : "Condition score appears after grading."}</span>
+                    <strong>{bundle.conditionGrade ? `${(bundle.conditionGrade.approvedGrade ?? bundle.conditionGrade.suggestedGrade).toFixed(1)} / 5.0` : "Grade not calculated"}</strong>
+                    <span>{bundle.conditionGrade?.approvedGrade != null ? "Reviewer-approved reference grade." : bundle.conditionGrade ? "Suggested grade requires reviewer approval." : "Condition grade appears after grading."}</span>
                   </div>
                   {bundle.aiReportDraft ? (
                     <div className="ai-draft" tabIndex={0} role="region" aria-label="AI report draft summary">
@@ -1404,6 +1413,24 @@ export function InspectionDetailPage() {
                       </ul>
                     ) : <p>No notable items recorded.</p>}
                   </div>
+                  {(reportOutput.conditionReportSections?.length ?? 0) > 0 ? (
+                    <details className="summary-section report-section-details">
+                      <summary>Condition report sections ({reportOutput.conditionReportSections?.length})</summary>
+                      <div className="report-section-list">
+                        {reportOutput.conditionReportSections?.map((section) => (
+                          <article key={section.key}>
+                            <header>
+                              <strong>{section.title}</strong>
+                              <span className={`queue-status section-${section.status.toLowerCase()}`}>{section.status.replaceAll("_", " ")}</span>
+                            </header>
+                            <ul className="summary-list">
+                              {section.observations.map((observation) => <li key={observation}>{observation}</li>)}
+                            </ul>
+                          </article>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
                   <div className="summary-section">
                     <strong>Release Notes</strong>
                     <p>{reportOutput.recommendedDisclosure ?? (missingEvidence.length > 0 ? missingEvidence.join(" ") : "Evidence is complete. Reviewer can finalize once the draft is approved.")}</p>

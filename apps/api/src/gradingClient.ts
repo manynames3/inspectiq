@@ -1,33 +1,38 @@
 import { GradingOutputSchema, type GradingInput, type GradingOutput } from "@inspectiq/shared";
 
+function clampGrade(value: number): number {
+  return Math.round(Math.max(0, Math.min(5, value)) * 10) / 10;
+}
+
 function localGrade(input: GradingInput): GradingOutput {
   const deductions = input.damageItems.map((item) => {
-    const severityPoints = item.severity === "severe" ? 18 : item.severity === "moderate" ? 9 : item.severity === "minor" ? 3 : 5;
+    const amount = item.severity === "severe"
+      ? 0.9
+      : item.severity === "moderate"
+        ? 0.45
+        : item.severity === "minor"
+          ? 0.15
+          : 0.3;
     return {
       reason: `${item.severity} ${item.damageType} on ${item.location}`.replaceAll("_", " "),
-      points: severityPoints
+      amount
     };
   });
-  const missingRatio = Math.max(0, 1 - input.requiredPhotoCompletion);
-  const completionPenalty = Math.round(missingRatio * 24);
-  const mileageAdjustment = input.vehicle.mileage > 120000 ? 10 : input.vehicle.mileage > 90000 ? 7 : input.vehicle.mileage > 60000 ? 4 : input.vehicle.mileage > 30000 ? 2 : 0;
-  const currentYear = new Date().getFullYear();
-  const ageAdjustment = Math.max(0, Math.min(8, Math.floor((currentYear - input.vehicle.year) / 3)));
-  const total = deductions.reduce((sum, item) => sum + item.points, 0) + completionPenalty + mileageAdjustment + ageAdjustment;
-  const score = Math.max(0, Math.min(100, 100 - total));
-  const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+  const totalDeduction = deductions.reduce((sum, item) => sum + item.amount, 0);
+  const suggestedGrade = clampGrade(5 - totalDeduction);
+  const evidenceBlockers = input.requiredPhotoCompletion < 1
+    ? ["Required inspection photographs are incomplete"]
+    : [];
 
   return GradingOutputSchema.parse({
-    score,
-    grade,
+    suggestedGrade,
+    conditionGradeBeforeRecon: suggestedGrade,
+    evidenceBlockers,
     explanation: {
-      baseScore: 100,
-      deductions,
-      completionPenalty,
-      mileageAdjustment,
-      ageAdjustment
+      baseGrade: 5,
+      deductions
     },
-    gradingVersion: "grading-rules-v1-local-fallback"
+    gradingVersion: "inspectiq-reference-grade-v2-local-fallback"
   });
 }
 
@@ -45,7 +50,7 @@ export async function gradeCondition(input: GradingInput): Promise<GradingOutput
         return GradingOutputSchema.parse(await response.json());
       }
     } catch {
-      // Local inspection review remains usable if the optional Python service is not running.
+      // The in-process rules preserve workflow continuity if the optional service is unavailable.
     }
   }
   return localGrade(input);

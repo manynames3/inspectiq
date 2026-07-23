@@ -1,6 +1,45 @@
 # Developer Workflow
 
-This repo is optimized for targeted verification first, then full proof before broad changes or a hiring-manager walkthrough.
+This repo is optimized for targeted verification first, then full proof before broad changes or a live review.
+
+## Local Setup
+
+Requirements: Node.js 22+, npm, and Python 3.12 for the Python services.
+
+```bash
+cp .env.example .env
+npm ci
+npm run seed
+npm run dev
+```
+
+Open `http://localhost:5173`. Local development defaults to in-memory or file persistence and deterministic providers.
+
+## Environment Setup
+
+| Environment | Setup source |
+| --- | --- |
+| Local defaults and available variables | [`.env.example`](../.env.example) |
+| Local Postgres | [Runbook](runbook.md) |
+| Cognito, S3, SQS, Bedrock, and Neon proof | [Live production proof](live-production-proof.md) |
+| Expo/React Native and Cognito PKCE | [Mobile README](../apps/mobile/README.md) |
+| AWS infrastructure and deployment | [AWS deployment plan](aws-deployment-plan.md) |
+
+Do not commit credentials or populated environment files.
+
+## Repository Map
+
+```text
+apps/api/                      Lambda-ready Node.js API and image worker
+apps/web/                      React/TypeScript workbench
+apps/mobile/                   Expo/React Native client
+packages/shared/               Schemas, permissions, and shared contracts
+services/grading-python/       Deterministic Python grading boundary
+services/operations-projector/ EventBridge projection Lambda
+infra/terraform/               AWS infrastructure
+evals/                         Reproducible model-contract evaluation
+docs/                          Architecture, ADRs, proof, security, and runbooks
+```
 
 ## Command Ladder
 

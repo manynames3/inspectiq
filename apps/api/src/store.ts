@@ -37,6 +37,7 @@ import type {
 import { conflict, notFound, versionConflict } from "./errors.js";
 import { currentCorrelationId } from "./requestContext.js";
 import { assertTransition, canTransition } from "./stateMachine.js";
+import { ReconStore } from "./reconStore.js";
 
 type CreateInspectionInput = z.infer<typeof CreateInspectionSchema>;
 type SuggestionAssignmentRole = Extract<UserRole, "inspector" | "reviewer">;
@@ -143,6 +144,55 @@ export class MemoryStore {
   identityVerifications = new Map<string, IdentityVerification>();
   auditEvents = new Map<string, AuditEvent>();
   domainEvents = new Map<string, DomainEventOutbox>();
+  recon = new ReconStore(this);
+
+  get consignorAccounts() {
+    return this.recon.consignorAccounts;
+  }
+
+  get reconPolicies() {
+    return this.recon.reconPolicies;
+  }
+
+  get vehicleIntakes() {
+    return this.recon.vehicleIntakes;
+  }
+
+  get inspectionAssignments() {
+    return this.recon.inspectionAssignments;
+  }
+
+  get saleAssignments() {
+    return this.recon.saleAssignments;
+  }
+
+  get vehicleLocationEvents() {
+    return this.recon.vehicleLocationEvents;
+  }
+
+  get reconRecommendations() {
+    return this.recon.reconRecommendations;
+  }
+
+  get reconAuthorizations() {
+    return this.recon.reconAuthorizations;
+  }
+
+  get workOrders() {
+    return this.recon.workOrders;
+  }
+
+  get workOrderTasks() {
+    return this.recon.workOrderTasks;
+  }
+
+  get qualityControlResults() {
+    return this.recon.qualityControlResults;
+  }
+
+  get saleReadinessAssessments() {
+    return this.recon.saleReadinessAssessments;
+  }
 
   assertMutableInspection(inspectionId: string, action: string): Inspection {
     const inspection = this.getInspection(inspectionId);
@@ -168,6 +218,7 @@ export class MemoryStore {
     this.identityVerifications.clear();
     this.auditEvents.clear();
     this.domainEvents.clear();
+    this.recon.reset();
   }
 
   addUser(input: Pick<User, "name" | "role"> & { id?: string }): User {
@@ -1022,24 +1073,65 @@ export class MemoryStore {
       .sort((a, b) => a.field.localeCompare(b.field));
   }
 
-  saveGrade(inspectionId: string, grade: Omit<ConditionGrade, "id" | "inspectionId" | "createdAt">, actor: Actor): ConditionGrade {
-    const existing = this.latestGrade(inspectionId);
-    if (existing && existing.gradingVersion === grade.gradingVersion) return existing;
+  saveGrade(inspectionId: string, grade: {
+    suggestedGrade: number;
+    conditionGradeBeforeRecon: number;
+    evidenceBlockers: string[];
+    explanationJson: unknown;
+    gradingVersion: string;
+  }, actor: Actor): ConditionGrade {
     const saved: ConditionGrade = {
       id: id(),
       inspectionId,
+      approvedGrade: null,
+      estimatedGradeAfterRecon: grade.conditionGradeBeforeRecon,
+      reviewedBy: null,
+      overrideReason: null,
+      version: 1,
       createdAt: now(),
+      reviewedAt: null,
       ...grade
     };
     this.conditionGrades.set(saved.id, saved);
-    this.transition(inspectionId, "GRADED", actor, "inspection.status_changed");
     this.addAudit(inspectionId, actor, "condition.grade_generated", {
       gradeId: saved.id,
-      score: saved.score,
-      grade: saved.grade,
+      suggestedGrade: saved.suggestedGrade,
+      evidenceBlockers: saved.evidenceBlockers,
       gradingVersion: saved.gradingVersion
     });
     return saved;
+  }
+
+  approveGrade(inspectionId: string, approvedGrade: number, overrideReason: string | null, actor: Actor): ConditionGrade {
+    const grade = this.latestGrade(inspectionId);
+    if (!grade) throw conflict("Calculate an InspectIQ Reference Grade before approval.");
+    if (grade.evidenceBlockers.length > 0) {
+      throw conflict("Resolve required evidence blockers before approving the reference grade.", {
+        evidenceBlockers: grade.evidenceBlockers
+      });
+    }
+    const differsFromSuggestion = Math.abs(approvedGrade - grade.suggestedGrade) >= 0.05;
+    if (differsFromSuggestion && !overrideReason?.trim()) {
+      throw conflict("An override reason is required when the approved grade differs from the suggested grade.");
+    }
+    grade.approvedGrade = Math.round(Math.max(0, Math.min(5, approvedGrade)) * 10) / 10;
+    grade.conditionGradeBeforeRecon = grade.approvedGrade;
+    grade.estimatedGradeAfterRecon = grade.approvedGrade;
+    grade.reviewedBy = actor.id;
+    grade.overrideReason = differsFromSuggestion ? overrideReason!.trim() : null;
+    grade.reviewedAt = now();
+    grade.version += 1;
+    const inspection = this.getInspection(inspectionId);
+    if (inspection.status === "READY_FOR_GRADING") {
+      this.transition(inspectionId, "GRADED", actor, "inspection.status_changed");
+    }
+    this.addAudit(inspectionId, actor, "condition.grade_approved", {
+      gradeId: grade.id,
+      suggestedGrade: grade.suggestedGrade,
+      approvedGrade: grade.approvedGrade,
+      overrideReason: grade.overrideReason
+    });
+    return grade;
   }
 
   latestGrade(inspectionId: string): ConditionGrade | null {
@@ -1227,8 +1319,8 @@ export class MemoryStore {
       `Exterior: ${inspection.exteriorColor}`,
       `Source: ${inspection.sellerSource}`,
       "",
-      `Condition Grade: ${grade ? `${grade.grade} (${grade.score}/100)` : "Not graded"}`,
-      `Estimated Reconditioning: ${estimateLabel}`,
+      `InspectIQ Reference Grade: ${grade?.approvedGrade != null ? `${grade.approvedGrade.toFixed(1)} / 5.0` : "Not approved"}`,
+      `Illustrative Repair Estimate: ${estimateLabel}`,
       "",
       "Confirmed Damage",
       ...damageLines,
@@ -1309,6 +1401,10 @@ export class MemoryStore {
     this.transition(inspection.id, "FINALIZED", actor, "inspection.status_changed");
     this.addAudit(inspection.id, actor, "report.finalized", { reportId, version: report.version });
     this.emitDomainEvent("report.finalized", inspection.id, actor, {
+      reportId,
+      version: report.version
+    });
+    this.emitDomainEvent("condition_report.published", inspection.id, actor, {
       reportId,
       version: report.version
     });
@@ -1619,13 +1715,13 @@ export class MemoryStore {
         action: "Complete the human review queue."
       });
     }
-    if (!this.latestGrade(inspectionId)) {
+    if (this.latestGrade(inspectionId)?.approvedGrade == null) {
       issues.push({
         type: "condition_grade_missing",
         severity: "blocker",
-        label: "Condition grade missing",
-        detail: "The condition report does not have a deterministic grade.",
-        action: "Run condition grading after evidence is complete."
+        label: "InspectIQ Reference Grade not approved",
+        detail: "A reviewer must approve or override the suggested 0.0-5.0 grade.",
+        action: "Calculate and approve the reference grade after evidence review."
       });
     }
     const estimateMissing = damageItems.some((item) => {

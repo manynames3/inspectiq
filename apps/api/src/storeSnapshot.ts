@@ -17,7 +17,19 @@ const storeMapNames = [
   "finalReports",
   "reportVersions",
   "auditEvents",
-  "domainEvents"
+  "domainEvents",
+  "consignorAccounts",
+  "reconPolicies",
+  "vehicleIntakes",
+  "inspectionAssignments",
+  "saleAssignments",
+  "vehicleLocationEvents",
+  "reconRecommendations",
+  "reconAuthorizations",
+  "workOrders",
+  "workOrderTasks",
+  "qualityControlResults",
+  "saleReadinessAssessments"
 ] as const;
 
 type StoreMapName = typeof storeMapNames[number];

@@ -125,7 +125,9 @@ export function ReportsPage() {
                       <small>{inspection.vin}</small>
                     </td>
                     <td><span className={`queue-status report-${status.toLowerCase().replaceAll(" ", "-")}`}>{status}</span></td>
-                    <td>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} ${bundle.conditionGrade.score}` : "Not graded"}</td>
+                    <td>{bundle.conditionGrade
+                      ? `${(bundle.conditionGrade.approvedGrade ?? bundle.conditionGrade.suggestedGrade).toFixed(1)} / 5.0${bundle.conditionGrade.approvedGrade == null ? " suggested" : ""}`
+                      : "Not graded"}</td>
                     <td>{bundle.aiReportDraft ? `${Math.round(bundle.aiReportDraft.confidence * 100)}%` : "Pending"}</td>
                     <td>{readiness.buyerVisibility}</td>
                     <td>{readiness.reconditioningEstimate}</td>

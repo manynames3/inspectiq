@@ -1,4 +1,21 @@
-import type { ImageAnalysisJobStatus, ImageUploadStatus, InspectionStatus, ReadinessIssue, UserRole } from "@inspectiq/shared";
+import type {
+  ApprovalMode,
+  AuthorizationSource,
+  ImageAnalysisJobStatus,
+  ImageUploadStatus,
+  InspectionStatus,
+  InspectionType,
+  InspectionWorkflowStatus,
+  QualityControlStatus,
+  ReadinessIssue,
+  ReconAuthorizationStatus,
+  SaleReadinessBlocker,
+  SaleReadinessStatus,
+  ServiceType,
+  UrgencyAssessment,
+  UserRole,
+  WorkOrderStatus
+} from "@inspectiq/shared";
 
 export type Actor = {
   id: string;
@@ -128,10 +145,19 @@ export type IdentityVerification = {
 
 export type ConditionGrade = {
   id: string;
-  score: number;
-  grade: string;
+  inspectionId: string;
+  suggestedGrade: number;
+  approvedGrade: number | null;
+  conditionGradeBeforeRecon: number;
+  estimatedGradeAfterRecon: number;
+  reviewedBy: string | null;
+  overrideReason: string | null;
+  evidenceBlockers: string[];
   explanationJson: any;
   gradingVersion: string;
+  version: number;
+  createdAt: string;
+  reviewedAt: string | null;
 };
 
 export type FinalReport = {
@@ -207,4 +233,147 @@ export type SamplePhotoSet = {
     trim: string;
   };
   sampleKeys: string[];
+};
+
+export type ConsignorAccount = {
+  id: string;
+  name: string;
+  accountType: string;
+  authorizedUserIds: string[];
+};
+
+export type ReconPolicy = {
+  id: string;
+  consignorAccountId: string;
+  name: string;
+  approvalMode: ApprovalMode;
+  totalVehicleLimit: number;
+  serviceRules: Partial<Record<ServiceType, { enabled: boolean; automaticApprovalLimit: number }>>;
+  costOverrunTolerance: number;
+  version: number;
+};
+
+export type VehicleIntake = {
+  id: string;
+  inspectionId: string;
+  consignorAccountId: string;
+  facility: string;
+  yardZone: string;
+  parkingSpace: string;
+  lastLocationTimestamp: string;
+  inspectionType: InspectionType;
+  inspectionWorkflowStatus: InspectionWorkflowStatus;
+};
+
+export type SaleAssignment = {
+  id: string;
+  inspectionId: string;
+  saleDateTime: string;
+  lane: string;
+  runNumber: string;
+  saleEventId: string | null;
+  status: SaleReadinessStatus;
+};
+
+export type ReconRecommendation = {
+  id: string;
+  inspectionId: string;
+  damageItemId: string | null;
+  serviceType: ServiceType;
+  recommendedAction: string;
+  estimatedCost: number;
+  estimatedDurationHours: number;
+  expectedGradeLift: number;
+  estimateCreatorId: string;
+  supportingPhotoIds: string[];
+  notes: string;
+  status: string;
+  version: number;
+};
+
+export type ReconAuthorization = {
+  id: string;
+  inspectionId: string;
+  recommendationId: string;
+  decision: "PENDING" | "AUTHORIZED" | "DECLINED" | "REVISION_REQUESTED";
+  authorizedAmount: number;
+  authorizationSource: AuthorizationSource | null;
+  consignorUserId: string | null;
+  decisionReason: string;
+  decisionTimestamp: string | null;
+  version: number;
+};
+
+export type WorkOrderTask = {
+  id: string;
+  workOrderId: string;
+  recommendationId: string;
+  description: string;
+  authorizedAmount: number;
+  status: "QUEUED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+};
+
+export type QualityControlResult = {
+  id: string;
+  workOrderId: string;
+  status: QualityControlStatus;
+  notes: string;
+  inspectedByUserId: string;
+  inspectedAt: string;
+};
+
+export type WorkOrder = {
+  id: string;
+  workOrderNumber: string;
+  inspectionId: string;
+  facility: string;
+  serviceDepartment: ServiceType;
+  authorizedAmount: number;
+  currentEstimatedCost: number;
+  actualCost: number | null;
+  assignedTechnician: string | null;
+  instructions: string;
+  saleDeadline: string;
+  status: WorkOrderStatus;
+  blockedReason: string | null;
+  version: number;
+  tasks: WorkOrderTask[];
+  qualityControl: QualityControlResult | null;
+};
+
+export type SaleReadinessAssessment = {
+  id: string;
+  inspectionId: string;
+  saleReady: boolean;
+  status: SaleReadinessStatus;
+  blockers: SaleReadinessBlocker[];
+  assessedByUserId: string;
+  assessedAt: string;
+};
+
+export type ReconOperationsRecord = {
+  inspection: Inspection;
+  intake: VehicleIntake;
+  consignor: ConsignorAccount;
+  saleAssignment: SaleAssignment;
+  conditionGrade: ConditionGrade | null;
+  conditionReport: FinalReport | null;
+  damageItems: DamageItem[];
+  photos: VehiclePhoto[];
+  policy: ReconPolicy | null;
+  recommendations: ReconRecommendation[];
+  authorizations: ReconAuthorization[];
+  workOrders: WorkOrder[];
+  reconStatus: ReconAuthorizationStatus;
+  urgency: UrgencyAssessment;
+  readiness: SaleReadinessAssessment;
+  totals: {
+    recommendedCost: number;
+    automaticallyAuthorizedCost: number;
+    manuallyAuthorizedCost: number;
+    declinedCost: number;
+    pendingCost: number;
+    remainingAccountAuthorization: number;
+  };
+  estimatedCompletion: string | null;
 };

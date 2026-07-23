@@ -2,10 +2,18 @@ import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { pinoHttp } from "pino-http";
 import {
+  AdministrativeAuthorizationSchema,
+  AssignInspectionSchema,
+  ConsignorDecisionSchema,
+  CreateConsignorAccountSchema,
   CreateDamageItemSchema,
+  CreateReconAuthorizationPolicySchema,
+  CreateReconRecommendationSchema,
+  CreateVehicleIntakeSchema,
   BulkRetakeRequestSchema,
   BulkSuggestionAssignmentSchema,
   CreateInspectionSchema,
+  ApproveConditionGradeSchema,
   GradeRequestSchema,
   PatchDamageItemSchema,
   PatchInspectionSchema,
@@ -15,13 +23,19 @@ import {
   UpdateSuggestionSchema,
   SuggestionAssignmentSchema,
   SuggestionDecisionSchema,
+  SubmitReconEstimateSchema,
+  TransitionInspectionWorkflowSchema,
   UploadIntentSchema,
   UploadPhotoSchema,
+  UserRoleSchema,
+  VehicleLocationUpdateSchema,
+  WorkOrderUpdateSchema,
+  QualityControlDecisionSchema,
   requiredPhotoAngles,
   rolePermissions,
   type ApiEnvelope
 } from "@inspectiq/shared";
-import { errorHandler, validation, conflict, unauthorized } from "./errors.js";
+import { errorHandler, validation, conflict, forbidden, unauthorized } from "./errors.js";
 import { gradeCondition } from "./gradingClient.js";
 import { getReportProvider } from "./reportProvider.js";
 import { getVisionProvider } from "./visionProvider.js";
@@ -84,10 +98,14 @@ function evaluationModeEnabled(): boolean {
 
 function evaluationActorFromRequest(req: Request): Actor {
   const role = req.header("x-actor-role");
-  const evaluationRole = role === "inspector" || role === "reviewer" || role === "admin" ? role : "reviewer";
+  const parsedRole = UserRoleSchema.safeParse(role);
+  const evaluationRole = parsedRole.success ? parsedRole.data : "reviewer";
   const names: Record<Actor["role"], string> = {
     inspector: "John Smith",
     reviewer: "Evaluation Reviewer",
+    recon_coordinator: "Evaluation Recon Coordinator",
+    consignor_approver: "Evaluation Consignor Approver",
+    technician: "Evaluation Technician",
     admin: "Evaluation Admin"
   };
   return {
@@ -123,10 +141,11 @@ function actorFromRequest(req: Request, store: MemoryStore): Actor {
 
   const fallback = store.defaultActor();
   const role = req.header("x-actor-role");
+  const parsedRole = UserRoleSchema.safeParse(role);
   const actor: Actor = {
     id: String(req.header("x-actor-id") ?? fallback.id),
     name: String(req.header("x-actor-name") ?? fallback.name),
-    role: role === "inspector" || role === "reviewer" || role === "admin" ? role : fallback.role
+    role: parsedRole.success ? parsedRole.data : fallback.role
   };
   store.ensureUser(actor);
   return actor;
@@ -166,6 +185,16 @@ function reportForRequest(store: MemoryStore, reportId: string, actor: Actor, ac
   return report;
 }
 
+function requireReconAccess(store: MemoryStore, inspectionId: string, actor: Actor, action: string): void {
+  if (store.recon.userCanAccessConsignor(actor, inspectionId)) return;
+  if (actor.role === "inspector" && canAccessInspection(actor, store.getInspection(inspectionId))) return;
+  throw forbidden(`You cannot ${action} for a vehicle outside your assigned account or work queue.`, {
+    actorId: actor.id,
+    actorRole: actor.role,
+    inspectionId
+  });
+}
+
 function reportBodyFromDraft(output: unknown): string {
   const draft = output as {
     summary?: string;
@@ -173,6 +202,11 @@ function reportBodyFromDraft(output: unknown): string {
     missingEvidence?: string[];
     recommendedDisclosure?: string;
     reasoningSummary?: string;
+    conditionReportSections?: Array<{
+      title: string;
+      status: string;
+      observations: string[];
+    }>;
   };
   return [
     `Summary: ${draft.summary ?? ""}`,
@@ -183,6 +217,12 @@ function reportBodyFromDraft(output: unknown): string {
     "Missing evidence:",
     ...((draft.missingEvidence ?? []).length ? (draft.missingEvidence ?? []).map((item) => `- ${item}`) : ["- None"]),
     "",
+    "Condition report sections:",
+    ...(draft.conditionReportSections ?? []).flatMap((section) => [
+      `${section.title} [${section.status.replaceAll("_", " ")}]`,
+      ...section.observations.map((observation) => `- ${observation}`)
+    ]),
+    "",
     `Recommended disclosure: ${draft.recommendedDisclosure ?? ""}`,
     "",
     `Review rationale: ${draft.reasoningSummary ?? ""}`
@@ -192,6 +232,7 @@ function reportBodyFromDraft(output: unknown): string {
 async function draftInspectionReport(store: MemoryStore, inspection: Inspection, actor: Actor, idempotencyKey: string | null) {
   const grade = store.latestGrade(inspection.id);
   if (!grade) throw conflict("Calculate the condition grade before requesting a report draft.");
+  if (grade.approvedGrade == null) throw conflict("A reviewer must approve the InspectIQ Reference Grade before requesting a report draft.");
   if (inspection.status !== "GRADED" && inspection.status !== "REPORT_FAILED" && inspection.status !== "HUMAN_REVIEW_REQUIRED") {
     throw conflict(`Cannot request AI report from status ${inspection.status}.`);
   }
@@ -861,11 +902,27 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       }))
     });
     const saved = appStore.saveGrade(inspection.id, {
-      score: output.score,
-      grade: output.grade,
+      suggestedGrade: output.suggestedGrade,
+      conditionGradeBeforeRecon: output.conditionGradeBeforeRecon,
+      evidenceBlockers: output.evidenceBlockers,
       explanationJson: output.explanation,
       gradingVersion: output.gradingVersion
     }, actor);
+    await persistMutation(options);
+    sendData(res, saved);
+  }));
+
+  app.post("/api/inspections/:id/condition-grade/approve", asyncRoute(async (req, res) => {
+    const input = ApproveConditionGradeSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "grade:approve");
+    inspectionForRequest(appStore, req.params.id, actor, "approve this condition grade");
+    const saved = appStore.approveGrade(
+      req.params.id,
+      input.approvedGrade,
+      input.overrideReason ?? null,
+      actor
+    );
     await persistMutation(options);
     sendData(res, saved);
   }));
@@ -938,9 +995,18 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   app.post("/api/reports/:id/finalize", asyncRoute(async (req, res) => {
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "report:finalize");
-    reportForRequest(appStore, req.params.id, actor, "finalize this report");
+    const currentReport = reportForRequest(appStore, req.params.id, actor, "finalize this report");
+    const intake = appStore.recon.intakeForInspection(currentReport.inspectionId);
+    if (intake && intake.inspectionWorkflowStatus !== "REVIEW_READY") {
+      throw conflict("The inspection workflow must be REVIEW_READY before publishing the condition report.", {
+        inspectionWorkflowStatus: intake.inspectionWorkflowStatus
+      });
+    }
     const expectedVersion = SuggestionDecisionSchema.parse(req.body ?? {}).expectedVersion;
     const report = appStore.finalizeReport(req.params.id, actor, expectedVersion);
+    if (intake) {
+      appStore.recon.transitionInspection(report.inspectionId, "CR_PUBLISHED", actor);
+    }
     await persistMutation(options);
     sendData(res, report);
   }));
@@ -969,6 +1035,158 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const actor = actorFromRequest(req, appStore);
     reportForRequest(appStore, req.params.id, actor, "view report version history");
     sendData(res, appStore.reportVersionsFor(req.params.id));
+  }));
+
+  app.post("/api/consignor-accounts", asyncRoute(async (req, res) => {
+    const input = CreateConsignorAccountSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "recon:policy_manage");
+    const account = appStore.recon.createConsignorAccount(input, actor);
+    await persistMutation(options);
+    sendData(res, account, 201);
+  }));
+
+  app.post("/api/consignor-accounts/:id/policies", asyncRoute(async (req, res) => {
+    const input = CreateReconAuthorizationPolicySchema.parse({
+      ...req.body,
+      consignorAccountId: req.params.id
+    });
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "recon:policy_manage");
+    const policy = appStore.recon.createPolicy(input, actor);
+    await persistMutation(options);
+    sendData(res, policy, 201);
+  }));
+
+  app.post("/api/vehicle-intakes", asyncRoute(async (req, res) => {
+    const input = CreateVehicleIntakeSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "vehicle:check_in");
+    inspectionForRequest(appStore, input.inspectionId, actor, "check in this vehicle");
+    const intake = appStore.recon.createVehicleIntake(input, actor);
+    await persistMutation(options);
+    sendData(res, intake, 201);
+  }));
+
+  app.post("/api/inspections/:id/assign", asyncRoute(async (req, res) => {
+    const input = AssignInspectionSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "inspection:assign");
+    const assignment = appStore.recon.assignInspection(req.params.id, input.assignedToUserId, input.dueAt, actor);
+    await persistMutation(options);
+    sendData(res, assignment, 201);
+  }));
+
+  app.post("/api/inspections/:id/workflow-status", asyncRoute(async (req, res) => {
+    const input = TransitionInspectionWorkflowSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "inspection:workflow");
+    inspectionForRequest(appStore, req.params.id, actor, "advance this inspection workflow");
+    const intake = appStore.recon.transitionInspection(req.params.id, input.nextStatus, actor);
+    await persistMutation(options);
+    sendData(res, intake);
+  }));
+
+  app.patch("/api/inspections/:id/location", asyncRoute(async (req, res) => {
+    const input = VehicleLocationUpdateSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "vehicle:update_location");
+    const location = appStore.recon.updateLocation(req.params.id, input, actor);
+    await persistMutation(options);
+    sendData(res, location);
+  }));
+
+  app.get("/api/operations/recon", (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    const allowed = ["reviewer", "recon_coordinator", "consignor_approver", "technician", "admin"].includes(actor.role)
+      || isEvaluationActor(actor);
+    if (!allowed) throw forbidden("This role does not have access to the recon operations queue.");
+    const records = appStore.recon.listOperations(actor)
+      .filter((record) => appStore.recon.userCanAccessConsignor(actor, record.inspection.id) || isEvaluationActor(actor));
+    sendData(res, records);
+  });
+
+  app.get("/api/operations/recon/:inspectionId", (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    requireReconAccess(appStore, req.params.inspectionId, actor, "view recon operations");
+    sendData(res, appStore.recon.operationsRecord(req.params.inspectionId, actor));
+  });
+
+  app.post("/api/inspections/:id/recon/recommendations", asyncRoute(async (req, res) => {
+    const input = CreateReconRecommendationSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "recon:estimate");
+    requireReconAccess(appStore, req.params.id, actor, "create recon estimates");
+    const recommendation = appStore.recon.createRecommendation(req.params.id, input, actor);
+    await persistMutation(options);
+    sendData(res, recommendation, 201);
+  }));
+
+  app.post("/api/inspections/:id/recon/submit", asyncRoute(async (req, res) => {
+    const input = SubmitReconEstimateSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "recon:estimate");
+    requireReconAccess(appStore, req.params.id, actor, "submit recon estimates");
+    const record = appStore.recon.submitEstimate(req.params.id, input.recommendationIds, actor);
+    await persistMutation(options);
+    sendData(res, record);
+  }));
+
+  app.post("/api/recon/authorizations/:id/decision", asyncRoute(async (req, res) => {
+    const input = ConsignorDecisionSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "recon:authorize");
+    const authorization = appStore.recon.getAuthorization(req.params.id);
+    requireReconAccess(appStore, authorization.inspectionId, actor, "decide this recon authorization");
+    const decision = appStore.recon.decideAuthorization(req.params.id, input, actor);
+    await persistMutation(options);
+    sendData(res, decision);
+  }));
+
+  app.post("/api/recon/authorizations/:id/administrative-override", asyncRoute(async (req, res) => {
+    const input = AdministrativeAuthorizationSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "recon:policy_manage");
+    const decision = appStore.recon.decideAuthorization(
+      req.params.id,
+      input,
+      actor,
+      "ADMINISTRATIVE_OVERRIDE",
+      input.overrideReason
+    );
+    await persistMutation(options);
+    sendData(res, decision);
+  }));
+
+  app.patch("/api/work-orders/:id", asyncRoute(async (req, res) => {
+    const input = WorkOrderUpdateSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "work_order:update");
+    const workOrder = appStore.recon.getWorkOrder(req.params.id);
+    requireReconAccess(appStore, workOrder.inspectionId, actor, "update this work order");
+    const updated = appStore.recon.updateWorkOrder(req.params.id, input, actor);
+    await persistMutation(options);
+    sendData(res, updated);
+  }));
+
+  app.post("/api/work-orders/:id/quality-control", asyncRoute(async (req, res) => {
+    const input = QualityControlDecisionSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "quality_control:decide");
+    const workOrder = appStore.recon.getWorkOrder(req.params.id);
+    requireReconAccess(appStore, workOrder.inspectionId, actor, "record quality control");
+    const result = appStore.recon.recordQualityControl(req.params.id, input, actor);
+    await persistMutation(options);
+    sendData(res, result, 201);
+  }));
+
+  app.post("/api/inspections/:id/sale-readiness", asyncRoute(async (req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "sale_readiness:assess");
+    requireReconAccess(appStore, req.params.id, actor, "assess sale readiness");
+    const readiness = appStore.recon.assessReadiness(req.params.id, actor);
+    await persistMutation(options);
+    sendData(res, readiness);
   }));
 
   app.get("/api/platform-health", asyncRoute(async (req, res) => {
