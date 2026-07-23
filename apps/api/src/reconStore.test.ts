@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { seedStore } from "./seedData.js";
+import { reconcileReconOperations, seedStore } from "./seedData.js";
 import { MemoryStore } from "./store.js";
 import type { Actor } from "./domain.js";
 
@@ -16,6 +16,35 @@ const consignorActor: Actor = {
 };
 
 describe("inspection-to-recon operations", () => {
+  it("adds missing operational records without replacing persisted vehicles or evidence", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const inspectionIds = [...store.inspections.keys()];
+    const photoIds = [...store.photos.keys()];
+    const vins = [...store.inspections.values()].map((inspection) => inspection.vin);
+    store.recon.reset();
+
+    expect(reconcileReconOperations(store)).toBe(true);
+    expect([...store.inspections.keys()]).toEqual(inspectionIds);
+    expect([...store.photos.keys()]).toEqual(photoIds);
+    expect([...store.inspections.values()].map((inspection) => inspection.vin)).toEqual(vins);
+    expect(store.vehicleIntakes.size).toBe(store.inspections.size);
+
+    const operationalCounts = {
+      intakes: store.vehicleIntakes.size,
+      assignments: store.inspectionAssignments.size,
+      recommendations: store.reconRecommendations.size,
+      workOrders: store.workOrders.size
+    };
+    expect(reconcileReconOperations(store)).toBe(false);
+    expect({
+      intakes: store.vehicleIntakes.size,
+      assignments: store.inspectionAssignments.size,
+      recommendations: store.reconRecommendations.size,
+      workOrders: store.workOrders.size
+    }).toEqual(operationalCounts);
+  });
+
   it("seeds distinct operational states without asserting unsupported vehicle damage", () => {
     const store = new MemoryStore();
     seedStore(store);

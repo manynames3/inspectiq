@@ -578,14 +578,7 @@ export function seedStore(store: MemoryStore): void {
   const maria = store.addUser({ id: "inspector-maria-lee", name: "Maria Lee", role: "inspector" });
   const gateOps = store.addUser({ id: "inspector-gate-ops", name: "Gate Ops", role: "inspector" });
   const reviewer = store.addUser({ id: "review-lead", name: "Review Lead", role: "reviewer" });
-  const reconCoordinator = store.addUser({ id: "recon-coordinator", name: "Alex Rivera", role: "recon_coordinator" });
-  const consignorApprover = store.addUser({ id: "consignor-approver-sdg", name: "Morgan Ellis", role: "consignor_approver" });
-  const technician = store.addUser({ id: "technician-body-01", name: "Sam Patel", role: "technician" });
-  const admin = store.addUser({ id: "operations-admin", name: "Operations Admin", role: "admin" });
   const reviewerActor: Actor = { id: reviewer.id, name: reviewer.name, role: reviewer.role };
-  const reconActor: Actor = { id: reconCoordinator.id, name: reconCoordinator.name, role: reconCoordinator.role };
-  const consignorActor: Actor = { id: consignorApprover.id, name: consignorApprover.name, role: consignorApprover.role };
-  const adminActor: Actor = { id: admin.id, name: admin.name, role: admin.role };
   const inspectorActors: Record<string, Actor> = {
     "John Smith": { id: inspector.id, name: inspector.name, role: inspector.role },
     "Maria Lee": { id: maria.id, name: maria.name, role: maria.role },
@@ -764,6 +757,53 @@ export function seedStore(store: MemoryStore): void {
     createReferenceReport(store, input, inspection.id, reviewerActor);
   }
 
+  reconcileReconOperations(store);
+  store.addAudit([...store.inspections.values()][0].id, systemActor, "inspection.queue.loaded", {
+    inspections: store.inspections.size,
+    note: "Initial inspection queue loaded."
+  });
+}
+
+function ensureSeedUser(
+  store: MemoryStore,
+  input: Parameters<MemoryStore["addUser"]>[0]
+) {
+  return store.users.get(input.id ?? "") ?? store.addUser(input);
+}
+
+export function reconcileReconOperations(store: MemoryStore): boolean {
+  if (store.inspections.size === 0 || store.vehicleIntakes.size > 0) return false;
+
+  const inspector = ensureSeedUser(store, { id: "inspector-john-smith", name: "John Smith", role: "inspector" });
+  const maria = ensureSeedUser(store, { id: "inspector-maria-lee", name: "Maria Lee", role: "inspector" });
+  const gateOps = ensureSeedUser(store, { id: "inspector-gate-ops", name: "Gate Ops", role: "inspector" });
+  const reviewer = ensureSeedUser(store, { id: "review-lead", name: "Review Lead", role: "reviewer" });
+  const reconCoordinator = ensureSeedUser(store, {
+    id: "recon-coordinator",
+    name: "Alex Rivera",
+    role: "recon_coordinator"
+  });
+  const consignorApprover = ensureSeedUser(store, {
+    id: "consignor-approver-sdg",
+    name: "Morgan Ellis",
+    role: "consignor_approver"
+  });
+  const technician = ensureSeedUser(store, {
+    id: "technician-body-01",
+    name: "Sam Patel",
+    role: "technician"
+  });
+  const admin = ensureSeedUser(store, { id: "operations-admin", name: "Operations Admin", role: "admin" });
+  const reviewerActor: Actor = { id: reviewer.id, name: reviewer.name, role: reviewer.role };
+  const reconActor: Actor = { id: reconCoordinator.id, name: reconCoordinator.name, role: reconCoordinator.role };
+  const consignorActor: Actor = { id: consignorApprover.id, name: consignorApprover.name, role: consignorApprover.role };
+  const adminActor: Actor = { id: admin.id, name: admin.name, role: admin.role };
+  const inspectorActors: Record<string, Actor> = {
+    "John Smith": { id: inspector.id, name: inspector.name, role: inspector.role },
+    "Maria Lee": { id: maria.id, name: maria.name, role: maria.role },
+    "Gate Ops": { id: gateOps.id, name: gateOps.name, role: gateOps.role }
+  };
+
   const southeastDealerGroup = store.recon.createConsignorAccount({
     name: "Southeast Dealer Group",
     accountType: "DEALERSHIP",
@@ -809,14 +849,16 @@ export function seedStore(store: MemoryStore): void {
   const inspections = [...store.inspections.values()];
   const saleOffsetsHours = [48, 18, 30, 72, 5, 12];
   inspections.forEach((inspection, index) => {
-    const account = index < 5 ? southeastDealerGroup : fleetRemarketing;
+    const fleetVehicle = inspection.vin === "4S4BTAFC8P3204430";
+    const account = fleetVehicle ? fleetRemarketing : southeastDealerGroup;
+    const saleOffsetHours = saleOffsetsHours[index] ?? 24 + index * 6;
     store.recon.createVehicleIntake({
       inspectionId: inspection.id,
       consignorAccountId: account.id,
-      facility: index === 5 ? "Atlanta South" : "Atlanta Main",
+      facility: fleetVehicle ? "Atlanta South" : "Atlanta Main",
       yardZone: `Z${Math.floor(index / 3) + 1}`,
       parkingSpace: `P-${String(index + 17).padStart(3, "0")}`,
-      saleDateTime: new Date(seedClock + saleOffsetsHours[index] * 3_600_000).toISOString(),
+      saleDateTime: new Date(seedClock + saleOffsetHours * 3_600_000).toISOString(),
       lane: `Lane ${index % 3 + 1}`,
       runNumber: String(120 + index),
       saleEventId: `ATL-${new Date(seedClock).toISOString().slice(0, 10)}`,
@@ -830,19 +872,23 @@ export function seedStore(store: MemoryStore): void {
     );
   });
 
-  const [hyundai, toyota, honda, ford, nissan, subaru] = inspections;
-  store.recon.transitionInspection(hyundai.id, "CAPTURE_IN_PROGRESS", reviewerActor);
-  store.recon.transitionInspection(toyota.id, "CAPTURE_IN_PROGRESS", reviewerActor);
-  store.recon.transitionInspection(toyota.id, "RETAKE_REQUIRED", reviewerActor);
-  store.recon.transitionInspection(honda.id, "CAPTURE_IN_PROGRESS", reviewerActor);
-  store.recon.transitionInspection(honda.id, "REVIEW_READY", reviewerActor);
-  store.recon.transitionInspection(ford.id, "CAPTURE_IN_PROGRESS", reviewerActor);
-  store.recon.transitionInspection(ford.id, "REVIEW_READY", reviewerActor);
-  store.recon.transitionInspection(ford.id, "CR_PUBLISHED", reviewerActor);
-  store.recon.transitionInspection(nissan.id, "CAPTURE_IN_PROGRESS", reviewerActor);
-  store.recon.transitionInspection(nissan.id, "REVIEW_READY", reviewerActor);
-  store.recon.transitionInspection(nissan.id, "CR_PUBLISHED", reviewerActor);
-  store.recon.transitionInspection(subaru.id, "CAPTURE_IN_PROGRESS", reviewerActor);
+  const workflowByVin = new Map<string, Array<"CAPTURE_IN_PROGRESS" | "RETAKE_REQUIRED" | "REVIEW_READY" | "CR_PUBLISHED">>([
+    ["5NMJF3DE5RH407769", ["CAPTURE_IN_PROGRESS"]],
+    ["4T1G11AK0MU520503", ["CAPTURE_IN_PROGRESS", "RETAKE_REQUIRED"]],
+    ["1HGCV1F49LA129627", ["CAPTURE_IN_PROGRESS", "REVIEW_READY"]],
+    ["1FMCU9H6XNUB81389", ["CAPTURE_IN_PROGRESS", "REVIEW_READY", "CR_PUBLISHED"]],
+    ["KNMAT2MV6KP514068", ["CAPTURE_IN_PROGRESS", "REVIEW_READY", "CR_PUBLISHED"]],
+    ["4S4BTAFC8P3204430", ["CAPTURE_IN_PROGRESS"]]
+  ]);
+  for (const inspection of inspections) {
+    for (const status of workflowByVin.get(inspection.vin) ?? []) {
+      store.recon.transitionInspection(inspection.id, status, reviewerActor);
+    }
+  }
+
+  const ford = inspections.find((inspection) => inspection.vin === "1FMCU9H6XNUB81389");
+  const nissan = inspections.find((inspection) => inspection.vin === "KNMAT2MV6KP514068");
+  if (!ford || !nissan) return true;
 
   const fordRecommendations = [
     store.recon.createRecommendation(ford.id, {
@@ -1025,8 +1071,5 @@ export function seedStore(store: MemoryStore): void {
     }, reviewerActor);
   }
 
-  store.addAudit([...store.inspections.values()][0].id, systemActor, "inspection.queue.loaded", {
-    inspections: store.inspections.size,
-    note: "Initial inspection queue loaded."
-  });
+  return true;
 }
