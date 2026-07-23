@@ -45,6 +45,21 @@ describe("inspection-to-recon operations", () => {
     }).toEqual(operationalCounts);
   });
 
+  it("does not invent published reports or recon estimates while backfilling older data", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const ford = [...store.inspections.values()].find((inspection) => inspection.vin === "1FMCU9H6XNUB81389")!;
+    const report = store.latestFinalReport(ford.id)!;
+    report.finalizedAt = null;
+    store.recon.reset();
+
+    expect(reconcileReconOperations(store)).toBe(true);
+    const fordIntake = [...store.vehicleIntakes.values()].find((intake) => intake.inspectionId === ford.id);
+    expect(fordIntake?.inspectionWorkflowStatus).toBe("REVIEW_READY");
+    expect(store.reconRecommendations.size).toBe(0);
+    expect(store.vehicleIntakes.size).toBe(store.inspections.size);
+  });
+
   it("seeds distinct operational states without asserting unsupported vehicle damage", () => {
     const store = new MemoryStore();
     seedStore(store);

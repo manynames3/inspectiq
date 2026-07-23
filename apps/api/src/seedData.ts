@@ -881,7 +881,10 @@ export function reconcileReconOperations(store: MemoryStore): boolean {
     ["4S4BTAFC8P3204430", ["CAPTURE_IN_PROGRESS"]]
   ]);
   for (const inspection of inspections) {
-    for (const status of workflowByVin.get(inspection.vin) ?? []) {
+    const hasPublishedReport = Boolean(store.latestFinalReport(inspection.id)?.finalizedAt);
+    const statuses = (workflowByVin.get(inspection.vin) ?? [])
+      .filter((status) => status !== "CR_PUBLISHED" || hasPublishedReport);
+    for (const status of statuses) {
       store.recon.transitionInspection(inspection.id, status, reviewerActor);
     }
   }
@@ -889,6 +892,9 @@ export function reconcileReconOperations(store: MemoryStore): boolean {
   const ford = inspections.find((inspection) => inspection.vin === "1FMCU9H6XNUB81389");
   const nissan = inspections.find((inspection) => inspection.vin === "KNMAT2MV6KP514068");
   if (!ford || !nissan) return true;
+  const referenceReportsPublished = [ford, nissan]
+    .every((inspection) => Boolean(store.latestFinalReport(inspection.id)?.finalizedAt));
+  if (!referenceReportsPublished) return true;
 
   const fordRecommendations = [
     store.recon.createRecommendation(ford.id, {
