@@ -49,7 +49,7 @@ export function formatConditionGrade(
 
   const state = includeReviewState
     ? view.reviewState === "approved"
-      ? " approved"
+      ? ""
       : view.reviewState === "suggested"
         ? " suggested"
         : " migrated"

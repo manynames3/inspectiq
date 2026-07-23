@@ -28,7 +28,7 @@ describe("condition grade display", () => {
       value: 4.5,
       reviewState: "approved"
     });
-    expect(formatConditionGrade(grade({ approvedGrade: 4.5 }), true)).toBe("4.5 / 5.0 approved");
+    expect(formatConditionGrade(grade({ approvedGrade: 4.5 }), true)).toBe("4.5 / 5.0");
   });
 
   it("labels an unapproved grade as suggested", () => {
