@@ -387,9 +387,16 @@ export const ImageQualitySchema = z.object({
   notes: z.array(z.string().trim().min(1).max(160))
 }).strict();
 
+export const VehicleOrientationSchema = z.object({
+  frontDirection: z.enum(["left", "right", "center", "unknown"]),
+  confidence: z.number().min(0).max(1),
+  cues: z.array(z.string().trim().min(1).max(160)).max(3)
+}).strict();
+
 export const VisionOutputSchema = z.object({
   photoAngle: PhotoAngleSchema,
   confidence: z.number().min(0).max(1),
+  vehicleOrientation: VehicleOrientationSchema.optional(),
   imageQuality: ImageQualitySchema,
   qualityWarnings: z.array(z.string().trim().min(1).max(160)),
   detectedDamageCandidates: z.array(DamageCandidateSchema),
