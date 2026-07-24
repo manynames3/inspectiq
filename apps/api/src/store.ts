@@ -543,25 +543,6 @@ export class MemoryStore {
     force?: boolean;
   }, actor: Actor): PhotoAnalysisResult {
     this.assertMutableInspection(photo.inspectionId, "analyze photos");
-    const duplicate = [...this.analyses.values()].find((analysis) =>
-      analysis.photoId === photo.id
-      && analysis.status === "completed"
-      && analysis.provider === input.provider
-      && analysis.promptVersion === input.promptVersion
-    );
-    if (duplicate && !input.force) {
-      if (input.jobId) {
-        const job = this.imageAnalysisJobs.get(input.jobId);
-        if (job) {
-          job.status = "completed";
-          job.errorMessage = null;
-          job.updatedAt = now();
-          job.completedAt = job.updatedAt;
-        }
-      }
-      return duplicate;
-    }
-
     const analysis: PhotoAnalysisResult = {
       id: id(),
       photoId: photo.id,

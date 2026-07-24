@@ -360,6 +360,52 @@ describe("reference evidence reconciliation", () => {
     expect(store.listSuggestions(toyota.id).some((suggestion) => suggestion.suggestionType === "extracted_text")).toBe(true);
   });
 
+  it("persists a successful model retry after a later schema failure", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const actor = { id: "operations-admin", name: "Operations Admin", role: "admin" as const };
+    const acura = [...store.inspections.values()].find((inspection) => inspection.vin === "19UUB2F58FA******")!;
+    const photo = store.listPhotos(acura.id).find((candidate) => candidate.originalFilename.includes("damage-detail"))!;
+    const initialAnalysisCount = [...store.analyses.values()].filter((analysis) => analysis.photoId === photo.id).length;
+    const output = (confidence: number) => ({
+      photoAngle: "driver_side" as const,
+      confidence,
+      imageQuality: {
+        grade: "review" as const,
+        blurScore: 0.9,
+        exposureScore: 0.82,
+        framingScore: 0.8,
+        resolutionScore: 0.9,
+        occlusionRisk: 0.05,
+        retakeRequired: false,
+        notes: ["Front-left collision damage is visible."]
+      },
+      qualityWarnings: [],
+      detectedDamageCandidates: [],
+      extractedText: {},
+      humanReviewRequired: true
+    });
+
+    const first = store.saveAnalysis(photo, {
+      provider: "bedrockVisionProvider",
+      promptVersion: "photo-analysis-v4",
+      raw: { attempt: 1 },
+      validated: output(0.91)
+    }, actor);
+    store.failAnalysis(photo, "bedrockVisionProvider", "photo-analysis-v4", "Schema validation failed.", actor);
+    const recovered = store.saveAnalysis(photo, {
+      provider: "bedrockVisionProvider",
+      promptVersion: "photo-analysis-v4",
+      raw: { attempt: 2 },
+      validated: output(0.97)
+    }, actor);
+
+    expect(recovered.id).not.toBe(first.id);
+    expect(photo.analysisStatus).toBe("completed");
+    expect(photo.detectedAngleConfidence).toBe(0.97);
+    expect([...store.analyses.values()].filter((analysis) => analysis.photoId === photo.id)).toHaveLength(initialAnalysisCount + 3);
+  });
+
   it("reuses the same actionable finding when a photo is analyzed repeatedly", () => {
     const store = new MemoryStore();
     seedStore(store);
