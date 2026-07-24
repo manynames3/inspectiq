@@ -721,7 +721,7 @@ describe("InspectIQ API", () => {
     });
   });
 
-  it("returns external reference-evidence URLs without S3 presigning", async () => {
+  it("previews the same private reference object that image analysis reads", async () => {
     process.env.IMAGE_UPLOAD_MODE = "presigned";
     const created = await createInspection();
     const inspectionId = created.body.data.id as string;
@@ -745,10 +745,12 @@ describe("InspectIQ API", () => {
       .expect(200);
 
     expect(imagePreview.body.data).toMatchObject({
-      imageUrl: storageKey,
-      expiresInSeconds: null,
-      source: "reference-evidence"
+      expiresInSeconds: 900,
+      source: "object-storage"
     });
+    expect(imagePreview.body.data.imageUrl).toContain("inspectiq-test-images");
+    expect(imagePreview.body.data.imageUrl).toContain("passenger-side.jpg");
+    expect(imagePreview.body.data.imageUrl).not.toBe(storageKey);
   });
 
   it("allows read-only evaluation preview without allowing mutations", async () => {

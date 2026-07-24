@@ -604,17 +604,17 @@ export class MemoryStore {
       }
     }
 
-    this.createSuggestion({
+    const currentSuggestions: CreateVisionSuggestionInput[] = [{
       inspectionId: photo.inspectionId,
       photoId: photo.id,
       suggestionType: "photo_angle",
       suggestedValueJson: { photoAngle: input.validated.photoAngle },
       confidence: input.validated.confidence,
       explanation: `Likely photo angle: ${input.validated.photoAngle}. Reviewer confirmation required.`
-    });
+    }];
 
     for (const warning of input.validated.qualityWarnings) {
-      this.createSuggestion({
+      currentSuggestions.push({
         inspectionId: photo.inspectionId,
         photoId: photo.id,
         suggestionType: "quality_warning",
@@ -625,7 +625,7 @@ export class MemoryStore {
     }
 
     for (const candidate of input.validated.detectedDamageCandidates) {
-      this.createSuggestion({
+      currentSuggestions.push({
         inspectionId: photo.inspectionId,
         photoId: photo.id,
         suggestionType: "damage_candidate",
@@ -636,15 +636,21 @@ export class MemoryStore {
     }
 
     if (input.validated.extractedText.odometer || input.validated.extractedText.vin) {
-      this.createSuggestion({
+      currentSuggestions.push({
         inspectionId: photo.inspectionId,
         photoId: photo.id,
-      suggestionType: "extracted_text",
-      suggestedValueJson: input.validated.extractedText,
-      confidence: input.validated.confidence,
-      explanation: "Possible odometer or VIN text detected. Reviewer confirmation required before approval."
-    });
+        suggestionType: "extracted_text",
+        suggestedValueJson: input.validated.extractedText,
+        confidence: input.validated.confidence,
+        explanation: "Possible odometer or VIN text detected. Reviewer confirmation required before approval."
+      });
     }
+
+    this.supersedePendingPhotoSuggestions(photo, currentSuggestions, actor, {
+      provider: input.provider,
+      promptVersion: input.promptVersion
+    });
+    for (const suggestion of currentSuggestions) this.createSuggestion(suggestion);
 
     this.addAudit(photo.inspectionId, actor, "photo.analyzed", {
       jobId: input.jobId ?? null,
@@ -674,6 +680,36 @@ export class MemoryStore {
       });
     }
     return analysis;
+  }
+
+  supersedePendingPhotoSuggestions(
+    photo: VehiclePhoto,
+    currentSuggestions: CreateVisionSuggestionInput[],
+    actor: Actor,
+    source: { provider: string; promptVersion: string }
+  ): string[] {
+    const currentKeys = new Set(currentSuggestions.map((suggestion) => suggestionSemanticKey(suggestion)));
+    const removedSuggestionIds: string[] = [];
+    for (const suggestion of this.suggestions.values()) {
+      if (
+        suggestion.photoId !== photo.id ||
+        suggestion.status !== "pending" ||
+        currentKeys.has(suggestionSemanticKey(suggestion))
+      ) {
+        continue;
+      }
+      this.suggestions.delete(suggestion.id);
+      removedSuggestionIds.push(suggestion.id);
+    }
+    if (removedSuggestionIds.length > 0) {
+      this.addAudit(photo.inspectionId, actor, "suggestion.superseded", {
+        photoId: photo.id,
+        removedSuggestionIds,
+        provider: source.provider,
+        promptVersion: source.promptVersion
+      });
+    }
+    return removedSuggestionIds;
   }
 
   saveReferenceMapping(photo: VehiclePhoto, input: {

@@ -132,7 +132,10 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
     const sample = findReferenceSampleForPhoto(photo);
     if (!sample) continue;
 
-    const storageKey = sample.storageKey ?? `/sample-images/${sample.filename}`;
+    const sourceStorageKey = sample.storageKey ?? `/sample-images/${sample.filename}`;
+    const storageKey = photo.objectBucket && photo.objectBucket !== "inspectiq-sample-images" && photo.objectKey
+      ? `s3://${photo.objectBucket}/${photo.objectKey}`
+      : sourceStorageKey;
     const photoAnalyses = [...store.analyses.values()].filter((analysis) => analysis.photoId === photo.id);
     const hasModelAnalysis = photoAnalyses.some((analysis) =>
       analysis.provider !== "referenceManifestProvider" &&
@@ -141,7 +144,7 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
     );
     const output = referenceVisionOutput({
       angle: sample.angle,
-      storageKey,
+      storageKey: sourceStorageKey,
       referenceAngleConfidence: sample.referenceAngleConfidence,
       referenceQualityGrade: sample.referenceQualityGrade,
       referenceRetakeRequired: sample.referenceRetakeRequired,
@@ -219,6 +222,28 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
         suggestion.explanation = explanation;
         changed = true;
       }
+    }
+
+    if (!hasModelAnalysis) {
+      const currentSuggestions = [{
+        inspectionId: photo.inspectionId,
+        photoId: photo.id,
+        suggestionType: "photo_angle" as const,
+        suggestedValueJson: { photoAngle: output.photoAngle },
+        confidence: output.confidence,
+        explanation: `Imported evidence is assigned to the ${output.photoAngle} required view. Reviewer confirmation required.`
+      }, ...output.qualityWarnings.map((warning) => ({
+        inspectionId: photo.inspectionId,
+        photoId: photo.id,
+        suggestionType: "quality_warning" as const,
+        suggestedValueJson: { warning, imageQuality: output.imageQuality },
+        confidence: Math.min(output.confidence, 0.75),
+        explanation: `Reference-source QA note: ${warning} Reviewer confirmation required.`
+      }))];
+      changed = store.supersedePendingPhotoSuggestions(photo, currentSuggestions, systemActor, {
+        provider: "referenceManifestProvider",
+        promptVersion: "reference-manifest-v1"
+      }).length > 0 || changed;
     }
 
     for (const warning of hasModelAnalysis ? [] : output.qualityWarnings) {

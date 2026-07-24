@@ -724,18 +724,6 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       res.redirect(photo.storageKey);
       return;
     }
-    if (photo.storageKey.startsWith("http") || photo.storageKey.startsWith("data:")) {
-      if (req.query.intent === "preview") {
-        sendData(res, {
-          imageUrl: photo.storageKey,
-          expiresInSeconds: null,
-          source: "reference-evidence"
-        });
-        return;
-      }
-      res.redirect(photo.storageKey);
-      return;
-    }
     if (process.env.IMAGE_UPLOAD_MODE === "presigned") {
       const imageUrl = await createPresignedDownload({ bucket: photo.objectBucket, key: photo.objectKey, expiresInSeconds: 900 });
       if (req.query.intent === "preview") {
@@ -749,7 +737,9 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       res.redirect(imageUrl);
       return;
     }
-    const imageUrl = photo.storageKey || s3ObjectUrl(photo.objectBucket, photo.objectKey);
+    const imageUrl = photo.storageKey.startsWith("http") || photo.storageKey.startsWith("data:")
+      ? s3ObjectUrl(photo.objectBucket, photo.objectKey)
+      : photo.storageKey || s3ObjectUrl(photo.objectBucket, photo.objectKey);
     if (req.query.intent === "preview") {
       sendData(res, {
         imageUrl,

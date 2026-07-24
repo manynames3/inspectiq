@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { requiredPhotoAngles } from "@inspectiq/shared";
-import { findSampleImage, samplePhotoSets } from "./sampleImages.js";
+import { findSampleImage, sampleImages, samplePhotoSets } from "./sampleImages.js";
 import { reconcileReferenceEvidence, seedStore } from "./seedData.js";
 import { MemoryStore } from "./store.js";
 
@@ -15,6 +15,21 @@ describe("reference evidence reconciliation", () => {
 
       expect(new Set(angles).size, `${set.key} should not duplicate angle slots`).toBe(angles.length);
       expect([...angles].sort()).toEqual([...requiredPhotoAngles].sort());
+    }
+  });
+
+  it("does not treat dealer-listing metadata as pixel-derived quality evidence", () => {
+    const listingPhotos = sampleImages.filter((sample) =>
+      sample.sourceLicense?.startsWith("External dealer listing URL")
+    );
+
+    expect(listingPhotos.length).toBeGreaterThan(0);
+    for (const photo of listingPhotos) {
+      expect(photo.referenceAngleConfidence, photo.filename).toBeUndefined();
+      expect(photo.referenceQualityGrade, photo.filename).toBeUndefined();
+      expect(photo.referenceRetakeRequired, photo.filename).toBeUndefined();
+      expect(photo.referenceQualityWarnings, photo.filename).toBeUndefined();
+      expect(photo.referenceQualityNotes, photo.filename).toBeUndefined();
     }
   });
 
@@ -40,8 +55,8 @@ describe("reference evidence reconciliation", () => {
     expect(passengerPhoto!.storageKey).toBe("https://carfax-img.vast.com/carfax/v2/866048677535386941/1/640x480");
     expect(passengerPhoto!.declaredAngle).toBe("passenger_side");
     expect(passengerPhoto!.detectedAngle).toBe("passenger_side");
-    expect(passengerPhoto!.detectedAngleConfidence).toBe(0.82);
-    expect(passengerPhoto!.qualityStatus).toBe("warning");
+    expect(passengerPhoto!.detectedAngleConfidence).toBe(0.94);
+    expect(passengerPhoto!.qualityStatus).toBe("ok");
   });
 
   it("repairs stale uploaded reference-evidence rows from the current manifest", () => {
@@ -76,17 +91,17 @@ describe("reference evidence reconciliation", () => {
 
     expect(reconcileReferenceEvidence(store)).toBe(true);
 
-    expect(driverPhoto!.storageKey).toBe("https://carfax-img.vast.com/carfax/v2/866048677535386941/8/640x480");
+    expect(driverPhoto!.storageKey).toBe("s3://inspectiq-prod-images/uploads/reference-evidence/2020-honda-accord-1hgcv1f49la129627/driver-side-old.jpg");
     expect(driverPhoto!.declaredAngle).toBe("driver_side");
     expect(driverPhoto!.detectedAngle).toBe("driver_side");
-    expect(driverPhoto!.detectedAngleConfidence).toBe(0.86);
-    expect(driverPhoto!.qualityStatus).toBe("warning");
+    expect(driverPhoto!.detectedAngleConfidence).toBe(0.94);
+    expect(driverPhoto!.qualityStatus).toBe("ok");
 
-    expect(passengerPhoto!.storageKey).toBe("https://carfax-img.vast.com/carfax/v2/866048677535386941/1/640x480");
+    expect(passengerPhoto!.storageKey).toBe("s3://inspectiq-prod-images/uploads/reference-evidence/2020-honda-accord-1hgcv1f49la129627/passenger-side-old.jpg");
     expect(passengerPhoto!.declaredAngle).toBe("passenger_side");
     expect(passengerPhoto!.detectedAngle).toBe("passenger_side");
-    expect(passengerPhoto!.detectedAngleConfidence).toBe(0.82);
-    expect(passengerPhoto!.qualityStatus).toBe("warning");
+    expect(passengerPhoto!.detectedAngleConfidence).toBe(0.94);
+    expect(passengerPhoto!.qualityStatus).toBe("ok");
   });
 
   it("repairs stale Toyota Camry front reference evidence to the direct front image", () => {
@@ -107,14 +122,44 @@ describe("reference evidence reconciliation", () => {
     frontPhoto!.thumbnailStorageKey = frontPhoto!.storageKey;
     frontPhoto!.detectedAngleConfidence = 0.95;
     frontPhoto!.qualityStatus = "ok";
+    const staleWarning = store.createSuggestion({
+      inspectionId: camry!.id,
+      photoId: frontPhoto!.id,
+      suggestionType: "quality_warning",
+      suggestedValueJson: {
+        warning: "Front listing photo is a three-quarter angle; reviewer should request a direct front retake if buyer-facing standards require it.",
+        imageQuality: {
+          grade: "review",
+          blurScore: 0.94,
+          exposureScore: 0.92,
+          framingScore: 0.84,
+          resolutionScore: 0.93,
+          occlusionRisk: 0.04,
+          retakeRequired: false,
+          notes: []
+        }
+      },
+      confidence: 0.75,
+      explanation: "Reference-source QA note requires reviewer confirmation."
+    });
 
     expect(reconcileReferenceEvidence(store)).toBe(true);
 
-    expect(frontPhoto!.storageKey).toBe("https://pictures.dealer.com/a/autonationhondaofrenton/0484/002c87ec96ae6c3cb575e0ce2e4029f0x.jpg");
+    expect(frontPhoto!.storageKey).toBe("s3://inspectiq-prod-images/uploads/reference-evidence/2021-toyota-camry-4t1g11ak0mu520503/front-old.jpg");
     expect(frontPhoto!.declaredAngle).toBe("front");
     expect(frontPhoto!.detectedAngle).toBe("front");
-    expect(frontPhoto!.detectedAngleConfidence).toBe(0.78);
-    expect(frontPhoto!.qualityStatus).toBe("warning");
+    expect(frontPhoto!.detectedAngleConfidence).toBe(0.95);
+    expect(frontPhoto!.qualityStatus).toBe("ok");
+    expect(store.suggestions.has(staleWarning.id)).toBe(false);
+    expect(store.auditForInspection(camry!.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "suggestion.superseded",
+        detailsJson: expect.objectContaining({
+          removedSuggestionIds: [staleWarning.id],
+          provider: "referenceManifestProvider"
+        })
+      })
+    ]));
   });
 
   it("does not confirm an unsupported scratch on the Ford Escape reference evidence", () => {
@@ -285,9 +330,26 @@ describe("reference evidence reconciliation", () => {
     seedStore(store);
     const honda = [...store.inspections.values()].find((inspection) => inspection.vin === "1HGCV1F49LA129627")!;
     const passenger = store.listPhotos(honda.id).find((photo) => photo.declaredAngle === "passenger_side")!;
-    const warning = store.listSuggestions(honda.id).find((suggestion) =>
-      suggestion.photoId === passenger.id && suggestion.suggestionType === "quality_warning"
-    )!;
+    const warning = store.createSuggestion({
+      inspectionId: honda.id,
+      photoId: passenger.id,
+      suggestionType: "quality_warning",
+      suggestedValueJson: {
+        warning: "Passenger-side framing requires review.",
+        imageQuality: {
+          grade: "review",
+          blurScore: 0.9,
+          exposureScore: 0.9,
+          framingScore: 0.72,
+          resolutionScore: 0.9,
+          occlusionRisk: 0.05,
+          retakeRequired: false,
+          notes: []
+        }
+      },
+      confidence: 0.72,
+      explanation: "Passenger-side framing requires review. Reviewer confirmation required."
+    });
     const suggestionCount = store.listSuggestions(honda.id).length;
     const previousVersion = warning.version;
 
@@ -309,6 +371,95 @@ describe("reference evidence reconciliation", () => {
     expect(repeated.id).toBe(warning.id);
     expect(repeated.version).toBe(previousVersion + 1);
     expect(store.listSuggestions(honda.id)).toHaveLength(suggestionCount);
+  });
+
+  it("supersedes stale pending findings when current model output no longer supports them", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const actor = { id: "bedrock-worker", name: "Bedrock Worker", role: "admin" as const };
+    const reviewer = { id: "review-lead", name: "Review Lead", role: "reviewer" as const };
+    const toyota = [...store.inspections.values()].find((inspection) => inspection.vin === "4T1G11AK0MU520503")!;
+    const front = store.listPhotos(toyota.id).find((photo) => photo.declaredAngle === "front")!;
+    const stalePending = store.createSuggestion({
+      inspectionId: toyota.id,
+      photoId: front.id,
+      suggestionType: "quality_warning",
+      suggestedValueJson: {
+        warning: "Front listing photo is a three-quarter angle.",
+        imageQuality: {
+          grade: "review",
+          blurScore: 0.9,
+          exposureScore: 0.9,
+          framingScore: 0.7,
+          resolutionScore: 0.9,
+          occlusionRisk: 0.05,
+          retakeRequired: false,
+          notes: []
+        }
+      },
+      confidence: 0.72,
+      explanation: "Front listing photo is a three-quarter angle. Reviewer confirmation required."
+    });
+    const reviewedFinding = store.createSuggestion({
+      inspectionId: toyota.id,
+      photoId: front.id,
+      suggestionType: "quality_warning",
+      suggestedValueJson: {
+        warning: "Reviewer previously confirmed a separate glare concern.",
+        imageQuality: {
+          grade: "review",
+          blurScore: 0.9,
+          exposureScore: 0.7,
+          framingScore: 0.9,
+          resolutionScore: 0.9,
+          occlusionRisk: 0.05,
+          retakeRequired: false,
+          notes: []
+        }
+      },
+      confidence: 0.7,
+      explanation: "Reviewer previously confirmed a separate glare concern."
+    });
+    store.rejectSuggestion(reviewedFinding.id, reviewer);
+
+    store.saveAnalysis(front, {
+      provider: "bedrockVisionProvider",
+      promptVersion: "photo-analysis-v2",
+      raw: { source: "bedrock" },
+      validated: {
+        photoAngle: "front",
+        confidence: 0.95,
+        imageQuality: {
+          grade: "pass",
+          blurScore: 0.95,
+          exposureScore: 0.93,
+          framingScore: 0.9,
+          resolutionScore: 0.92,
+          occlusionRisk: 0.05,
+          retakeRequired: false,
+          notes: ["Centered direct-front evidence."]
+        },
+        qualityWarnings: [],
+        detectedDamageCandidates: [],
+        extractedText: {},
+        humanReviewRequired: false
+      },
+      force: true
+    }, actor);
+
+    expect(store.suggestions.has(stalePending.id)).toBe(false);
+    expect(store.suggestions.get(reviewedFinding.id)?.status).toBe("rejected");
+    expect(front.qualityStatus).toBe("ok");
+    expect(store.auditForInspection(toyota.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "suggestion.superseded",
+        detailsJson: expect.objectContaining({
+          photoId: front.id,
+          removedSuggestionIds: expect.arrayContaining([stalePending.id]),
+          provider: "bedrockVisionProvider"
+        })
+      })
+    ]));
   });
 
   it("treats odometer readings with leading zeros as the same finding", () => {

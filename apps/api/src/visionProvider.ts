@@ -88,7 +88,7 @@ function damageConfidenceThreshold(): number {
   return Number.isFinite(configured) ? configured : 0.80;
 }
 
-function normalizeVisionOutput(output: VisionOutput, declaredAngle?: VisionOutput["photoAngle"] | null): VisionOutput {
+export function normalizeVisionOutput(output: VisionOutput, declaredAngle?: VisionOutput["photoAngle"] | null): VisionOutput {
   const evidenceAngle = output.photoAngle === "odometer"
     || output.photoAngle === "vin_plate"
     || declaredAngle === "odometer"
@@ -123,9 +123,21 @@ function normalizeVisionOutput(output: VisionOutput, declaredAngle?: VisionOutpu
     ...output.imageQuality,
     notes: uniqueNonEmpty(output.imageQuality.notes).slice(0, 2)
   };
-  let qualityWarnings = output.imageQuality.retakeRequired || output.imageQuality.grade === "retake"
+  let qualityWarnings = output.imageQuality.retakeRequired
+    || output.imageQuality.grade === "retake"
+    || output.imageQuality.grade === "review"
     ? uniqueNonEmpty(output.qualityWarnings).slice(0, 1)
     : [];
+  const directViewClaimed = (declaredAngle === "front" || declaredAngle === "rear")
+    && output.photoAngle === declaredAngle
+    && output.imageQuality.grade === "pass";
+  const contradictoryViewNote = imageQuality.notes.some((note) =>
+    /\b(?:three[- ]quarter|3\/4)\b/i.test(note)
+  );
+  if (directViewClaimed && contradictoryViewNote) {
+    imageQuality.grade = "review";
+    qualityWarnings = ["Model angle fields and description disagree; reviewer must confirm the required view."];
+  }
   if (declaredAngle === "odometer" && !extractedText.odometer) {
     imageQuality.grade = "retake";
     imageQuality.retakeRequired = true;
@@ -431,12 +443,15 @@ export const bedrockVisionProvider: VisionProvider = {
       `Filename: ${input.filename}.`,
       `Declared capture slot: ${input.declaredAngle ?? "unknown"}.`,
       "When the declared capture slot is present and the visual evidence reasonably matches it, use that value as photoAngle. If the image contradicts the declared slot or quality is too poor, keep the visual classification and explain the mismatch in qualityWarnings.",
+      "A direct front or rear view has the vehicle centered, both lamps similarly sized, and little side body visible. A three-quarter view exposes substantial side body or doors and does not satisfy a required direct front or rear view.",
+      "A direct side view shows the vehicle profile with minimal front or rear fascia. Three-quarter side views require review when the declared slot requires a direct side capture.",
       "Return only strict JSON matching this TypeScript shape:",
       "{ photoAngle: 'front'|'rear'|'driver_side'|'passenger_side'|'interior'|'engine_bay'|'odometer'|'vin_plate'|'unknown', confidence: number, imageQuality: { grade: 'pass'|'review'|'retake', blurScore: number, exposureScore: number, framingScore: number, resolutionScore: number, occlusionRisk: number, retakeRequired: boolean, notes: string[] }, qualityWarnings: string[], detectedDamageCandidates: Array<{ location: string, damageType: 'scratch'|'dent'|'paint_damage'|'crack'|'wheel_damage'|'glass_damage'|'interior_wear'|'unknown', severityEstimate: 'minor'|'moderate'|'severe'|'unknown', confidence: number, explanation: string, repairEstimateUsd: { min: number, max: number, rationale: string }, requiresHumanConfirmation: boolean }>, extractedText: { vin?: string, odometer?: string }, humanReviewRequired: boolean }.",
       "Use 0-1 confidence values. If unsure, use unknown angle, lower confidence, and humanReviewRequired true.",
       "Never invent VIN or odometer values unless legible. Mark retakeRequired true for blur, poor framing, low light, occlusion, or non-vehicle images.",
       "For odometer or VIN-plate capture slots, do not return damage candidates; extract the text only if legible or request retake.",
       "Keep reviewer work bounded: return at most one qualityWarnings item and at most one detectedDamageCandidates item. Omit damage candidates below 0.80 confidence.",
+      "The structured angle, quality grade, retake flag, warnings, and notes must agree. Do not describe an image as three-quarter in notes while marking a direct required view as pass.",
       "Each note, warning, location, and rationale must be concise; keep each string under 120 characters."
     ].join("\n");
     const response = await client.send(new ConverseCommand({
@@ -522,37 +537,69 @@ function imageFormat(mimeType: string | null | undefined, filename: string): "jp
   return "jpeg";
 }
 
+export function detectImageFormat(
+  bytes: Uint8Array,
+  mimeType: string | null | undefined,
+  filename: string
+): "jpeg" | "png" | "webp" | "gif" {
+  if (bytes.length >= 12) {
+    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg";
+    if (
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47
+    ) return "png";
+    const header = Buffer.from(bytes.subarray(0, 12)).toString("ascii");
+    if (header.startsWith("GIF87a") || header.startsWith("GIF89a")) return "gif";
+    if (header.startsWith("RIFF") && header.slice(8, 12) === "WEBP") return "webp";
+  }
+  return imageFormat(mimeType, filename);
+}
+
+function loadedImage(
+  bytes: Uint8Array,
+  mimeType: string | null | undefined,
+  filename: string
+): { bytes: Uint8Array; format: "jpeg" | "png" | "webp" | "gif" } {
+  return { bytes, format: detectImageFormat(bytes, mimeType, filename) };
+}
+
 async function loadImageInput(input: Parameters<VisionProvider["analyze"]>[0]): Promise<{ bytes: Uint8Array; format: "jpeg" | "png" | "webp" | "gif" }> {
   if (input.objectBucket && input.objectKey && input.objectBucket !== "inspectiq-sample-images") {
-    return {
-      bytes: await readS3ObjectBytes(input.objectBucket, input.objectKey),
-      format: imageFormat(input.mimeType, input.filename)
-    };
+    return loadedImage(
+      await readS3ObjectBytes(input.objectBucket, input.objectKey),
+      input.mimeType,
+      input.filename
+    );
   }
 
   if (input.storageKey.startsWith("data:")) {
     const [meta, payload] = input.storageKey.split(",", 2);
     if (!payload) throw new Error("Invalid data URL image payload.");
-    return {
-      bytes: Buffer.from(payload, meta.endsWith(";base64") || meta.includes(";base64") ? "base64" : "utf8"),
-      format: imageFormat(input.mimeType ?? meta, input.filename)
-    };
+    return loadedImage(
+      Buffer.from(payload, meta.endsWith(";base64") || meta.includes(";base64") ? "base64" : "utf8"),
+      input.mimeType ?? meta,
+      input.filename
+    );
   }
 
   if (input.storageKey.startsWith("/sample-images/")) {
-    return {
-      bytes: await readFile(sampleImageFilePath(input.storageKey)),
-      format: imageFormat(input.mimeType, input.filename)
-    };
+    return loadedImage(
+      await readFile(sampleImageFilePath(input.storageKey)),
+      input.mimeType,
+      input.filename
+    );
   }
 
   if (input.storageKey.startsWith("https://")) {
     const response = await fetch(input.storageKey);
     if (!response.ok) throw new Error(`Unable to fetch external sample image: ${response.status}`);
-    return {
-      bytes: new Uint8Array(await response.arrayBuffer()),
-      format: imageFormat(input.mimeType ?? response.headers.get("content-type"), input.filename)
-    };
+    return loadedImage(
+      new Uint8Array(await response.arrayBuffer()),
+      input.mimeType ?? response.headers.get("content-type"),
+      input.filename
+    );
   }
 
   throw new Error("Bedrock vision provider requires an S3 object, sample image, or data URL payload.");
