@@ -232,39 +232,14 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
         suggestedValueJson: { photoAngle: output.photoAngle },
         confidence: output.confidence,
         explanation: `Imported evidence is assigned to the ${output.photoAngle} required view. Reviewer confirmation required.`
-      }, ...output.qualityWarnings.map((warning) => ({
-        inspectionId: photo.inspectionId,
-        photoId: photo.id,
-        suggestionType: "quality_warning" as const,
-        suggestedValueJson: { warning, imageQuality: output.imageQuality },
-        confidence: Math.min(output.confidence, 0.75),
-        explanation: `Reference-source QA note: ${warning} Reviewer confirmation required.`
-      }))];
+      }];
       changed = store.supersedePendingPhotoSuggestions(photo, currentSuggestions, systemActor, {
         provider: "referenceManifestProvider",
         promptVersion: "reference-manifest-v1"
       }).length > 0 || changed;
     }
-
-    for (const warning of hasModelAnalysis ? [] : output.qualityWarnings) {
-      const existing = [...store.suggestions.values()].find((suggestion) =>
-        suggestion.photoId === photo.id &&
-        suggestion.suggestionType === "quality_warning" &&
-        JSON.stringify((suggestion.suggestedValueJson as { warning?: unknown })?.warning) === JSON.stringify(warning)
-      );
-      if (!existing) {
-        store.createSuggestion({
-          inspectionId: photo.inspectionId,
-          photoId: photo.id,
-          suggestionType: "quality_warning",
-          suggestedValueJson: { warning, imageQuality: output.imageQuality },
-          confidence: Math.min(output.confidence, 0.75),
-          explanation: `Reference-source QA note: ${warning} Reviewer confirmation required.`
-        });
-        changed = true;
-      }
-    }
   }
+  changed = removeUnsupportedReferenceQualityClaims(store) || changed;
   changed = removeUnsupportedReferenceClaims(store) || changed;
   changed = removeReferenceMetadataOcrClaims(store) || changed;
   changed = store.reconcileDuplicateSuggestions(systemActor) > 0 || changed;
@@ -502,6 +477,41 @@ function removeUnsupportedReferenceClaims(store: MemoryStore): boolean {
       removedSuggestionIds,
       sourceFilename: claim.filename,
       reason: "The vehicle-specific source image does not visibly support this damage claim."
+    });
+    changed = true;
+  }
+  return changed;
+}
+
+function removeUnsupportedReferenceQualityClaims(store: MemoryStore): boolean {
+  let changed = false;
+  for (const photo of store.photos.values()) {
+    if (photo.captureSource !== "reference") continue;
+    const analyses = [...store.analyses.values()].filter((analysis) => analysis.photoId === photo.id);
+    const hasModelAnalysis = analyses.some((analysis) =>
+      analysis.provider !== "referenceManifestProvider" &&
+      analysis.provider !== "referenceImportProvider" &&
+      analysis.provider !== "seededImportProvider"
+    );
+    if (hasModelAnalysis) continue;
+
+    const removed = [...store.suggestions.values()].filter((suggestion) =>
+      suggestion.photoId === photo.id &&
+      suggestion.suggestionType === "quality_warning"
+    );
+    if (removed.length === 0) continue;
+
+    for (const suggestion of removed) store.suggestions.delete(suggestion.id);
+    store.addAudit(photo.inspectionId, systemActor, "reference_evidence.corrected", {
+      correction: "unsupported_quality_claim_removed",
+      photoId: photo.id,
+      removedSuggestions: removed.map((suggestion) => ({
+        id: suggestion.id,
+        status: suggestion.status,
+        reviewedBy: suggestion.reviewedBy,
+        reviewedAt: suggestion.reviewedAt
+      })),
+      reason: "Reference metadata cannot establish image quality or camera angle. The photo must be evaluated from its stored bytes."
     });
     changed = true;
   }

@@ -33,7 +33,10 @@ describe("reference evidence reconciliation", () => {
     }
   });
 
-  it("repairs stale Honda Accord passenger-side sample evidence", () => {
+  it("keeps the Honda Accord physical side views mapped to the correct source images", () => {
+    expect(findSampleImage("honda-accord-driver-side")?.storageKey).toContain("/1/640x480");
+    expect(findSampleImage("honda-accord-passenger-side")?.storageKey).toContain("/9/640x480");
+
     const store = new MemoryStore();
     seedStore(store);
     const honda = [...store.inspections.values()].find((inspection) => inspection.vin === "1HGCV1F49LA129627");
@@ -45,14 +48,14 @@ describe("reference evidence reconciliation", () => {
     );
     expect(passengerPhoto).toBeTruthy();
 
-    passengerPhoto!.storageKey = "https://carfax-img.vast.com/carfax/v2/866048677535386941/8/640x480";
+    passengerPhoto!.storageKey = "https://carfax-img.vast.com/carfax/v2/866048677535386941/1/640x480";
     passengerPhoto!.thumbnailStorageKey = passengerPhoto!.storageKey;
     passengerPhoto!.detectedAngleConfidence = 0.94;
     passengerPhoto!.qualityStatus = "ok";
 
     expect(reconcileReferenceEvidence(store)).toBe(true);
 
-    expect(passengerPhoto!.storageKey).toBe("https://carfax-img.vast.com/carfax/v2/866048677535386941/1/640x480");
+    expect(passengerPhoto!.storageKey).toBe("https://carfax-img.vast.com/carfax/v2/866048677535386941/9/640x480");
     expect(passengerPhoto!.declaredAngle).toBe("passenger_side");
     expect(passengerPhoto!.detectedAngle).toBe("passenger_side");
     expect(passengerPhoto!.detectedAngleConfidence).toBe(0.94);
@@ -142,6 +145,11 @@ describe("reference evidence reconciliation", () => {
       confidence: 0.75,
       explanation: "Reference-source QA note requires reviewer confirmation."
     });
+    store.acceptSuggestion(staleWarning.id, {
+      id: "legacy-reviewer",
+      name: "Legacy Reviewer",
+      role: "reviewer"
+    });
 
     expect(reconcileReferenceEvidence(store)).toBe(true);
 
@@ -153,10 +161,17 @@ describe("reference evidence reconciliation", () => {
     expect(store.suggestions.has(staleWarning.id)).toBe(false);
     expect(store.auditForInspection(camry!.id)).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        eventType: "suggestion.superseded",
+        eventType: "reference_evidence.corrected",
         detailsJson: expect.objectContaining({
-          removedSuggestionIds: [staleWarning.id],
-          provider: "referenceManifestProvider"
+          correction: "unsupported_quality_claim_removed",
+          photoId: frontPhoto!.id,
+          removedSuggestions: [
+            expect.objectContaining({
+              id: staleWarning.id,
+              status: "accepted",
+              reviewedBy: "legacy-reviewer"
+            })
+          ]
         })
       })
     ]));

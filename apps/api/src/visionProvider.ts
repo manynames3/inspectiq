@@ -430,21 +430,19 @@ export const localVisionProvider: VisionProvider = {
   }
 };
 
-export const bedrockVisionProvider: VisionProvider = {
-  name: "bedrockVisionProvider",
-  promptVersion: "photo-analysis-v2",
-  async analyze(input) {
-    const startedAt = Date.now();
-    const image = await loadImageInput(input);
-    const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1" });
-    const modelId = process.env.BEDROCK_MODEL_ID ?? "us.anthropic.claude-sonnet-4-6";
-    const prompt = [
+export function buildBedrockVisionPrompt(input: {
+  filename: string;
+  declaredAngle?: VisionOutput["photoAngle"] | null;
+}): string {
+  return [
       "You are an automotive inspection image-analysis service.",
       `Filename: ${input.filename}.`,
       `Declared capture slot: ${input.declaredAngle ?? "unknown"}.`,
-      "When the declared capture slot is present and the visual evidence reasonably matches it, use that value as photoAngle. If the image contradicts the declared slot or quality is too poor, keep the visual classification and explain the mismatch in qualityWarnings.",
+      "The filename and declared capture slot are routing metadata, not visual evidence. Classify the image pixels first; never copy either value into photoAngle.",
+      "Compare the pixel-based classification with the declared slot only after classification. If they disagree, preserve the pixel-based result and explain the mismatch in qualityWarnings.",
       "A direct front or rear view has the vehicle centered, both lamps similarly sized, and little side body visible. A three-quarter view exposes substantial side body or doors and does not satisfy a required direct front or rear view.",
       "A direct side view shows the vehicle profile with minimal front or rear fascia. Three-quarter side views require review when the declared slot requires a direct side capture.",
+      "Return driver_side or passenger_side only when visible physical evidence supports that side. If the physical side is ambiguous, return unknown with lower confidence and require human review.",
       "Return only strict JSON matching this TypeScript shape:",
       "{ photoAngle: 'front'|'rear'|'driver_side'|'passenger_side'|'interior'|'engine_bay'|'odometer'|'vin_plate'|'unknown', confidence: number, imageQuality: { grade: 'pass'|'review'|'retake', blurScore: number, exposureScore: number, framingScore: number, resolutionScore: number, occlusionRisk: number, retakeRequired: boolean, notes: string[] }, qualityWarnings: string[], detectedDamageCandidates: Array<{ location: string, damageType: 'scratch'|'dent'|'paint_damage'|'crack'|'wheel_damage'|'glass_damage'|'interior_wear'|'unknown', severityEstimate: 'minor'|'moderate'|'severe'|'unknown', confidence: number, explanation: string, repairEstimateUsd: { min: number, max: number, rationale: string }, requiresHumanConfirmation: boolean }>, extractedText: { vin?: string, odometer?: string }, humanReviewRequired: boolean }.",
       "Use 0-1 confidence values. If unsure, use unknown angle, lower confidence, and humanReviewRequired true.",
@@ -454,6 +452,17 @@ export const bedrockVisionProvider: VisionProvider = {
       "The structured angle, quality grade, retake flag, warnings, and notes must agree. Do not describe an image as three-quarter in notes while marking a direct required view as pass.",
       "Each note, warning, location, and rationale must be concise; keep each string under 120 characters."
     ].join("\n");
+}
+
+export const bedrockVisionProvider: VisionProvider = {
+  name: "bedrockVisionProvider",
+  promptVersion: "photo-analysis-v3",
+  async analyze(input) {
+    const startedAt = Date.now();
+    const image = await loadImageInput(input);
+    const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1" });
+    const modelId = process.env.BEDROCK_MODEL_ID ?? "us.anthropic.claude-sonnet-4-6";
+    const prompt = buildBedrockVisionPrompt(input);
     const response = await client.send(new ConverseCommand({
       modelId,
       messages: [{

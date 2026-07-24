@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { detectImageFormat, localVisionProvider, normalizeVisionOutput } from "./visionProvider.js";
+import { buildBedrockVisionPrompt, detectImageFormat, localVisionProvider, normalizeVisionOutput } from "./visionProvider.js";
 
 describe("localVisionProvider", () => {
+  it("does not let a declared checklist slot anchor the Bedrock angle classification", () => {
+    const prompt = buildBedrockVisionPrompt({
+      filename: "passenger-side.jpg",
+      declaredAngle: "passenger_side"
+    });
+
+    expect(prompt).toContain("routing metadata, not visual evidence");
+    expect(prompt).toContain("Classify the image pixels first");
+    expect(prompt).toContain("If the physical side is ambiguous, return unknown");
+    expect(prompt).not.toContain("use that value as photoAngle");
+  });
+
   it("uses image bytes instead of stale MIME metadata", () => {
     const webpBytes = Uint8Array.from([
       0x52, 0x49, 0x46, 0x46, 0x10, 0x00, 0x00, 0x00,
