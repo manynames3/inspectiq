@@ -1,10 +1,11 @@
 import { AlertTriangle, Check, Clock3, RefreshCw, RotateCcw, Search, SlidersHorizontal, Sparkles, UserCheck, X } from "lucide-react";
-import { estimateDamageRepairCost } from "@inspectiq/shared";
+import { canRole, estimateDamageRepairCost } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiClientError } from "../api.js";
 import { useActor } from "../App.js";
 import { isReferenceProvider, operatorEvidenceExplanation } from "../evidenceProvenance.js";
+import { applyEvaluationState, clearEvaluationReview, recordEvaluationReview } from "../evaluationReview.js";
 import type { VisionSuggestion } from "../types.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
 
@@ -241,6 +242,18 @@ export function SuggestionsPage() {
     setBusyId(id);
     setError(null);
     try {
+      if (isEvaluationMode) {
+        recordEvaluationReview(window.sessionStorage, actor, suggestion, action === "accept" ? "accepted" : "rejected");
+        setRecords((current) => current.map((record) => record.inspection.id === suggestion.inspectionId
+          ? { ...record, bundle: applyEvaluationState(window.sessionStorage, record.bundle) }
+          : record));
+        setSelectedIds((current) => {
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
+        return;
+      }
       await api(`/api/vision-suggestions/${id}/${action}`, { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) }, actor);
       await load();
     } catch (err) {
@@ -390,8 +403,12 @@ export function SuggestionsPage() {
   const acceptedCount = rows.filter(({ suggestion }) => suggestion.status === "accepted").length;
   const rejectedCount = rows.filter(({ suggestion }) => suggestion.status === "rejected").length;
   const closedCount = acceptedCount + rejectedCount;
-  const canReviewSuggestions = can("suggestion:review");
+  const canReviewSuggestions = can("suggestion:review") || (isEvaluationMode && canRole(actor.role, "suggestion:review"));
   const canAssignSuggestions = can("suggestion:assign");
+  const evaluationDecisionCount = isEvaluationMode
+    ? rows.filter(({ suggestion }) => suggestion.reviewedBy === actor.name
+      && (suggestion.status === "accepted" || suggestion.status === "rejected" || suggestion.status === "edited")).length
+    : 0;
   const hasActiveFilters = Boolean(searchQuery) || statusFilter !== "actionable" || ownerFilter !== "all" || slaFilter !== "all" || typeFilter !== "all";
 
   return (
@@ -405,10 +422,26 @@ export function SuggestionsPage() {
           <RefreshCw size={16} /> Refresh
         </button>
       </div>
-      {!canReviewSuggestions ? (
+      {isEvaluationMode && canReviewSuggestions ? (
+        <div className="role-callout role-reviewer">
+          <strong>Evaluation session</strong>
+          <span>Review decisions are saved in this browser session only. Production inspection records remain unchanged.</span>
+          {evaluationDecisionCount > 0 ? (
+            <button
+              className="text-button"
+              onClick={() => {
+                for (const record of records) clearEvaluationReview(window.sessionStorage, record.inspection.id);
+                void load();
+              }}
+            >
+              Reset {evaluationDecisionCount} decision{evaluationDecisionCount === 1 ? "" : "s"}
+            </button>
+          ) : null}
+        </div>
+      ) : !canReviewSuggestions ? (
         <div className="role-callout role-restricted">
-          <strong>{isEvaluationMode ? "Read-only evaluation workspace" : "Reviewer or Admin access required"}</strong>
-          <span>{isEvaluationMode ? "Queue data is visible for review. Sign in with Cognito to accept, reject, edit, or assign findings." : "Inspectors can create inspections, attach photos, and run analysis; reviewers approve or reject the resulting suggestions."}</span>
+          <strong>{isEvaluationMode ? "Select Reviewer or Admin" : "Reviewer or Admin access required"}</strong>
+          <span>{isEvaluationMode ? "Switch the evaluation role to review findings. Session decisions never change production records." : "Inspectors can create inspections, attach photos, and run analysis; reviewers approve or reject the resulting suggestions."}</span>
         </div>
       ) : null}
       {error ? <div className="error-banner">{error}</div> : null}
@@ -598,7 +631,7 @@ export function SuggestionsPage() {
                             <button
                               className="accept-button"
                               disabled={busyId === suggestion.id || !canReviewSuggestions}
-                              title={canReviewSuggestions ? undefined : isEvaluationMode ? "Sign in with Cognito to change findings." : "Reviewer or Admin access required"}
+                              title={canReviewSuggestions ? undefined : isEvaluationMode ? "Select Reviewer or Admin to review findings." : "Reviewer or Admin access required"}
                               onClick={() => void reviewSuggestion(suggestion, "accept")}
                             >
                               <Check size={15} /> Accept
@@ -606,7 +639,7 @@ export function SuggestionsPage() {
                             <button
                               className="reject-button"
                               disabled={busyId === suggestion.id || !canReviewSuggestions}
-                              title={canReviewSuggestions ? undefined : isEvaluationMode ? "Sign in with Cognito to change findings." : "Reviewer or Admin access required"}
+                              title={canReviewSuggestions ? undefined : isEvaluationMode ? "Select Reviewer or Admin to review findings." : "Reviewer or Admin access required"}
                               onClick={() => void reviewSuggestion(suggestion, "reject")}
                             >
                               <X size={15} /> Reject

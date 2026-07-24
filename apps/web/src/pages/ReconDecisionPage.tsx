@@ -129,7 +129,7 @@ export function ReconDecisionPage() {
       </div>
 
       {error ? <div className="error-banner">{error}</div> : null}
-      {isEvaluationMode ? <div className="info-banner">Read-only evaluation workspace. Decisions show the complete workflow but do not change records.</div> : null}
+      {isEvaluationMode ? <div className="info-banner">Evaluation workspace. Review decisions are session-only; recon authorization requires Cognito access.</div> : null}
 
       <div className="operations-status-grid">
         <article><span>Sale deadline</span><strong>{new Date(record.saleAssignment.saleDateTime).toLocaleString()}</strong><small>{record.saleAssignment.lane} · Run {record.saleAssignment.runNumber}</small></article>

@@ -62,7 +62,7 @@ Operational views:
 
 | Proof | Evidence |
 | --- | --- |
-| Public walkthrough | The read-only [Evaluation Workspace](https://inspectiq.pages.dev/?review=1) requires no credentials. |
+| Public walkthrough | The [Evaluation Workspace](https://inspectiq.pages.dev/?review=1) requires no credentials; Reviewer/Admin findings and manual damage entries are isolated to the browser session. |
 | Authenticated workflow | Cognito roles separate inspection, review, recon, consignor approval, technician, and administrative actions. See [role-separated proof](docs/role-separated-proof.md). |
 | Real image analysis | A Copart marketplace photo moved through private S3, SQS, Lambda, Bedrock, schema validation, and Reviewer acceptance before becoming a confirmed damage record. See [the recorded model trace](evals/marketplace-bedrock-proof.json). |
 | CR and recon comparison | The live Recon Operations queue contrasts a published 4.7 CR with no confirmed repair findings and `$0` recon against a preliminary 4.1 CR with confirmed rear damage and a `$1,200–$2,500` repair range. The range comes from confirmed damage, not a score-to-dollar lookup. |
@@ -71,7 +71,7 @@ Operational views:
 | Verification | CI runs TypeScript, Python, Postgres integration, browser E2E, responsive visual regression, mobile component checks, Android APK build and emulator E2E, and Terraform checks. |
 
 The marketplace run is one traceable workflow proof, not an accuracy benchmark. The source image is not committed to this repository.
-Damage entries created in the Evaluation Workspace are explicitly labeled browser-session previews and never mutate the inspection record.
+Review decisions and damage entries created in the Evaluation Workspace stay in browser session storage and never mutate the production inspection record.
 
 ## Architecture
 

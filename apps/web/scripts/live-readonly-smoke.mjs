@@ -57,12 +57,23 @@ page.on("pageerror", (error) => {
 try {
   await page.goto(baseUrl, { waitUntil: "networkidle" });
   await expectBodyText(page, "VEHICLE INSPECTION WORKSPACE");
-  const previewButton = page.getByRole("button", { name: "Enter read-only workspace" });
-  if (await previewButton.count() !== 1) fail("Enter read-only workspace button was not available.");
+  const previewButton = page.getByRole("button", { name: "Open evaluation workspace" });
+  if (await previewButton.count() !== 1) fail("Open evaluation workspace button was not available.");
   await previewButton.click();
   await expectBodyText(page, "Dashboard");
   await expectBodyText(page, "Operations control");
   await expectNoPublicErrors(page, "Dashboard");
+
+  await page.goto(`${baseUrl}/suggestions`, { waitUntil: "networkidle" });
+  await expectBodyText(page, "Suggestions");
+  await expectBodyText(page, "Evaluation session");
+  const enabledEvaluationActions = page.locator(".table-actions .accept-button:not([disabled])");
+  await enabledEvaluationActions.first().waitFor({ timeout: 30_000 });
+  const actionableCount = await enabledEvaluationActions.count();
+  if (actionableCount < 1) fail("Evaluation Reviewer/Admin actions were not enabled.");
+  await enabledEvaluationActions.first().click();
+  await expectBodyText(page, "Reset 1 decision");
+  await expectNoPublicErrors(page, "Suggestions");
 
   await page.goto(`${baseUrl}/inspections`, { waitUntil: "networkidle" });
   await expectBodyText(page, "Inspections");
@@ -101,9 +112,10 @@ try {
 
   console.log(JSON.stringify({
     ok: true,
-    flow: "public_preview_readonly_dashboard_inspections_detail_platform_health",
+    flow: "public_evaluation_dashboard_session_review_inspections_detail_platform_health",
     baseUrl,
-    evidenceImages: imageCount
+    evidenceImages: imageCount,
+    evaluationActions: actionableCount
   }));
 } finally {
   await context.close();

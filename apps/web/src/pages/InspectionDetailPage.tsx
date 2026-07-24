@@ -8,6 +8,7 @@ import { isEvaluationSession, storedLocalSession } from "../auth.js";
 import { StatusPill } from "../components/StatusPill.js";
 import { conditionGradeView, formatConditionGrade } from "../conditionGrade.js";
 import { loadEvaluationDamage, saveEvaluationDamage } from "../evaluationDamage.js";
+import { applyEvaluationReview, clearEvaluationReview, recordEvaluationReview } from "../evaluationReview.js";
 import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider, operatorEvidenceExplanation } from "../evidenceProvenance.js";
 import { deriveMarketplaceReadiness, formatReportReadiness } from "../marketplaceReadiness.js";
 import type { DamageItem, Inspection, InspectionBundle, PhotoAnalysisResult, ReportVersion, SamplePhotoSet, VehiclePhoto, VehicleReference, VisionSuggestion } from "../types.js";
@@ -635,7 +636,13 @@ export function InspectionDetailPage() {
   async function load() {
     if (!id) return;
     setError(null);
-    const nextBundle = await api<InspectionBundle>(`/api/inspections/${id}`, {}, actor);
+    const loadedBundle = await api<InspectionBundle>(`/api/inspections/${id}`, {}, actor);
+    const nextBundle = actor.id.startsWith("evaluation-")
+      ? {
+          ...loadedBundle,
+          suggestions: applyEvaluationReview(window.sessionStorage, loadedBundle.inspection.id, loadedBundle.suggestions)
+        }
+      : loadedBundle;
     setBundle(nextBundle);
     setReportBody(nextBundle.finalReport?.reportBody ?? "");
     setReportComment(nextBundle.finalReport?.reviewerComment ?? "");
@@ -673,6 +680,35 @@ export function InspectionDetailPage() {
       } else {
         setError(err instanceof Error ? err.message : "Action failed.");
       }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function reviewSuggestion(
+    suggestion: VisionSuggestion,
+    status: "accepted" | "rejected" | "edited",
+    edit?: { suggestedValue: unknown; explanation?: string }
+  ) {
+    if (!actor.id.startsWith("evaluation-")) {
+      const path = status === "edited"
+        ? `/api/vision-suggestions/${suggestion.id}`
+        : `/api/vision-suggestions/${suggestion.id}/${status === "accepted" ? "accept" : "reject"}`;
+      const options = status === "edited"
+        ? { method: "PATCH", body: JSON.stringify({ ...edit, expectedVersion: suggestion.version }) }
+        : { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) };
+      return runAction(status, () => api(path, options, actor));
+    }
+
+    setBusy(status);
+    setError(null);
+    try {
+      recordEvaluationReview(window.sessionStorage, actor, suggestion, status, edit);
+      setBundle((current) => current ? {
+        ...current,
+        suggestions: applyEvaluationReview(window.sessionStorage, current.inspection.id, current.suggestions)
+      } : current);
+      setEvaluationDamageItems(loadEvaluationDamage(window.sessionStorage, suggestion.inspectionId));
     } finally {
       setBusy(null);
     }
@@ -808,6 +844,10 @@ export function InspectionDetailPage() {
   const reviewedSuggestions = bundle.suggestions.filter((suggestion) => suggestion.status === "accepted" || suggestion.status === "rejected");
   const acceptedSuggestions = reviewedSuggestions.filter((suggestion) => suggestion.status === "accepted");
   const rejectedSuggestions = reviewedSuggestions.filter((suggestion) => suggestion.status === "rejected");
+  const evaluationReviewCount = bundle.suggestions.filter((suggestion) =>
+    suggestion.reviewedBy === actor.name
+    && (suggestion.status === "accepted" || suggestion.status === "rejected" || suggestion.status === "edited")
+  ).length;
   const isFinalizedInspection = bundle.inspection.status === "FINALIZED";
   const workflowStep = bundle.inspection.status === "FINALIZED" ? 4 : bundle.inspection.status === "HUMAN_REVIEW_REQUIRED" || bundle.inspection.status === "AI_DRAFTED" ? 3 : bundle.conditionGrade ? 2 : 1;
   const capturedEvidencePercent = Math.round((requiredAngles.filter((angle) => capturedAngles.has(angle)).length / requiredAngles.length) * 100);
@@ -841,7 +881,7 @@ export function InspectionDetailPage() {
   const canPreviewDamage = isEvaluationWorkspace && canRole(actor.role, "damage:create");
   const canCaptureEvidence = can("photo:capture");
   const canAnalyzePhotos = can("photo:analyze");
-  const canReviewSuggestions = can("suggestion:review");
+  const canReviewSuggestions = can("suggestion:review") || (isEvaluationWorkspace && canRole(actor.role, "suggestion:review"));
   const canAssignSuggestions = can("suggestion:assign");
   const canConfirmDamage = can("damage:create");
   const canGrade = can("grade:calculate");
@@ -1682,7 +1722,21 @@ export function InspectionDetailPage() {
         <aside className="review-column" tabIndex={0} aria-label="Evidence finding review">
           <div className="review-heading">
             <strong>{reviewRailTitle}</strong>
-            {!canReviewSuggestions && !isFinalizedInspection ? <span>Reviewer or Admin action required.</span> : null}
+            {isEvaluationWorkspace && canReviewSuggestions && !isFinalizedInspection ? (
+              evaluationReviewCount > 0 ? (
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    clearEvaluationReview(window.sessionStorage, id);
+                    setEvaluationDamageItems(loadEvaluationDamage(window.sessionStorage, id));
+                    void load();
+                  }}
+                >
+                  Reset {evaluationReviewCount} session decision{evaluationReviewCount === 1 ? "" : "s"}
+                </button>
+              ) : <span>Session-only decisions</span>
+            ) : null}
+            {!canReviewSuggestions && !isFinalizedInspection ? <span>Select Reviewer or Admin to review.</span> : null}
           </div>
           {pendingSuggestions.length === 0 ? (
             <div className={`review-empty-state ${isFinalizedInspection ? "complete" : ""}`}>
@@ -1716,9 +1770,9 @@ export function InspectionDetailPage() {
               photo={photosById.get(suggestion.photoId)}
               analysis={analysisResultByPhotoId.get(suggestion.photoId)}
               disabled={reviewDisabled}
-              onAccept={() => runAction("accept", () => api(`/api/vision-suggestions/${suggestion.id}/accept`, { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) }, actor))}
-              onReject={() => runAction("reject", () => api(`/api/vision-suggestions/${suggestion.id}/reject`, { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) }, actor))}
-              onEdit={(value) => runAction("edit", () => api(`/api/vision-suggestions/${suggestion.id}`, { method: "PATCH", body: JSON.stringify({ ...value, expectedVersion: suggestion.version }) }, actor))}
+              onAccept={() => reviewSuggestion(suggestion, "accepted")}
+              onReject={() => reviewSuggestion(suggestion, "rejected")}
+              onEdit={(value) => reviewSuggestion(suggestion, "edited", value)}
             />
           ))}
         </aside>

@@ -178,7 +178,7 @@ export function App() {
 
   const sessionSummaryText = activeSession
     ? isEvaluationMode
-      ? "Read-only evaluation workspace"
+      ? "Evaluation workspace · session-only changes"
       : `${permissionCount} permissions · expires ${new Date(activeSession.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
     : "";
 
@@ -310,10 +310,10 @@ function OidcAuthGate(props: OidcAuthGateProps) {
           <span className="auth-brand">InspectIQ</span>
           <span className="auth-kicker">Vehicle inspection workspace</span>
           <h1>Review the system without a login.</h1>
-          <p>Open a read-only workspace to review inspection queues, reports, audit history, and operations health, or sign in with Cognito for secured workflow actions.</p>
+          <p>Explore inspection queues, reports, audit history, and operations health. Reviewer decisions and manual damage entries stay isolated to your browser session.</p>
           <div className="auth-trust-strip" aria-label="Access modes">
             <span>No credentials needed</span>
-            <span>Read-only inspection data</span>
+            <span>Session-only review actions</span>
             <span>Cognito full access</span>
           </div>
         </div>
@@ -324,12 +324,12 @@ function OidcAuthGate(props: OidcAuthGateProps) {
             <article className="auth-access-card auth-access-primary">
               <div>
                 <span className="auth-card-label">Fast review access</span>
-                <h2>Read-only workspace</h2>
+                <h2>Evaluation workspace</h2>
               </div>
-              <p>Review inspection records, advisory findings, reports, audit events, and Platform Health without creating an account.</p>
-              <small>Workflow-changing actions remain disabled.</small>
+              <p>Review records and try Reviewer/Admin decisions without creating an account.</p>
+              <small>Session changes reset without modifying production records.</small>
               <button className="primary-button auth-wide-button" onClick={props.onStartEvaluation}>
-                Enter read-only workspace
+                Open evaluation workspace
               </button>
             </article>
           ) : null}
