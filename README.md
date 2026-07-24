@@ -36,10 +36,10 @@ InspectIQ keeps condition facts, spending decisions, authorized work, quality co
 ## Workflow
 
 1. Create or receive an assigned inspection.
-2. Capture the required vehicle angles on web or mobile.
+2. Capture the required vehicle angles on web or mobile and cross-check a complete VIN through NHTSA vPIC when needed.
 3. Upload privately to S3 and queue analysis through SQS.
 4. Validate Bedrock output against a strict schema.
-5. Require a Reviewer decision before a finding becomes confirmed damage or identity evidence.
+5. Record direct Inspector observations with source attribution; require a Reviewer decision before an AI candidate becomes confirmed damage or identity evidence.
 6. Approve the 0.0–5.0 InspectIQ Reference Grade and publish an immutable report version.
 7. Create recon recommendations and illustrative estimates without treating them as authorization.
 8. Apply a snapshotted Consignor Authorization Policy or route the item to a Consignor Approver.
@@ -52,6 +52,12 @@ InspectIQ keeps condition facts, spending decisions, authorized work, quality co
 | --- | --- |
 | ![InspectIQ inspection queue](docs/images/regression/dashboard.png) | ![InspectIQ inspection workbench](docs/images/regression/inspection-workbench.png) |
 
+Operational views:
+
+- **Recon Operations:** compare published or preliminary CR scores, confirmed repair exposure, authorization state, work progress, and sale blockers in one queue;
+- **Recon Decisions:** scope estimates and preserve the distinction between a recommendation, consignor authorization, and executable work; and
+- **Shop Board:** track authorized work, estimate overruns, reauthorization, and quality control.
+
 ## Live Proof
 
 | Proof | Evidence |
@@ -59,10 +65,13 @@ InspectIQ keeps condition facts, spending decisions, authorized work, quality co
 | Public walkthrough | The read-only [Evaluation Workspace](https://inspectiq.pages.dev/?review=1) requires no credentials. |
 | Authenticated workflow | Cognito roles separate inspection, review, recon, consignor approval, technician, and administrative actions. See [role-separated proof](docs/role-separated-proof.md). |
 | Real image analysis | A Copart marketplace photo moved through private S3, SQS, Lambda, Bedrock, schema validation, and Reviewer acceptance before becoming a confirmed damage record. See [the recorded model trace](evals/marketplace-bedrock-proof.json). |
+| CR and recon comparison | The live Recon Operations queue contrasts a published 4.7 CR with no confirmed repair findings and `$0` recon against a preliminary 4.1 CR with confirmed rear damage and a `$1,200–$2,500` repair range. The range comes from confirmed damage, not a score-to-dollar lookup. |
+| Vehicle reference | NHTSA vPIC decodes a complete VIN into reference metadata. It is not a vehicle-history report, proprietary condition score, or replacement for evidence review. |
 | Operations | Platform Health exposes queue state, outbox delivery, EventBridge/DLQ status, projector health, model usage, and recovery controls. |
-| Verification | CI runs TypeScript, Python, Postgres integration, browser E2E, visual regression, mobile, and Terraform checks. |
+| Verification | CI runs TypeScript, Python, Postgres integration, browser E2E, responsive visual regression, mobile component checks, Android APK build and emulator E2E, and Terraform checks. |
 
 The marketplace run is one traceable workflow proof, not an accuracy benchmark. The source image is not committed to this repository.
+Damage entries created in the Evaluation Workspace are explicitly labeled browser-session previews and never mutate the inspection record.
 
 ## Architecture
 
@@ -87,6 +96,7 @@ API Gateway -> Node.js Lambda -> Neon Postgres
 - **S3** stores private photo evidence; clients use presigned uploads and short-lived previews.
 - **SQS** isolates image upload from model latency and supports retry and DLQ recovery.
 - **Bedrock** returns advisory angle, quality, OCR, and damage findings.
+- **NHTSA vPIC** supplies VIN-decoded reference metadata; it does not supply AutoCheck data, ownership history, or a condition score.
 - **EventBridge** carries versioned domain events from the transactional outbox.
 - **DynamoDB** holds idempotency records, operational timelines, and model-usage reservations. It is not a second business database.
 - **CloudWatch and X-Ray** cover logs, metrics, traces, alarms, and the operations dashboard.
