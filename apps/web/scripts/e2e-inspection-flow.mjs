@@ -124,7 +124,11 @@ try {
   await waitForBodyText(page, "Reviewer approved");
   await waitForBodyText(page, "Ready for report");
   await page.getByRole("button", { name: /draft report/i }).click();
-  await waitForBodyText(page, "Draft summary");
+  await page.getByRole("textbox", { name: "Buyer-facing condition report" }).waitFor();
+  await page.waitForFunction(() => {
+    const report = document.querySelector('textarea[aria-label="Buyer-facing condition report"]');
+    return report instanceof HTMLTextAreaElement && report.value.trim().length > 0;
+  });
   await page.getByRole("button", { name: /^approve$/i }).click();
   await waitForBodyText(page, "Approved");
   await page.getByRole("button", { name: /^finalize$/i }).click();

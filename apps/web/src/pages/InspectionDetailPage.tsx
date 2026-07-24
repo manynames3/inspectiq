@@ -366,6 +366,16 @@ function editSuggestionPayload(suggestion: VisionSuggestion): { suggestedValue: 
   };
 }
 
+function reportOverview(reportBody: string) {
+  const normalized = reportBody.trim();
+  if (!normalized) return "";
+
+  const [overview] = normalized.split(/\n(?=(?:Notable defects|Missing evidence|Condition report sections|Recommended disclosure|Review rationale):)/i);
+  if (overview.length < normalized.length) return overview.trim();
+  if (normalized.length <= 900) return normalized;
+  return `${normalized.slice(0, 900).trimEnd()}…`;
+}
+
 function suggestionFocus(suggestion: VisionSuggestion) {
   const value = suggestionValueRecord(suggestion);
   if (suggestion.suggestionType === "damage_candidate") return formatTitleValue(value.location);
@@ -801,6 +811,8 @@ export function InspectionDetailPage() {
     ? bundle.conditionGrade.evidenceBlockers
     : [];
   const reportOutput = reportOutputView(bundle.aiReportDraft);
+  const reportBodyOverview = reportOverview(reportBody);
+  const hasAdditionalReportContent = reportBodyOverview.length < reportBody.trim().length;
   const reportSummary = reportOutput.summary
     ?? bundle.finalReport?.reportBody.split("\n").find((line) => line.trim().length > 0)?.replace(/^Summary:\s*/i, "")
     ?? "Draft the report to generate a reviewer-ready condition summary.";
@@ -1421,17 +1433,29 @@ export function InspectionDetailPage() {
                     </div>
                   ) : null}
                   <div className="grade-strip">
-                    <strong>{bundle.conditionGrade ? formatConditionGrade(bundle.conditionGrade) : "Grade not calculated"}</strong>
-                    <span>{gradeView?.reviewState === "approved" ? "Reviewer-approved reference grade." : gradeView ? "Suggested grade requires reviewer approval." : bundle.conditionGrade ? "Recalculate this incompatible grade record." : "Condition grade appears after grading."}</span>
-                  </div>
-                  {bundle.aiReportDraft ? (
-                    <div className="ai-draft" tabIndex={0} role="region" aria-label="AI report draft summary">
-                      <h3>Draft summary</h3>
-                      <p>{bundle.aiReportDraft.outputJson.summary}</p>
-                      <small>Confidence {Math.round(bundle.aiReportDraft.confidence * 100)}% · human review {bundle.aiReportDraft.humanReviewRequired ? "required" : "optional"}</small>
+                    <div>
+                      <strong>{bundle.conditionGrade ? formatConditionGrade(bundle.conditionGrade) : "Grade not calculated"}</strong>
+                      <span>{gradeView?.reviewState === "approved" ? "Reviewer-approved reference grade." : gradeView ? "Suggested grade requires reviewer approval." : bundle.conditionGrade ? "Recalculate this incompatible grade record." : "Condition grade appears after grading."}</span>
                     </div>
-                  ) : null}
-                  <textarea aria-label="Buyer-facing condition report" value={reportBody} disabled={editReportDisabled} onChange={(event) => setReportBody(event.target.value)} placeholder="Generate a report draft to review buyer-ready language." />
+                    {bundle.aiReportDraft ? (
+                      <small>Draft confidence {Math.round(bundle.aiReportDraft.confidence * 100)}% · human review {bundle.aiReportDraft.humanReviewRequired ? "required" : "optional"}</small>
+                    ) : null}
+                  </div>
+                  {editReportDisabled ? (
+                    <>
+                      <div className={`report-document ${reportBodyOverview ? "" : "empty"}`} role="region" aria-label="Buyer-facing condition report overview">
+                        {reportBodyOverview || "Generate a report draft to review buyer-ready language."}
+                      </div>
+                      {hasAdditionalReportContent ? (
+                        <details className="report-full-details">
+                          <summary>View complete report</summary>
+                          <div className="report-document" role="region" aria-label="Complete buyer-facing condition report">{reportBody.trim()}</div>
+                        </details>
+                      ) : null}
+                    </>
+                  ) : (
+                    <textarea className="report-document-editor" aria-label="Buyer-facing condition report" value={reportBody} onChange={(event) => setReportBody(event.target.value)} placeholder="Generate a report draft to review buyer-ready language." />
+                  )}
                   {bundle.finalReport ? (
                     <div className="report-review-state">
                       <div>
@@ -1440,7 +1464,11 @@ export function InspectionDetailPage() {
                       </div>
                       <label>
                         <span>Reviewer comment</span>
-                        <textarea value={reportComment} disabled={editReportDisabled} onChange={(event) => setReportComment(event.target.value)} placeholder="Record evidence checks, disclosure edits, or approval rationale." />
+                        {editReportDisabled ? (
+                          <p className="reviewer-comment-readonly">{reportComment.trim() || "No reviewer comment recorded."}</p>
+                        ) : (
+                          <textarea value={reportComment} onChange={(event) => setReportComment(event.target.value)} placeholder="Record evidence checks, disclosure edits, or approval rationale." />
+                        )}
                       </label>
                     </div>
                   ) : null}
