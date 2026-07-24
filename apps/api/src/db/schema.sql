@@ -324,6 +324,9 @@ create index if not exists idx_suggestions_inspection_status on vision_suggestio
 create index if not exists idx_suggestions_photo_id on vision_suggestions(photo_id);
 create index if not exists idx_suggestions_assigned_due on vision_suggestions(assigned_to_role, due_at);
 create index if not exists idx_suggestions_reviewed_by on vision_suggestions(reviewed_by);
+alter table damage_items add column if not exists idempotency_key text;
+alter table condition_grades add column if not exists idempotency_key text;
+
 create index if not exists idx_damage_inspection_id on damage_items(inspection_id);
 create index if not exists idx_damage_photo_id on damage_items(photo_id);
 create index if not exists idx_damage_confirmed_by on damage_items(confirmed_by);
