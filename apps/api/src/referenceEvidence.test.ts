@@ -62,6 +62,26 @@ describe("reference evidence reconciliation", () => {
     expect(passengerPhoto!.qualityStatus).toBe("ok");
   });
 
+  it("keeps the Copart Acura source-scoped and leaves unavailable evidence missing", () => {
+    expect(findSampleImage("acura-tlx-driver-side")?.storageKey).toContain("c4160fc96bc4400599b2861bc2ee2b4a_hrs.jpg");
+    expect(findSampleImage("acura-tlx-passenger-side")?.storageKey).toContain("7e4aea6354e840688a04dbdc345350fe_hrs.jpg");
+    expect(findSampleImage("acura-tlx-front-damage-detail")?.angle).toBe("driver_side");
+
+    const store = new MemoryStore();
+    seedStore(store);
+    const acura = [...store.inspections.values()].find((inspection) => inspection.vin === "19UUB2F58FA******");
+    expect(acura).toBeTruthy();
+
+    const photos = store.listPhotos(acura!.id);
+    expect(photos).toHaveLength(7);
+    expect(photos.every((photo) =>
+      photo.sourceName === "Copart lot 56620356" &&
+      photo.sourceUrl === "https://www.copart.com/lot/56620356/salvage-2015-acura-tlx-tech-il-chicago-north"
+    )).toBe(true);
+    expect(store.missingRequiredEvidence(acura!.id).sort()).toEqual(["engine_bay", "vin_plate"]);
+    expect(photos.some((photo) => photo.mimeType === "image/svg+xml")).toBe(false);
+  });
+
   it("repairs stale uploaded reference-evidence rows from the current manifest", () => {
     const store = new MemoryStore();
     seedStore(store);

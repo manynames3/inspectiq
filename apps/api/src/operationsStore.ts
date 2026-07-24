@@ -18,6 +18,7 @@ type MonthlyUsage = {
 const localReservations = new Set<string>();
 const localUsage = new Map<string, MonthlyUsage>();
 let client: DynamoDBClient | null = null;
+const maxTransactionConflictAttempts = 10;
 
 function monthKey(): string {
   return new Date().toISOString().slice(0, 7);
@@ -43,6 +44,21 @@ function numberValue(value: AttributeValue | undefined): number {
   return value && "N" in value ? Number(value.N ?? 0) : 0;
 }
 
+function isTransactionConflict(error: unknown): boolean {
+  if (!(error instanceof Error) || error.name !== "TransactionCanceledException") return false;
+  const reasons = (error as Error & {
+    CancellationReasons?: Array<{ Code?: string }>;
+  }).CancellationReasons;
+  return reasons?.some((reason) => reason.Code === "TransactionConflict") === true ||
+    error.message.includes("TransactionConflict");
+}
+
+async function waitForConflictRetry(attempt: number): Promise<void> {
+  const exponentialMs = Math.min(500, 20 * 2 ** attempt);
+  const fullJitterMs = Math.floor(Math.random() * exponentialMs);
+  await new Promise((resolve) => setTimeout(resolve, fullJitterMs));
+}
+
 function reserveLocally(kind: BedrockUsageKind, idempotencyKey: string): MonthlyUsage {
   const month = monthKey();
   const reservation = `${month}:${kind}:${idempotencyKey}`;
@@ -64,38 +80,46 @@ export async function reserveBedrockUsage(kind: BedrockUsageKind, idempotencyKey
   const limit = monthlyLimit(kind);
   const expiresAt = Math.floor(Date.now() / 1000) + 45 * 24 * 60 * 60;
   try {
-    await dynamo().send(new TransactWriteItemsCommand({
-      TransactItems: [
-        {
-          Put: {
-            TableName: table,
-            Item: {
-              pk: { S: `USAGE#${reservationKey}` },
-              sk: { S: "RESERVATION" },
-              kind: { S: kind },
-              expiresAt: { N: String(expiresAt) }
+    for (let attempt = 0; attempt < maxTransactionConflictAttempts; attempt += 1) {
+      try {
+        await dynamo().send(new TransactWriteItemsCommand({
+          TransactItems: [
+            {
+              Put: {
+                TableName: table,
+                Item: {
+                  pk: { S: `USAGE#${reservationKey}` },
+                  sk: { S: "RESERVATION" },
+                  kind: { S: kind },
+                  expiresAt: { N: String(expiresAt) }
+                },
+                ConditionExpression: "attribute_not_exists(pk)"
+              }
             },
-            ConditionExpression: "attribute_not_exists(pk)"
-          }
-        },
-        {
-          Update: {
-            TableName: table,
-            Key: { pk: { S: `COST#${month}` }, sk: { S: "BEDROCK" } },
-            UpdateExpression: "ADD #counter :one SET updatedAt = :updatedAt, gsi1pk = :gsi1pk, gsi1sk = :gsi1sk",
-            ConditionExpression: "attribute_not_exists(#counter) OR #counter < :limit",
-            ExpressionAttributeNames: { "#counter": kind },
-            ExpressionAttributeValues: {
-              ":one": { N: "1" },
-              ":limit": { N: String(limit) },
-              ":updatedAt": { S: new Date().toISOString() },
-              ":gsi1pk": { S: "COST" },
-              ":gsi1sk": { S: month }
+            {
+              Update: {
+                TableName: table,
+                Key: { pk: { S: `COST#${month}` }, sk: { S: "BEDROCK" } },
+                UpdateExpression: "ADD #counter :one SET updatedAt = :updatedAt, gsi1pk = :gsi1pk, gsi1sk = :gsi1sk",
+                ConditionExpression: "attribute_not_exists(#counter) OR #counter < :limit",
+                ExpressionAttributeNames: { "#counter": kind },
+                ExpressionAttributeValues: {
+                  ":one": { N: "1" },
+                  ":limit": { N: String(limit) },
+                  ":updatedAt": { S: new Date().toISOString() },
+                  ":gsi1pk": { S: "COST" },
+                  ":gsi1sk": { S: month }
+                }
+              }
             }
-          }
-        }
-      ]
-    }));
+          ]
+        }));
+        break;
+      } catch (error) {
+        if (!isTransactionConflict(error) || attempt === maxTransactionConflictAttempts - 1) throw error;
+        await waitForConflictRetry(attempt);
+      }
+    }
   } catch (error) {
     const existing = await dynamo().send(new GetItemCommand({
       TableName: table,

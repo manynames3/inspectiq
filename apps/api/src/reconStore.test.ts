@@ -102,7 +102,7 @@ describe("inspection-to-recon operations", () => {
     seedStore(store);
 
     const records = store.recon.listOperations(reconActor);
-    expect(records).toHaveLength(6);
+    expect(records).toHaveLength(7);
     expect(records[0].urgency.urgencyScore).toBeGreaterThanOrEqual(records[1].urgency.urgencyScore);
 
     const ford = records.find((record) => record.inspection.vin === "1FMCU9H6XNUB81389");

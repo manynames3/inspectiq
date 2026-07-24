@@ -65,4 +65,28 @@ describe("reserveBedrockUsage", () => {
       imageAnalyses: 2
     });
   });
+
+  it("retries transient transaction conflicts without losing the reservation", async () => {
+    let transactionAttempts = 0;
+    sendMock.mockImplementation(async (command) => {
+      const commandName = command?.constructor?.name;
+      if (commandName === "TransactWriteItemsCommand") {
+        transactionAttempts += 1;
+        if (transactionAttempts < 3) {
+          throw Object.assign(
+            new Error("Transaction cancelled [None, TransactionConflict]"),
+            { name: "TransactionCanceledException" }
+          );
+        }
+        return {};
+      }
+      if (key(command).startsWith("COST#")) return { Item: { imageAnalyses: { N: "3" } } };
+      throw new Error(`Unexpected command: ${commandName}`);
+    });
+
+    await expect(reserveBedrockUsage("imageAnalyses", "conflict-regression")).resolves.toMatchObject({
+      imageAnalyses: 3
+    });
+    expect(transactionAttempts).toBe(3);
+  });
 });

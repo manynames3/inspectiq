@@ -297,6 +297,7 @@ type ReferenceInspectionInput = {
   sampleKeys: string[];
   reportState?: ReferenceReportState;
   referenceGrade?: number;
+  synthesizeMissingIdentityEvidence?: boolean;
 };
 
 type ReferenceGrade = {
@@ -624,6 +625,19 @@ export function seedStore(store: MemoryStore): void {
 
   const referenceInspections: ReferenceInspectionInput[] = [
     {
+      vin: "19UUB2F58FA******",
+      year: 2015,
+      make: "Acura",
+      model: "TLX",
+      trim: "Tech",
+      mileage: 328119,
+      exteriorColor: "Black",
+      sellerSource: "Copart lot 56620356",
+      inspectorName: "Gate Ops",
+      sampleKeys: sampleBundles["acura-tlx-tech-copart-set"],
+      synthesizeMissingIdentityEvidence: false
+    },
+    {
       vin: "5NMJF3DE5RH407769",
       year: 2024,
       make: "Hyundai",
@@ -738,7 +752,7 @@ export function seedStore(store: MemoryStore): void {
       }, reviewerActor);
     }
 
-    if (!importedAngles.has("vin_plate")) {
+    if (input.synthesizeMissingIdentityEvidence !== false && !importedAngles.has("vin_plate")) {
       const vinPhoto = store.addPhoto({
         inspectionId: inspection.id,
         storageKey: identityDataUrl("VIN PLATE", input.vin),
@@ -765,7 +779,7 @@ export function seedStore(store: MemoryStore): void {
       }, reviewerActor);
     }
 
-    if (!importedAngles.has("odometer")) {
+    if (input.synthesizeMissingIdentityEvidence !== false && !importedAngles.has("odometer")) {
       const odometerPhoto = store.addPhoto({
         inspectionId: inspection.id,
         storageKey: identityDataUrl("ODOMETER", input.mileage.toLocaleString()),

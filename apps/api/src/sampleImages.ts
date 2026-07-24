@@ -34,6 +34,7 @@ export type SamplePhotoSet = {
 
 const externalGalleryLicense = "External OEM gallery URL; image is referenced for model-matched review and not copied into this repository.";
 const externalListingLicense = "External dealer listing URL; image is referenced for source provenance and not copied into this repository.";
+const externalMarketplaceListingLicense = "External marketplace listing URL; image is referenced for source provenance and not copied into this repository.";
 const cc0License = "CC0 1.0 Universal Public Domain Dedication; resized for the evaluation corpus.";
 const publicDomainLicense = "Public domain; resized for the evaluation corpus.";
 const skodaRoomsterDamageSourceUrl = "https://commons.wikimedia.org/wiki/File:%C5%A0koda_Roomster_Blue_Dented.jpg";
@@ -46,6 +47,7 @@ const hondaAccordCarfaxListingUrl = "https://www.carfax.com/vehicle/1HGCV1F49LA1
 const fordEscapeDealerListingUrl = "https://www.dchkayhonda.com/inventory/used-2022-ford-escape-sel-awd-sport-utility-1fmcu9h6xnub81389/";
 const nissanRogueDealerListingUrl = "https://www.westherr.com/inventory/used-2019-nissan-rogue-sv-awd-sport-utility-knmat2mv6kp514068/";
 const subaruOutbackDealerListingUrl = "https://www.akarautosales.com/details-2023-subaru-outback-premium_cvt-used-4s4btafc8p3204430.html";
+const acuraTlxCopartListingUrl = "https://www.copart.com/lot/56620356/salvage-2015-acura-tlx-tech-il-chicago-north";
 
 function carsDirect(
   key: string,
@@ -92,7 +94,37 @@ function dealerListing(
   };
 }
 
+function marketplaceListing(
+  key: string,
+  filename: string,
+  storageKey: string,
+  label: string,
+  angle: PhotoAngle,
+  sourceUrl: string,
+  sourceName: string
+): SampleImage {
+  return {
+    key,
+    filename,
+    storageKey,
+    label,
+    angle,
+    mimeType: "image/jpeg",
+    sourceName,
+    sourceUrl,
+    sourceLicense: externalMarketplaceListingLicense
+  };
+}
+
 export const sampleImages: SampleImage[] = [
+  marketplaceListing("acura-tlx-front", "2015-acura-tlx-front.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/a63326f202984090932e9fb5d54bcc0c_hrs.jpg", "2015 Acura TLX Tech front", "front", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-rear", "2015-acura-tlx-rear.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/b4da9f8632d64af8b9b5665021456312_hrs.jpg", "2015 Acura TLX Tech rear", "rear", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-driver-side", "2015-acura-tlx-driver-side.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/c4160fc96bc4400599b2861bc2ee2b4a_hrs.jpg", "2015 Acura TLX Tech driver side", "driver_side", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-passenger-side", "2015-acura-tlx-passenger-side.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/7e4aea6354e840688a04dbdc345350fe_hrs.jpg", "2015 Acura TLX Tech passenger side", "passenger_side", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-interior", "2015-acura-tlx-interior.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/57ebf4005e144101ab2d61263b237f76_hrs.jpg", "2015 Acura TLX Tech interior", "interior", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-odometer", "2015-acura-tlx-odometer.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/da801942d5844d8e9ce1785230aee8d5_hrs.jpg", "2015 Acura TLX Tech odometer", "odometer", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-front-damage-detail", "2015-acura-tlx-front-damage-detail.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/bf1a26d38f5e4f03aecb7384d2095a0e_hrs.jpg", "2015 Acura TLX Tech front-left damage detail", "driver_side", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+
   dealerListing("hyundai-tucson-front", "2024-hyundai-tucson-front.jpg", "https://carfax-img.vast.com/carfax/v2/-8689993197238208383/27/640x480", "2024 Hyundai Tucson SEL front", "front", hyundaiTucsonCarfaxListingUrl, "CARFAX listing photo set"),
   dealerListing("hyundai-tucson-rear", "2024-hyundai-tucson-rear.jpg", "https://carfax-img.vast.com/carfax/v2/-8689993197238208383/3/640x480", "2024 Hyundai Tucson SEL rear", "rear", hyundaiTucsonCarfaxListingUrl, "CARFAX listing photo set"),
   dealerListing("hyundai-tucson-driver-side", "2024-hyundai-tucson-driver-side.jpg", "https://carfax-img.vast.com/carfax/v2/-8689993197238208383/25/640x480", "2024 Hyundai Tucson SEL driver side", "driver_side", hyundaiTucsonCarfaxListingUrl, "CARFAX listing photo set"),
@@ -166,6 +198,15 @@ export const sampleImages: SampleImage[] = [
 ];
 
 export const sampleBundles: Record<string, string[]> = {
+  "acura-tlx-tech-copart-set": [
+    "acura-tlx-front",
+    "acura-tlx-rear",
+    "acura-tlx-driver-side",
+    "acura-tlx-passenger-side",
+    "acura-tlx-interior",
+    "acura-tlx-odometer",
+    "acura-tlx-front-damage-detail"
+  ],
   "complete-clean-set": [
     "hyundai-tucson-front",
     "hyundai-tucson-rear",
