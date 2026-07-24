@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiClientError } from "../api.js";
 import { useActor } from "../App.js";
-import { isReferenceProvider } from "../evidenceProvenance.js";
+import { isReferenceProvider, operatorEvidenceExplanation } from "../evidenceProvenance.js";
 import type { VisionSuggestion } from "../types.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
 
@@ -52,7 +52,7 @@ function percentScore(value: unknown): string | null {
 }
 
 function cleanExplanation(value: string): string {
-  return value
+  return operatorEvidenceExplanation(value)
     .replaceAll("_", " ")
     .replace(/\s*AI suggestion\s*-\s*requires human confirmation\.?/i, "")
     .replace(/\s*Reviewer confirmation required(?: before approval)?\.?/i, "")
@@ -81,7 +81,7 @@ function evidenceSummary(suggestion: VisionSuggestion, referenceMapping = false)
     return {
       primary: `Photo angle: ${titleCase(value.photoAngle)}`,
       secondary: referenceMapping
-        ? "Mapped from documented source metadata and confirmed by a reviewer."
+        ? "Imported evidence was matched to the required view and confirmed by a reviewer."
         : "Model finding used to complete the required photo checklist after review."
     };
   }

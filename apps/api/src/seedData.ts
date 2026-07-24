@@ -206,7 +206,7 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
     for (const suggestion of store.suggestions.values()) {
       if (hasModelAnalysis || suggestion.photoId !== photo.id || suggestion.suggestionType !== "photo_angle") continue;
       const suggestedValue = { photoAngle: output.photoAngle };
-      const explanation = `Reference manifest maps this image to the ${output.photoAngle} checklist slot. Reviewer confirmation required.`;
+      const explanation = `Imported evidence is assigned to the ${output.photoAngle} required view. Reviewer confirmation required.`;
       if (!sameJson(suggestion.suggestedValueJson, suggestedValue)) {
         suggestion.suggestedValueJson = suggestedValue;
         changed = true;

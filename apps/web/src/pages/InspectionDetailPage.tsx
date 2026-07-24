@@ -8,7 +8,7 @@ import { isEvaluationSession, storedLocalSession } from "../auth.js";
 import { StatusPill } from "../components/StatusPill.js";
 import { conditionGradeView, formatConditionGrade } from "../conditionGrade.js";
 import { loadEvaluationDamage, saveEvaluationDamage } from "../evaluationDamage.js";
-import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider } from "../evidenceProvenance.js";
+import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider, operatorEvidenceExplanation } from "../evidenceProvenance.js";
 import { deriveMarketplaceReadiness, formatReportReadiness } from "../marketplaceReadiness.js";
 import type { DamageItem, Inspection, InspectionBundle, PhotoAnalysisResult, ReportVersion, SamplePhotoSet, VehiclePhoto, VehicleReference, VisionSuggestion } from "../types.js";
 import { inspectionNeedsWork, isReviewQueueInspection } from "../workflowMetrics.js";
@@ -169,14 +169,14 @@ function suggestionFacts(suggestion: VisionSuggestion): SuggestionFact[] {
 function referenceSuggestionFacts(suggestion: VisionSuggestion): SuggestionFact[] {
   const value = suggestionValueRecord(suggestion);
   if (suggestion.suggestionType === "photo_angle") {
-    return [{ label: "Checklist Slot", value: formatAngleLabel(formatSuggestionValue(value.photoAngle)) }];
+    return [{ label: "Required View", value: formatAngleLabel(formatSuggestionValue(value.photoAngle)) }];
   }
   if (suggestion.suggestionType === "quality_warning") {
     const quality = qualityValueRecord(value.imageQuality);
     return [
-      { label: "Source QA Status", value: formatTitleValue(quality.grade ?? "review") },
+      { label: "Evidence Status", value: formatTitleValue(quality.grade ?? "review") },
       { label: "Retake Required", value: quality.retakeRequired === true ? "Yes" : "No" },
-      { label: "Action", value: quality.retakeRequired === true ? "Replace source image before release" : "Reviewer can accept if the source image is usable" }
+      { label: "Action", value: quality.retakeRequired === true ? "Replace photo before release" : "Reviewer can accept if the photo is usable" }
     ];
   }
   return suggestionFacts(suggestion);
@@ -392,7 +392,8 @@ function suggestionFocus(suggestion: VisionSuggestion) {
 
 function suggestionNote(suggestion: VisionSuggestion) {
   const value = suggestionValueRecord(suggestion);
-  return typeof value.explanation === "string" && value.explanation.length > 0 ? value.explanation : suggestion.explanation;
+  const explanation = typeof value.explanation === "string" && value.explanation.length > 0 ? value.explanation : suggestion.explanation;
+  return operatorEvidenceExplanation(explanation);
 }
 
 function suggestionPriority(suggestion: VisionSuggestion) {
@@ -432,17 +433,17 @@ function photoQualityView(
     if (qualitySuggestion && (qualitySuggestion.status === "pending" || qualitySuggestion.status === "edited")) {
       return {
         status: "review",
-        label: "Source QA review",
-        detail: formatTitleValue(suggestionValue.warning ?? "Reviewer should confirm the source image fits the required capture slot"),
+        label: "Review required",
+        detail: formatTitleValue(suggestionValue.warning ?? "Reviewer should confirm the photo fits the required view"),
         scores: []
       };
     }
     return {
       status: photo.qualityStatus === "fail" ? "retake" : "ready",
-      label: photo.qualityStatus === "fail" ? "Replace source" : "Source reviewed",
+      label: photo.qualityStatus === "fail" ? "Replace photo" : "Ready",
       detail: photo.qualityStatus === "fail"
-        ? "The reference image does not satisfy the documented capture requirement."
-        : "Mapped from documented source metadata; no model quality score is claimed.",
+        ? "The photo does not satisfy the required checklist view."
+        : "Photo is assigned to the required checklist view.",
       scores: []
     };
   }
@@ -1299,7 +1300,7 @@ export function InspectionDetailPage() {
                       const analysis = analysisResultByPhotoId.get(photo.id);
                       const referenceEvidence = isReferenceEvidence(photo, analysis);
                       const confidenceLabel = typeof photo.detectedAngleConfidence === "number" ? `${Math.round(photo.detectedAngleConfidence * 100)}%` : "Pending";
-                      const angleConfidenceLabel = referenceEvidence ? "Reference slot" : confidenceLabel === "Pending" ? "Angle pending" : `Angle ${confidenceLabel}`;
+                      const angleConfidenceLabel = referenceEvidence ? "Required view" : confidenceLabel === "Pending" ? "Angle pending" : `Angle ${confidenceLabel}`;
                       const providerLabel = analysisProviderLabel(analysis);
                       const quality = photoQualityView(photo, qualitySuggestionsByPhotoId.get(photo.id), job?.status, analysis);
                       return (
@@ -1307,7 +1308,7 @@ export function InspectionDetailPage() {
                           <ProtectedPhotoImage photo={photo} />
                           <div title={`${photo.originalFilename} · ${quality.detail}`}>
                             <strong>{photoDisplayName(photo)}</strong>
-                            <span className={`photo-confidence-badge ${!referenceEvidence && confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={referenceEvidence ? "Reference manifest checklist mapping" : `Required-angle match confidence ${confidenceLabel}`}>
+                            <span className={`photo-confidence-badge ${!referenceEvidence && confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={referenceEvidence ? "Required checklist view assigned from import" : `Required-angle match confidence ${confidenceLabel}`}>
                               {angleConfidenceLabel}
                             </span>
                             <span className="photo-file-name">{quality.label}</span>
@@ -1317,7 +1318,7 @@ export function InspectionDetailPage() {
                               <span className="photo-source-chip">{photoSourceLabel(photo)}</span>
                             )}
                             <span className={`analysis-job-chip job-${job?.status ?? photo.analysisStatus}`}>
-                              {referenceEvidence ? "Reference mapped" : `Analysis ${formatJobStatus(job?.status ?? photo.analysisStatus)}`}
+                              {referenceEvidence ? "Checklist matched" : `Analysis ${formatJobStatus(job?.status ?? photo.analysisStatus)}`}
                             </span>
                             {providerLabel ? (
                               <span className={`analysis-provider-chip ${analysis?.provider === "bedrockVisionProvider" ? "provider-bedrock" : "provider-imported"}`}>
@@ -1737,8 +1738,8 @@ function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onRej
         ))}
         {referenceEvidence ? (
           <div className="confidence-fact">
-            <dt>Provenance</dt>
-            <dd>Source manifest + reviewer decision</dd>
+            <dt>Verification</dt>
+            <dd>Imported record + reviewer decision</dd>
           </div>
         ) : (
           <div className="confidence-fact">

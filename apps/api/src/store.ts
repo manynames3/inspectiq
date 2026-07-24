@@ -684,7 +684,7 @@ export class MemoryStore {
       suggestionType: "photo_angle",
       suggestedValueJson: { photoAngle: input.validated.photoAngle },
       confidence: input.validated.confidence,
-      explanation: `Reference manifest maps this image to the ${input.validated.photoAngle} checklist slot. Reviewer confirmation required.`
+      explanation: `Imported evidence is assigned to the ${input.validated.photoAngle} required view. Reviewer confirmation required.`
     });
     for (const warning of input.validated.qualityWarnings) {
       this.createSuggestion({
@@ -1532,7 +1532,7 @@ export class MemoryStore {
         label: "Image analysis success",
         value: modelAnalyses.length === 0 ? "No model runs" : percentLabel(completedAnalyses, modelAnalyses.length, 100),
         status: analysisRate >= 0.98 ? "healthy" : analysisRate >= 0.9 ? "watch" : "blocked",
-        evidence: `${completedAnalyses} completed, ${failedAnalyses} failed model analyses. Reference manifest mappings are excluded.`
+        evidence: `${completedAnalyses} completed, ${failedAnalyses} failed model analyses. Imported checklist mappings are excluded.`
       },
       {
         metric: "image_quality_retake_rate",
