@@ -311,6 +311,35 @@ describe("reference evidence reconciliation", () => {
     expect(store.listSuggestions(honda.id)).toHaveLength(suggestionCount);
   });
 
+  it("treats odometer readings with leading zeros as the same finding", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const honda = [...store.inspections.values()].find((inspection) => inspection.vin === "1HGCV1F49LA129627")!;
+    const odometer = store.listPhotos(honda.id).find((photo) => photo.declaredAngle === "odometer")!;
+    const first = store.createSuggestion({
+      inspectionId: honda.id,
+      photoId: odometer.id,
+      suggestionType: "extracted_text",
+      suggestedValueJson: { odometer: "079037" },
+      confidence: 0.91,
+      explanation: "Detected odometer reading. Reviewer confirmation required."
+    });
+    const repeated = store.createSuggestion({
+      inspectionId: honda.id,
+      photoId: odometer.id,
+      suggestionType: "extracted_text",
+      suggestedValueJson: { odometer: "79037" },
+      confidence: 0.94,
+      explanation: "Detected odometer reading. Reviewer confirmation required."
+    });
+
+    expect(repeated.id).toBe(first.id);
+    expect(store.listSuggestions(honda.id).filter((suggestion) =>
+      suggestion.photoId === odometer.id &&
+      suggestion.suggestionType === "extracted_text"
+    )).toHaveLength(1);
+  });
+
   it("removes legacy duplicate review rows while retaining the completed decision", () => {
     const store = new MemoryStore();
     seedStore(store);

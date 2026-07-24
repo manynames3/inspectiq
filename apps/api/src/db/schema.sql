@@ -128,7 +128,9 @@ create table if not exists vision_suggestions (
       when 'extracted_text' then
         upper(regexp_replace(coalesce(suggested_value_json ->> 'vin', ''), '[^a-zA-Z0-9]', '', 'g'))
         || ':' ||
-        regexp_replace(coalesce(suggested_value_json ->> 'odometer', ''), '[^0-9]', '', 'g')
+        coalesce((
+          nullif(regexp_replace(coalesce(suggested_value_json ->> 'odometer', ''), '[^0-9]', '', 'g'), '')::bigint
+        )::text, '')
       when 'damage_candidate' then
         lower(btrim(coalesce(suggested_value_json ->> 'location', '')))
         || ':' ||
@@ -164,7 +166,9 @@ alter table vision_suggestions
       when 'extracted_text' then
         upper(regexp_replace(coalesce(suggested_value_json ->> 'vin', ''), '[^a-zA-Z0-9]', '', 'g'))
         || ':' ||
-        regexp_replace(coalesce(suggested_value_json ->> 'odometer', ''), '[^0-9]', '', 'g')
+        coalesce((
+          nullif(regexp_replace(coalesce(suggested_value_json ->> 'odometer', ''), '[^0-9]', '', 'g'), '')::bigint
+        )::text, '')
       when 'damage_candidate' then
         lower(btrim(coalesce(suggested_value_json ->> 'location', '')))
         || ':' ||

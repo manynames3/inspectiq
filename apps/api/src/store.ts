@@ -138,6 +138,11 @@ function normalizedSuggestionText(value: unknown): string {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function normalizedOdometer(value: unknown): string {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits.replace(/^0+(?=\d)/, "");
+}
+
 function suggestionSemanticKey(input: Pick<VisionSuggestion, "photoId" | "suggestionType" | "suggestedValueJson">): string {
   const value = suggestionValueRecord(input.suggestedValueJson);
   let finding: string;
@@ -147,7 +152,7 @@ function suggestionSemanticKey(input: Pick<VisionSuggestion, "photoId" | "sugges
     finding = normalizedSuggestionText(value.warning);
   } else if (input.suggestionType === "extracted_text") {
     const vin = String(value.vin ?? "").replace(/[^a-z0-9]/gi, "").toUpperCase();
-    const odometer = String(value.odometer ?? "").replace(/\D/g, "");
+    const odometer = normalizedOdometer(value.odometer);
     finding = `${vin}:${odometer}`;
   } else {
     finding = [

@@ -50,7 +50,8 @@ integration("Postgres row persistence", () => {
       "0002_report_versions.sql",
       "0003_analysis_metadata.sql",
       "0004_inspection_recon.sql",
-      "0005_suggestion_idempotency.sql"
+      "0005_suggestion_idempotency.sql",
+      "0006_normalize_ocr_suggestion_keys.sql"
     ]);
     const persisted = await pool.query(
       "select (select count(*) from inspections) inspections, (select count(*) from audit_events) audits, (select count(*) from domain_events) events"
@@ -119,6 +120,28 @@ integration("Postgres row persistence", () => {
         explanation, status, assigned_to_role, due_at, created_at, version
       from vision_suggestions where id = $2`,
       ["duplicate-quality-warning", suggestion.id]
+    )).rejects.toMatchObject({ code: "23505" });
+
+    const odometerSuggestion = store.createSuggestion({
+      inspectionId,
+      photoId: photo.id,
+      suggestionType: "extracted_text",
+      suggestedValueJson: { odometer: "079037" },
+      confidence: 0.91,
+      explanation: "Detected odometer reading. Reviewer confirmation required."
+    });
+    await savePostgresRows(store, pool);
+
+    await expect(pool.query(
+      `insert into vision_suggestions (
+        id, inspection_id, photo_id, suggestion_type, suggested_value_json, confidence,
+        explanation, status, assigned_to_role, due_at, created_at, version
+      )
+      select
+        $1, inspection_id, photo_id, suggestion_type, '{"odometer":"79037"}'::jsonb, confidence,
+        explanation, status, assigned_to_role, due_at, created_at, version
+      from vision_suggestions where id = $2`,
+      ["duplicate-odometer-reading", odometerSuggestion.id]
     )).rejects.toMatchObject({ code: "23505" });
   });
 });
