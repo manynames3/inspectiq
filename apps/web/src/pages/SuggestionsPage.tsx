@@ -81,7 +81,7 @@ function evidenceSummary(suggestion: VisionSuggestion, referenceMapping = false)
     return {
       primary: `Photo angle: ${titleCase(value.photoAngle)}`,
       secondary: referenceMapping
-        ? "The source photo was matched to the required view and confirmed by a reviewer."
+        ? "The photo fulfills the required view after reviewer confirmation."
         : "Model finding used to complete the required photo checklist after review."
     };
   }
@@ -583,7 +583,7 @@ export function SuggestionsPage() {
                       <small>{sla.detail}</small>
                     </td>
                     <td><span className={`queue-status status-${suggestion.status}`}>{suggestion.status}</span></td>
-                    <td>{referenceMapping ? "Reference" : `${Math.round(suggestion.confidence * 100)}%`}</td>
+                    <td>{referenceMapping ? "Not scored" : `${Math.round(suggestion.confidence * 100)}%`}</td>
                     <td>
                       <div className="evidence-summary">
                         <strong>{evidence.primary}</strong>

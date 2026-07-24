@@ -54,7 +54,7 @@ describe("evidence provenance", () => {
     const result = analysis("referenceManifestProvider");
     expect(isReferenceProvider(result.provider)).toBe(true);
     expect(isReferenceEvidence(photo("reference"), result)).toBe(true);
-    expect(analysisProviderLabel(result)).toBe("Source photo");
+    expect(analysisProviderLabel(result)).toBeNull();
   });
 
   it("lets a later Bedrock result supersede reference-source presentation", () => {

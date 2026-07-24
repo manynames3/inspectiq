@@ -70,7 +70,7 @@ function photoSourceLabel(photo: Pick<VehiclePhoto, "objectBucket" | "storageKey
   if (photo.sourceName === "CarsDirect OEM photo gallery") return "Sourced vehicle image";
   if (photo.sourceName) return photo.sourceName;
   if (photo.objectBucket && photo.objectBucket !== "inspectiq-sample-images") return "Uploaded image";
-  if (photo.objectBucket === "inspectiq-sample-images" || photo.storageKey.startsWith("/sample-images/")) return "Reference evidence";
+  if (photo.objectBucket === "inspectiq-sample-images" || photo.storageKey.startsWith("/sample-images/")) return "Source photo";
   if (photo.storageKey.startsWith("data:")) return "Inline evidence";
   return "Evidence image";
 }
@@ -970,7 +970,7 @@ export function InspectionDetailPage() {
         : pendingAnalysisRows.length > 0
           ? "Run image analysis to verify angle, damage, OCR, and quality signals."
           : bundle.photos.every((photo) => isReferenceEvidence(photo, analysisResultByPhotoId.get(photo.id)))
-            ? "Required photos are mapped to documented checklist slots with no open source-review blocker."
+            ? "Required photos are present with no open evidence-review blocker."
             : "Required photos have usable analysis signals and no open retake blocker.";
   const hasModelAnalysis = [...analysisResultByPhotoId.values()].some((analysis) => !isReferenceProvider(analysis.provider));
   const referenceOnlyEvidence = bundle.photos.length > 0 && !hasModelAnalysis;
@@ -983,20 +983,20 @@ export function InspectionDetailPage() {
         : pendingAnalysisRows.length > 0
           ? "Image analysis in progress."
           : reviewedSuggestions.length > 0
-            ? referenceOnlyEvidence ? "Evidence mappings reviewed." : "AI findings reviewed."
+            ? referenceOnlyEvidence ? "Evidence reviewed." : "AI findings reviewed."
             : referenceOnlyEvidence ? "No pending evidence decisions." : "No pending AI findings.";
   const reviewRailBody = pendingSuggestions.length > 0
     ? null
     : isFinalizedInspection
       ? referenceOnlyEvidence
-        ? "Reference mappings and reviewer decisions are complete; the condition report is locked for buyer-facing release."
+        ? "Evidence checks and reviewer decisions are complete; the condition report is locked for buyer-facing release."
         : "All AI findings have been resolved and the condition report is locked for buyer-facing release."
       : bundle.photos.length === 0
         ? "Capture required angles before running image analysis."
         : pendingAnalysisRows.length > 0
           ? "Queued image jobs are still processing. Refresh after completion to review findings."
           : reviewedSuggestions.length > 0
-            ? referenceOnlyEvidence ? "No open reference-evidence decisions remain for this inspection." : "No open AI decisions remain for this inspection."
+            ? referenceOnlyEvidence ? "No open evidence decisions remain for this inspection." : "No open AI decisions remain for this inspection."
             : "Run analysis after capture to create reviewable findings.";
   const analyzedPhotoCount = bundle.photos.filter((photo) => photo.analysisStatus === "completed").length;
   const confirmedReviewItems = acceptedSuggestions.slice(0, 3).map((suggestion) => `${formatTitleValue(suggestionFocus(suggestion))} · ${formatSuggestionType(suggestion.suggestionType)}`);
@@ -1219,7 +1219,7 @@ export function InspectionDetailPage() {
               <div className="workflow-status">
                 <h2>Workflow status</h2>
                 <div className={`workflow-steps step-${workflowStep}`}>
-                  {["Inspection", referenceOnlyEvidence ? "Evidence Mapping" : "AI Analysis", "Human Review", "Report"].map((label, index) => {
+                  {["Inspection", referenceOnlyEvidence ? "Evidence Review" : "AI Analysis", "Human Review", "Report"].map((label, index) => {
                     const stepNumber = index + 1;
                     const stepState = workflowStep > stepNumber ? "complete" : workflowStep === stepNumber ? "current" : "upcoming";
                     return (
@@ -1308,7 +1308,7 @@ export function InspectionDetailPage() {
                           <ProtectedPhotoImage photo={photo} />
                           <div title={`${photo.originalFilename} · ${quality.detail}`}>
                             <strong>{photoDisplayName(photo)}</strong>
-                            <span className={`photo-confidence-badge ${!referenceEvidence && confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={referenceEvidence ? "Required checklist view assigned from import" : `Required-angle match confidence ${confidenceLabel}`}>
+                            <span className={`photo-confidence-badge ${!referenceEvidence && confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={referenceEvidence ? "Required checklist view" : `Required-angle match confidence ${confidenceLabel}`}>
                               {angleConfidenceLabel}
                             </span>
                             <span className="photo-file-name">{quality.label}</span>
@@ -1398,7 +1398,7 @@ export function InspectionDetailPage() {
                   </div>
                   <div className="grade-result-card">
                     <strong>{bundle.conditionGrade ? formatConditionGrade(bundle.conditionGrade) : "Grade pending"}</strong>
-                    <span>{gradeView ? "Reference grade based on required evidence and reviewer-confirmed condition findings." : bundle.conditionGrade ? "This grade record is incompatible and must be recalculated." : "Calculate the grade after required photo evidence is confirmed."}</span>
+                    <span>{gradeView ? "Condition grade based on required evidence and reviewer-confirmed findings." : bundle.conditionGrade ? "This grade record is incompatible and must be recalculated." : "Calculate the grade after required photo evidence is confirmed."}</span>
                   </div>
                   <div className="grading-stat-grid">
                     <span><strong>{capturedEvidencePercent}%</strong><small>Evidence complete</small></span>
@@ -1512,7 +1512,7 @@ export function InspectionDetailPage() {
                   <div className="grade-strip">
                     <div>
                       <strong>{bundle.conditionGrade ? formatConditionGrade(bundle.conditionGrade) : "Grade not calculated"}</strong>
-                      <span>{gradeView?.reviewState === "approved" ? "Reviewer-approved reference grade." : gradeView ? "Suggested grade requires reviewer approval." : bundle.conditionGrade ? "Recalculate this incompatible grade record." : "Condition grade appears after grading."}</span>
+                      <span>{gradeView?.reviewState === "approved" ? "Reviewer-approved condition grade." : gradeView ? "Suggested grade requires reviewer approval." : bundle.conditionGrade ? "Recalculate this incompatible grade record." : "Condition grade appears after grading."}</span>
                     </div>
                     {bundle.aiReportDraft ? (
                       <small>Draft confidence {Math.round(bundle.aiReportDraft.confidence * 100)}% · human review {bundle.aiReportDraft.humanReviewRequired ? "required" : "optional"}</small>
@@ -1716,12 +1716,12 @@ function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onRej
   const confidencePercent = Math.round(suggestion.confidence * 100);
   const referenceEvidence = Boolean(photo && isReferenceEvidence(photo, analysis));
   const rows = referenceEvidence ? referenceSuggestionFacts(suggestion) : suggestionFacts(suggestion);
-  const providerLabel = analysisProviderLabel(analysis) ?? "Analysis provider";
+  const providerLabel = analysisProviderLabel(analysis);
   return (
     <article className="suggestion-card">
       <div className="suggestion-context">
         <span>Focus: <strong>{suggestionFocus(suggestion)}</strong></span>
-        <span className="model-chip">{providerLabel} <ChevronRight size={13} /></span>
+        {providerLabel ? <span className="model-chip">{providerLabel} <ChevronRight size={13} /></span> : null}
       </div>
       {photo ? (
         <div className="suggestion-photo">
@@ -1736,17 +1736,12 @@ function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onRej
             <dd>{value}</dd>
           </div>
         ))}
-        {referenceEvidence ? (
-          <div className="confidence-fact">
-            <dt>Verification</dt>
-            <dd>Imported record + reviewer decision</dd>
-          </div>
-        ) : (
+        {!referenceEvidence ? (
           <div className="confidence-fact">
             <dt>Confidence</dt>
             <dd><ConfidenceMeter percent={confidencePercent} /></dd>
           </div>
-        )}
+        ) : null}
         <div className="notes-fact">
           <dt>Notes</dt>
           <dd>{suggestionNote(suggestion)}</dd>

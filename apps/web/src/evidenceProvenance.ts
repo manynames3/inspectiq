@@ -11,7 +11,7 @@ export function isReferenceEvidence(photo: VehiclePhoto, analysis?: PhotoAnalysi
 export function analysisProviderLabel(analysis: PhotoAnalysisResult | undefined) {
   if (!analysis) return null;
   if (analysis.provider === "bedrockVisionProvider") return analysis.modelId ? `Bedrock · ${analysis.modelId}` : "Bedrock";
-  if (isReferenceProvider(analysis.provider)) return "Source photo";
+  if (isReferenceProvider(analysis.provider)) return null;
   if (analysis.provider === "localVisionProvider") return "Local evaluator";
   return "Analysis provider";
 }
