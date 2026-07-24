@@ -56,7 +56,10 @@ const mutableEnvKeys = [
   "ENABLE_REFERENCE_EVIDENCE",
   "ENABLE_EVALUATION_MODE",
   "IMAGE_UPLOAD_MODE",
-  "IMAGE_BUCKET"
+  "IMAGE_BUCKET",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN"
 ] as const;
 const originalEnv = Object.fromEntries(mutableEnvKeys.map((key) => [key, process.env[key]]));
 
@@ -723,6 +726,9 @@ describe("InspectIQ API", () => {
 
   it("previews the same private reference object that image analysis reads", async () => {
     process.env.IMAGE_UPLOAD_MODE = "presigned";
+    process.env.AWS_ACCESS_KEY_ID = "test-access-key";
+    process.env.AWS_SECRET_ACCESS_KEY = "test-secret-key";
+    delete process.env.AWS_SESSION_TOKEN;
     const created = await createInspection();
     const inspectionId = created.body.data.id as string;
     const storageKey = "https://example.test/reference-evidence/passenger-side.jpg";
