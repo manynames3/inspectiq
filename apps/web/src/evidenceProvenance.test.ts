@@ -54,7 +54,7 @@ describe("evidence provenance", () => {
     const result = analysis("referenceManifestProvider");
     expect(isReferenceProvider(result.provider)).toBe(true);
     expect(isReferenceEvidence(photo("reference"), result)).toBe(true);
-    expect(analysisProviderLabel(result)).toBe("Imported evidence");
+    expect(analysisProviderLabel(result)).toBe("Source photo");
   });
 
   it("lets a later Bedrock result supersede reference-source presentation", () => {
@@ -69,8 +69,10 @@ describe("evidence provenance", () => {
 
   it("converts implementation provenance into operator-facing evidence language", () => {
     expect(operatorEvidenceExplanation("Reference manifest maps this image to the driver_side checklist slot. Reviewer confirmation required."))
-      .toBe("Imported evidence is assigned to the driver side required view. Reviewer confirmation required.");
+      .toBe("Photo is assigned to the driver side required view. Reviewer confirmation required.");
     expect(operatorEvidenceExplanation("Mapped from documented source metadata; no model quality score is claimed."))
       .toBe("Photo is assigned to the required checklist view.");
+    expect(operatorEvidenceExplanation("Imported evidence is assigned to the passenger side required view."))
+      .toBe("Photo is assigned to the passenger side required view.");
   });
 });

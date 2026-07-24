@@ -22,7 +22,7 @@ function evidenceText(suggestion: VisionSuggestion, referenceMapping = false): s
     return `${String(value.location ?? "Vehicle")} · ${String(value.damageType ?? "damage").replaceAll("_", " ")} · ${String(value.severityEstimate ?? "review")} · ${estimate ? `$${estimate.min ?? 0}–$${estimate.max ?? 0}` : "Estimate pending"}`;
   }
   if (suggestion.suggestionType === "extracted_text") return value.vin ? `VIN ${String(value.vin)}` : `Odometer ${String(value.odometer ?? "unreadable")}`;
-  if (suggestion.suggestionType === "photo_angle") return `${referenceMapping ? "Reference slot" : "Detected"} ${String(value.photoAngle ?? "unknown").replaceAll("_", " ")}`;
+  if (suggestion.suggestionType === "photo_angle") return `${referenceMapping ? "Required view" : "Detected"} ${String(value.photoAngle ?? "unknown").replaceAll("_", " ")}`;
   return String(value.warning ?? suggestion.explanation);
 }
 
@@ -168,7 +168,7 @@ export function ReviewScreen() {
                 <Text style={styles.findingLabel}>{findingLabel(suggestion.suggestionType)}</Text>
                 <Text style={styles.evidence}>{evidenceText(suggestion, referenceMapping)}</Text>
                 <Text style={styles.explanation}>{suggestion.explanation}</Text>
-                <Text style={styles.confidence}>{referenceMapping ? "Reference manifest" : `${Math.round(suggestion.confidence * 100)}% confidence`} · version {suggestion.version}</Text>
+                <Text style={styles.confidence}>{referenceMapping ? "Required-view mapping" : `${Math.round(suggestion.confidence * 100)}% confidence`} · version {suggestion.version}</Text>
               </View>
               <View style={styles.actions}>
                 <ActionButton label="Edit" tone="secondary" disabled={!canDecide} icon={<Pencil size={15} color={colors.ink} />} onPress={() => openEdit(item)} />

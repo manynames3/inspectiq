@@ -756,18 +756,8 @@ export class MemoryStore {
       suggestionType: "photo_angle",
       suggestedValueJson: { photoAngle: input.validated.photoAngle },
       confidence: input.validated.confidence,
-      explanation: `Imported evidence is assigned to the ${input.validated.photoAngle} required view. Reviewer confirmation required.`
+      explanation: `Photo is assigned to the ${input.validated.photoAngle} required view. Reviewer confirmation required.`
     });
-    for (const warning of input.validated.qualityWarnings) {
-      this.createSuggestion({
-        inspectionId: photo.inspectionId,
-        photoId: photo.id,
-        suggestionType: "quality_warning",
-        suggestedValueJson: { warning, imageQuality: input.validated.imageQuality },
-        confidence: Math.min(input.validated.confidence, 0.75),
-        explanation: `Reference-source QA note: ${warning} Reviewer confirmation required.`
-      });
-    }
     this.addAudit(photo.inspectionId, actor, "reference_evidence.mapped", {
       photoId: photo.id,
       declaredAngle: photo.declaredAngle,

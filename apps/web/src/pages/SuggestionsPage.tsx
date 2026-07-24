@@ -81,7 +81,7 @@ function evidenceSummary(suggestion: VisionSuggestion, referenceMapping = false)
     return {
       primary: `Photo angle: ${titleCase(value.photoAngle)}`,
       secondary: referenceMapping
-        ? "Imported evidence was matched to the required view and confirmed by a reviewer."
+        ? "The source photo was matched to the required view and confirmed by a reviewer."
         : "Model finding used to complete the required photo checklist after review."
     };
   }

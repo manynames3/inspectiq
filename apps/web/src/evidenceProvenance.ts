@@ -11,7 +11,7 @@ export function isReferenceEvidence(photo: VehiclePhoto, analysis?: PhotoAnalysi
 export function analysisProviderLabel(analysis: PhotoAnalysisResult | undefined) {
   if (!analysis) return null;
   if (analysis.provider === "bedrockVisionProvider") return analysis.modelId ? `Bedrock · ${analysis.modelId}` : "Bedrock";
-  if (isReferenceProvider(analysis.provider)) return "Imported evidence";
+  if (isReferenceProvider(analysis.provider)) return "Source photo";
   if (analysis.provider === "localVisionProvider") return "Local evaluator";
   return "Analysis provider";
 }
@@ -20,10 +20,11 @@ export function operatorEvidenceExplanation(value: string) {
   return value
     .replace(
       /Reference manifest maps this image to the ([a-z0-9_-]+) checklist slot\./gi,
-      (_, view: string) => `Imported evidence is assigned to the ${view.replaceAll("_", " ")} required view.`
+      (_, view: string) => `Photo is assigned to the ${view.replaceAll("_", " ")} required view.`
     )
     .replace(/Mapped from documented source metadata; no model quality score is claimed\./gi, "Photo is assigned to the required checklist view.")
-    .replace(/\bReference manifest\b/gi, "Imported evidence")
+    .replace(/\bReference manifest\b/gi, "Source photo")
+    .replace(/\bImported evidence\b/gi, "Photo")
     .replace(/\breference image\b/gi, "photo")
     .replace(/\bsource image\b/gi, "photo");
 }

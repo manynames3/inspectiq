@@ -209,7 +209,7 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
     for (const suggestion of store.suggestions.values()) {
       if (hasModelAnalysis || suggestion.photoId !== photo.id || suggestion.suggestionType !== "photo_angle") continue;
       const suggestedValue = { photoAngle: output.photoAngle };
-      const explanation = `Imported evidence is assigned to the ${output.photoAngle} required view. Reviewer confirmation required.`;
+      const explanation = `Photo is assigned to the ${output.photoAngle} required view. Reviewer confirmation required.`;
       if (!sameJson(suggestion.suggestedValueJson, suggestedValue)) {
         suggestion.suggestedValueJson = suggestedValue;
         changed = true;
@@ -231,7 +231,7 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
         suggestionType: "photo_angle" as const,
         suggestedValueJson: { photoAngle: output.photoAngle },
         confidence: output.confidence,
-        explanation: `Imported evidence is assigned to the ${output.photoAngle} required view. Reviewer confirmation required.`
+        explanation: `Photo is assigned to the ${output.photoAngle} required view. Reviewer confirmation required.`
       }];
       changed = store.supersedePendingPhotoSuggestions(photo, currentSuggestions, systemActor, {
         provider: "referenceManifestProvider",
