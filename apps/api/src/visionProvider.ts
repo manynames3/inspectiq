@@ -201,9 +201,10 @@ function boundedText(value: unknown, maxLength: number): string | null {
   return trimmed.length > maxLength ? trimmed.slice(0, maxLength - 1).trimEnd() : trimmed;
 }
 
-function prepareBedrockOutput(value: unknown): unknown {
+export function prepareBedrockOutput(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   const output = JSON.parse(JSON.stringify(value)) as {
+    vehicleOrientation?: { cues?: unknown };
     imageQuality?: { notes?: unknown };
     qualityWarnings?: unknown;
     detectedDamageCandidates?: Array<{
@@ -213,6 +214,12 @@ function prepareBedrockOutput(value: unknown): unknown {
     }>;
   };
 
+  if (output.vehicleOrientation && Array.isArray(output.vehicleOrientation.cues)) {
+    output.vehicleOrientation.cues = output.vehicleOrientation.cues
+      .map((item) => boundedText(item, 160))
+      .filter(Boolean)
+      .slice(0, 3);
+  }
   if (output.imageQuality && Array.isArray(output.imageQuality.notes)) {
     output.imageQuality.notes = output.imageQuality.notes
       .map((item) => boundedText(item, 160))
@@ -480,6 +487,7 @@ export function buildBedrockVisionPrompt(input: {
       "For a side view, identify the vehicle's front end and state whether it points left or right in the image before naming the side.",
       "For an unmirrored North American left-hand-drive vehicle: front pointing left shows driver side; front pointing right shows passenger side.",
       "Use visible grille/headlamp versus tail-lamp cues to establish front direction. If the image may be mirrored or the front end is unclear, use unknown.",
+      "Return no more than three concise vehicleOrientation cues.",
       "Return driver_side or passenger_side only when vehicleOrientation supports that side. If the physical side is ambiguous, return unknown with lower confidence and require human review.",
       "Return only strict JSON matching this TypeScript shape:",
       "{ photoAngle: 'front'|'rear'|'driver_side'|'passenger_side'|'interior'|'engine_bay'|'odometer'|'vin_plate'|'unknown', confidence: number, vehicleOrientation: { frontDirection: 'left'|'right'|'center'|'unknown', confidence: number, cues: string[] }, imageQuality: { grade: 'pass'|'review'|'retake', blurScore: number, exposureScore: number, framingScore: number, resolutionScore: number, occlusionRisk: number, retakeRequired: boolean, notes: string[] }, qualityWarnings: string[], detectedDamageCandidates: Array<{ location: string, damageType: 'scratch'|'dent'|'paint_damage'|'crack'|'wheel_damage'|'glass_damage'|'interior_wear'|'unknown', severityEstimate: 'minor'|'moderate'|'severe'|'unknown', confidence: number, explanation: string, repairEstimateUsd: { min: number, max: number, rationale: string }, requiresHumanConfirmation: boolean }>, extractedText: { vin?: string, odometer?: string }, humanReviewRequired: boolean }.",

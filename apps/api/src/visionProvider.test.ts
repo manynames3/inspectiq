@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildBedrockVisionPrompt, detectImageFormat, localVisionProvider, normalizeVisionOutput } from "./visionProvider.js";
+import { VisionOutputSchema } from "@inspectiq/shared";
+import { buildBedrockVisionPrompt, detectImageFormat, localVisionProvider, normalizeVisionOutput, prepareBedrockOutput } from "./visionProvider.js";
 
 describe("localVisionProvider", () => {
   it("does not let a declared checklist slot anchor the Bedrock angle classification", () => {
@@ -73,6 +74,41 @@ describe("localVisionProvider", () => {
     expect(normalized.confidence).toBe(0.49);
     expect(normalized.imageQuality.grade).toBe("review");
     expect(normalized.humanReviewRequired).toBe(true);
+  });
+
+  it("bounds orientation evidence before strict schema validation", () => {
+    const prepared = prepareBedrockOutput({
+      photoAngle: "passenger_side",
+      confidence: 0.91,
+      vehicleOrientation: {
+        frontDirection: "right",
+        confidence: 0.93,
+        cues: [
+          "Tail lamps are on the image left.",
+          "Headlamps are on the image right.",
+          "The front wheel is on the image right.",
+          "This fourth model cue must be discarded."
+        ]
+      },
+      imageQuality: {
+        grade: "review",
+        blurScore: 0.88,
+        exposureScore: 0.82,
+        framingScore: 0.75,
+        resolutionScore: 0.87,
+        occlusionRisk: 0.35,
+        retakeRequired: false,
+        notes: ["Direct side profile."]
+      },
+      qualityWarnings: ["Reviewer confirmation required."],
+      detectedDamageCandidates: [],
+      extractedText: {},
+      humanReviewRequired: true
+    });
+
+    const parsed = VisionOutputSchema.parse(prepared);
+    expect(parsed.vehicleOrientation?.cues).toHaveLength(3);
+    expect(parsed.vehicleOrientation?.cues).not.toContain("This fourth model cue must be discarded.");
   });
 
   it("uses image bytes instead of stale MIME metadata", () => {
