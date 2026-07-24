@@ -305,6 +305,27 @@ resource "aws_cognito_user_group" "reviewer" {
   precedence   = 20
 }
 
+resource "aws_cognito_user_group" "recon_coordinator" {
+  name         = "recon_coordinator"
+  user_pool_id = aws_cognito_user_pool.inspectiq.id
+  description  = "Can prepare recon estimates, coordinate authorized work, record QC, and assess sale readiness."
+  precedence   = 21
+}
+
+resource "aws_cognito_user_group" "consignor_approver" {
+  name         = "consignor_approver"
+  user_pool_id = aws_cognito_user_pool.inspectiq.id
+  description  = "Can authorize or decline recon spending for represented consignor accounts."
+  precedence   = 22
+}
+
+resource "aws_cognito_user_group" "technician" {
+  name         = "technician"
+  user_pool_id = aws_cognito_user_pool.inspectiq.id
+  description  = "Can update assigned and authorized facility work orders."
+  precedence   = 23
+}
+
 resource "aws_cognito_user_group" "admin" {
   name         = "admin"
   user_pool_id = aws_cognito_user_pool.inspectiq.id
@@ -566,7 +587,7 @@ resource "aws_lambda_function" "api" {
       DOMAIN_EVENT_SOURCE                 = "inspectiq.api"
       DOMAIN_EVENT_DLQ_URL                = aws_sqs_queue.domain_event_dlq.url
       BEDROCK_VISION_FALLBACK             = "fail"
-      MIN_DAMAGE_CONFIDENCE               = "0.80"
+      MIN_DAMAGE_CONFIDENCE               = "0.85"
       AUTH_MODE                           = "jwt"
       OIDC_ISSUER                         = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.inspectiq.id}"
       OIDC_AUDIENCE                       = aws_cognito_user_pool_client.web.id
@@ -612,7 +633,7 @@ resource "aws_lambda_function" "image_worker" {
       DOMAIN_EVENT_BUS_NAME               = aws_cloudwatch_event_bus.domain.name
       DOMAIN_EVENT_SOURCE                 = "inspectiq.worker"
       BEDROCK_VISION_FALLBACK             = "fail"
-      MIN_DAMAGE_CONFIDENCE               = "0.80"
+      MIN_DAMAGE_CONFIDENCE               = "0.85"
       PG_POOL_SIZE                        = "2"
     }
   }

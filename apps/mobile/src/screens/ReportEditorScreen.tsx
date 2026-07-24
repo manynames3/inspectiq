@@ -59,15 +59,23 @@ export function ReportEditorScreen({ route }: Props) {
       <Card>
         <View style={styles.statusRow}>
           <View>
-            <Text style={styles.grade}>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} · ${bundle.conditionGrade.score}` : "Not graded"}</Text>
-            <Text style={styles.gradeCopy}>Deterministic condition grade</Text>
+            <Text style={styles.grade}>
+              {bundle.conditionGrade
+                ? `${(bundle.conditionGrade.approvedGrade ?? bundle.conditionGrade.suggestedGrade).toFixed(1)} / 5.0`
+                : "Not graded"}
+            </Text>
+            <Text style={styles.gradeCopy}>
+              {bundle.conditionGrade?.approvedGrade == null
+                ? "Suggested InspectIQ Reference Grade · reviewer approval required"
+                : "Reviewer-approved InspectIQ Reference Grade"}
+            </Text>
           </View>
           <StatusPill label={report ? report.approvalStatus.replaceAll("_", " ") : "Not started"} tone={report?.finalizedAt ? "good" : report ? "info" : "neutral"} />
         </View>
         {report ? <Text style={styles.version}>Version {report.version}{report.approvedBy ? ` · approved by ${report.approvedBy}` : ""}</Text> : null}
       </Card>
       {!report ? (
-        <ActionButton label={busy ? "Drafting…" : "Generate report draft"} disabled={busy || !online || !canMutate || !canRole(session.actor.role, "report:draft") || !bundle.conditionGrade} onPress={() => void action(`/api/inspections/${bundle.inspection.id}/ai-report`, { idempotencyKey: `mobile-report:${bundle.inspection.id}:${bundle.conditionGrade?.id}` })} />
+        <ActionButton label={busy ? "Drafting…" : "Generate report draft"} disabled={busy || !online || !canMutate || !canRole(session.actor.role, "report:draft") || bundle.conditionGrade?.approvedGrade == null} onPress={() => void action(`/api/inspections/${bundle.inspection.id}/ai-report`, { idempotencyKey: `mobile-report:${bundle.inspection.id}:${bundle.conditionGrade?.id}` })} />
       ) : (
         <>
           <Field label="Buyer-facing report" value={body} onChangeText={setBody} multiline editable={!report.finalizedAt && canMutate} />

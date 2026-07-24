@@ -1,7 +1,8 @@
 import { findSampleImageByObjectKey, sampleBundles, sampleImages, type SampleImage } from "./sampleImages.js";
 import type { Actor, DamageItem, VehiclePhoto } from "./domain.js";
 import { MemoryStore } from "./store.js";
-import type { PhotoAngle, VisionOutput } from "@inspectiq/shared";
+import type { AiReportOutput, PhotoAngle, VisionOutput } from "@inspectiq/shared";
+import { visualConditionSections } from "./reportProvider.js";
 
 const systemActor: Actor = { id: "queue-import", name: "Queue Import", role: "admin" };
 export const identitySourceName = "Reference identity capture";
@@ -131,7 +132,10 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
     const sample = findReferenceSampleForPhoto(photo);
     if (!sample) continue;
 
-    const storageKey = sample.storageKey ?? `/sample-images/${sample.filename}`;
+    const sourceStorageKey = sample.storageKey ?? `/sample-images/${sample.filename}`;
+    const storageKey = photo.objectBucket && photo.objectBucket !== "inspectiq-sample-images" && photo.objectKey
+      ? `s3://${photo.objectBucket}/${photo.objectKey}`
+      : sourceStorageKey;
     const photoAnalyses = [...store.analyses.values()].filter((analysis) => analysis.photoId === photo.id);
     const hasModelAnalysis = photoAnalyses.some((analysis) =>
       analysis.provider !== "referenceManifestProvider" &&
@@ -140,7 +144,7 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
     );
     const output = referenceVisionOutput({
       angle: sample.angle,
-      storageKey,
+      storageKey: sourceStorageKey,
       referenceAngleConfidence: sample.referenceAngleConfidence,
       referenceQualityGrade: sample.referenceQualityGrade,
       referenceRetakeRequired: sample.referenceRetakeRequired,
@@ -205,7 +209,7 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
     for (const suggestion of store.suggestions.values()) {
       if (hasModelAnalysis || suggestion.photoId !== photo.id || suggestion.suggestionType !== "photo_angle") continue;
       const suggestedValue = { photoAngle: output.photoAngle };
-      const explanation = `Reference manifest maps this image to the ${output.photoAngle} checklist slot. Reviewer confirmation required.`;
+      const explanation = `Photo is assigned to the ${output.photoAngle} required view. Reviewer confirmation required.`;
       if (!sameJson(suggestion.suggestedValueJson, suggestedValue)) {
         suggestion.suggestedValueJson = suggestedValue;
         changed = true;
@@ -220,27 +224,25 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
       }
     }
 
-    for (const warning of hasModelAnalysis ? [] : output.qualityWarnings) {
-      const existing = [...store.suggestions.values()].find((suggestion) =>
-        suggestion.photoId === photo.id &&
-        suggestion.suggestionType === "quality_warning" &&
-        JSON.stringify((suggestion.suggestedValueJson as { warning?: unknown })?.warning) === JSON.stringify(warning)
-      );
-      if (!existing) {
-        store.createSuggestion({
-          inspectionId: photo.inspectionId,
-          photoId: photo.id,
-          suggestionType: "quality_warning",
-          suggestedValueJson: { warning, imageQuality: output.imageQuality },
-          confidence: Math.min(output.confidence, 0.75),
-          explanation: `Reference-source QA note: ${warning} Reviewer confirmation required.`
-        });
-        changed = true;
-      }
+    if (!hasModelAnalysis) {
+      const currentSuggestions = [{
+        inspectionId: photo.inspectionId,
+        photoId: photo.id,
+        suggestionType: "photo_angle" as const,
+        suggestedValueJson: { photoAngle: output.photoAngle },
+        confidence: output.confidence,
+        explanation: `Photo is assigned to the ${output.photoAngle} required view. Reviewer confirmation required.`
+      }];
+      changed = store.supersedePendingPhotoSuggestions(photo, currentSuggestions, systemActor, {
+        provider: "referenceManifestProvider",
+        promptVersion: "reference-manifest-v1"
+      }).length > 0 || changed;
     }
   }
+  changed = removeUnsupportedReferenceQualityClaims(store) || changed;
   changed = removeUnsupportedReferenceClaims(store) || changed;
   changed = removeReferenceMetadataOcrClaims(store) || changed;
+  changed = store.reconcileDuplicateSuggestions(systemActor) > 0 || changed;
   return changed;
 }
 
@@ -294,23 +296,17 @@ type ReferenceInspectionInput = {
   inspectorName: string;
   sampleKeys: string[];
   reportState?: ReferenceReportState;
+  referenceGrade?: number;
+  synthesizeMissingIdentityEvidence?: boolean;
 };
 
 type ReferenceGrade = {
   id: string;
-  score: number;
-  grade: "A" | "B" | "C" | "D" | "F";
+  approvedGrade: number | null;
+  suggestedGrade: number;
 };
 
-type ReferenceReportOutput = {
-  summary: string;
-  notableDefects: string[];
-  missingEvidence: string[];
-  recommendedDisclosure: string;
-  confidence: number;
-  humanReviewRequired: boolean;
-  reasoningSummary: string;
-};
+type ReferenceReportOutput = AiReportOutput;
 
 function titleDamage(item: DamageItem): string {
   return `${item.severity} ${item.damageType.replaceAll("_", " ")} at ${item.location}`;
@@ -320,12 +316,14 @@ function referenceReportOutput(input: ReferenceInspectionInput, grade: Reference
   const defects = damageItems.map(titleDamage);
   const vehicle = `${input.year} ${input.make} ${input.model} ${input.trim}`.trim();
   return {
-    summary: `${vehicle} graded ${grade.grade} with a condition score of ${grade.score}. ${humanReviewRequired ? "Reviewer approval is required before buyer-visible release." : "Buyer-ready condition report is finalized for release."}`,
+    inspectionType: "VISUAL_CONDITION_REPORT",
+    summary: `${vehicle} has an InspectIQ Reference Grade of ${(grade.approvedGrade ?? grade.suggestedGrade).toFixed(1)} out of 5.0. ${humanReviewRequired ? "Reviewer approval is required before buyer-visible release." : "Buyer-ready condition report is finalized for release."}`,
     notableDefects: defects.length > 0 ? defects : ["No confirmed damage items were recorded."],
     missingEvidence: [],
     recommendedDisclosure: defects.length > 0
       ? `Disclose confirmed damage before buyer-visible release: ${defects.join("; ")}.`
       : "Condition report is based on complete required photo evidence and reviewer-confirmed facts.",
+    conditionReportSections: visualConditionSections({ missingEvidence: [], damageItems }),
     confidence: humanReviewRequired ? 0.82 : 0.93,
     humanReviewRequired,
     reasoningSummary: "Review used required photo evidence, confirmed damage items, condition grade, disclosure checks, and buyer-visible release status."
@@ -341,6 +339,12 @@ function referenceReportBody(output: ReferenceReportOutput): string {
     "",
     "Missing evidence:",
     ...(output.missingEvidence.length ? output.missingEvidence.map((item) => `- ${item}`) : ["- None"]),
+    "",
+    "Condition report sections:",
+    ...output.conditionReportSections.flatMap((section) => [
+      `${section.title} [${section.status.replaceAll("_", " ")}]`,
+      ...section.observations.map((observation) => `- ${observation}`)
+    ]),
     "",
     `Recommended disclosure: ${output.recommendedDisclosure}`,
     "",
@@ -480,6 +484,41 @@ function removeUnsupportedReferenceClaims(store: MemoryStore): boolean {
   return changed;
 }
 
+function removeUnsupportedReferenceQualityClaims(store: MemoryStore): boolean {
+  let changed = false;
+  for (const photo of store.photos.values()) {
+    if (photo.captureSource !== "reference") continue;
+    const analyses = [...store.analyses.values()].filter((analysis) => analysis.photoId === photo.id);
+    const hasModelAnalysis = analyses.some((analysis) =>
+      analysis.provider !== "referenceManifestProvider" &&
+      analysis.provider !== "referenceImportProvider" &&
+      analysis.provider !== "seededImportProvider"
+    );
+    if (hasModelAnalysis) continue;
+
+    const removed = [...store.suggestions.values()].filter((suggestion) =>
+      suggestion.photoId === photo.id &&
+      suggestion.suggestionType === "quality_warning"
+    );
+    if (removed.length === 0) continue;
+
+    for (const suggestion of removed) store.suggestions.delete(suggestion.id);
+    store.addAudit(photo.inspectionId, systemActor, "reference_evidence.corrected", {
+      correction: "unsupported_quality_claim_removed",
+      photoId: photo.id,
+      removedSuggestions: removed.map((suggestion) => ({
+        id: suggestion.id,
+        status: suggestion.status,
+        reviewedBy: suggestion.reviewedBy,
+        reviewedAt: suggestion.reviewedAt
+      })),
+      reason: "Reference metadata cannot establish image quality or camera angle. The photo must be evaluated from its stored bytes."
+    });
+    changed = true;
+  }
+  return changed;
+}
+
 function removeReferenceMetadataOcrClaims(store: MemoryStore): boolean {
   let changed = false;
   for (const photo of store.photos.values()) {
@@ -527,21 +566,21 @@ function createReferenceReport(store: MemoryStore, input: ReferenceInspectionInp
 
   const damageItems = store.listDamage(inspectionId);
   const isHumanReview = input.reportState === "draft_human_review";
+  const suggestedGrade = input.referenceGrade ?? (isHumanReview ? 4.1 : 4.7);
   const grade = store.saveGrade(inspectionId, {
-    score: isHumanReview ? 82 : 94,
-    grade: isHumanReview ? "B" : "A",
+    suggestedGrade,
+    conditionGradeBeforeRecon: suggestedGrade,
+    evidenceBlockers: [],
     explanationJson: {
-      baseScore: 100,
+      baseGrade: 5,
       deductions: damageItems.map((item) => ({
         reason: titleDamage(item),
-        points: item.severity === "moderate" ? 9 : item.severity === "minor" ? 3 : 5
-      })),
-      completionPenalty: 0,
-      mileageAdjustment: isHumanReview ? 7 : 2,
-      ageAdjustment: isHumanReview ? 2 : 1
+        amount: item.severity === "moderate" ? 0.45 : item.severity === "minor" ? 0.15 : 0.3
+      }))
     },
-    gradingVersion: "reference-grading-v1"
+    gradingVersion: "inspectiq-reference-grade-v2-seed"
   }, actor);
+  store.approveGrade(inspectionId, suggestedGrade, null, actor);
 
   const job = store.createReportJob(inspectionId, `reference-report-${input.vin}`, actor);
   store.markJobRunning(job.id);
@@ -586,6 +625,19 @@ export function seedStore(store: MemoryStore): void {
 
   const referenceInspections: ReferenceInspectionInput[] = [
     {
+      vin: "19UUB2F58FA******",
+      year: 2015,
+      make: "Acura",
+      model: "TLX",
+      trim: "Tech",
+      mileage: 328119,
+      exteriorColor: "Black",
+      sellerSource: "Copart lot 56620356",
+      inspectorName: "Gate Ops",
+      sampleKeys: sampleBundles["acura-tlx-tech-copart-set"],
+      synthesizeMissingIdentityEvidence: false
+    },
+    {
       vin: "5NMJF3DE5RH407769",
       year: 2024,
       make: "Hyundai",
@@ -619,7 +671,8 @@ export function seedStore(store: MemoryStore): void {
       exteriorColor: "Gray",
       sellerSource: "Dealer trade-in lane",
       inspectorName: "John Smith",
-      sampleKeys: sampleBundles["honda-accord-ex-set"]
+      sampleKeys: sampleBundles["honda-accord-ex-set"],
+      reportState: "draft_human_review"
     },
     {
       vin: "1FMCU9H6XNUB81389",
@@ -645,7 +698,8 @@ export function seedStore(store: MemoryStore): void {
       sellerSource: "Dealer listing intake",
       inspectorName: "Maria Lee",
       sampleKeys: sampleBundles["nissan-rogue-sv-set"],
-      reportState: "draft_human_review"
+      reportState: "finalized",
+      referenceGrade: 4.1
     },
     {
       vin: "4S4BTAFC8P3204430",
@@ -698,7 +752,7 @@ export function seedStore(store: MemoryStore): void {
       }, reviewerActor);
     }
 
-    if (!importedAngles.has("vin_plate")) {
+    if (input.synthesizeMissingIdentityEvidence !== false && !importedAngles.has("vin_plate")) {
       const vinPhoto = store.addPhoto({
         inspectionId: inspection.id,
         storageKey: identityDataUrl("VIN PLATE", input.vin),
@@ -725,7 +779,7 @@ export function seedStore(store: MemoryStore): void {
       }, reviewerActor);
     }
 
-    if (!importedAngles.has("odometer")) {
+    if (input.synthesizeMissingIdentityEvidence !== false && !importedAngles.has("odometer")) {
       const odometerPhoto = store.addPhoto({
         inspectionId: inspection.id,
         storageKey: identityDataUrl("ODOMETER", input.mileage.toLocaleString()),
@@ -755,8 +809,292 @@ export function seedStore(store: MemoryStore): void {
     createReferenceReport(store, input, inspection.id, reviewerActor);
   }
 
+  reconcileReconOperations(store);
   store.addAudit([...store.inspections.values()][0].id, systemActor, "inspection.queue.loaded", {
     inspections: store.inspections.size,
     note: "Initial inspection queue loaded."
   });
+}
+
+function ensureSeedUser(
+  store: MemoryStore,
+  input: Parameters<MemoryStore["addUser"]>[0]
+) {
+  return store.users.get(input.id ?? "") ?? store.addUser(input);
+}
+
+function reconcileMissingReconIntakes(store: MemoryStore): boolean {
+  const missing = [...store.inspections.values()]
+    .filter((inspection) => !store.recon.intakeForInspection(inspection.id));
+  if (missing.length === 0) return false;
+
+  const account = [...store.consignorAccounts.values()]
+    .find((candidate) => candidate.name === "Southeast Dealer Group");
+  if (!account) return false;
+
+  const inspector = ensureSeedUser(store, {
+    id: "inspector-john-smith",
+    name: "John Smith",
+    role: "inspector"
+  });
+  const admin = ensureSeedUser(store, {
+    id: "operations-admin",
+    name: "Operations Admin",
+    role: "admin"
+  });
+  const adminActor: Actor = { id: admin.id, name: admin.name, role: admin.role };
+  const seedClock = Date.parse(process.env.INSPECTIQ_FIXED_NOW ?? new Date().toISOString());
+  const existingCount = store.vehicleIntakes.size;
+
+  missing.forEach((inspection, offset) => {
+    const sequence = existingCount + offset;
+    store.recon.createVehicleIntake({
+      inspectionId: inspection.id,
+      consignorAccountId: account.id,
+      facility: "Atlanta Main",
+      yardZone: `Z${Math.floor(sequence / 3) + 1}`,
+      parkingSpace: `P-${String(sequence + 17).padStart(3, "0")}`,
+      saleDateTime: new Date(seedClock + (24 + offset * 6) * 3_600_000).toISOString(),
+      lane: `Lane ${sequence % 3 + 1}`,
+      runNumber: String(120 + sequence),
+      saleEventId: `ATL-${new Date(seedClock).toISOString().slice(0, 10)}`,
+      inspectionType: "VISUAL_CONDITION_REPORT"
+    }, adminActor);
+    store.recon.assignInspection(
+      inspection.id,
+      inspection.assignedToUserId ?? inspector.id,
+      new Date(seedClock + (2 + offset) * 3_600_000).toISOString(),
+      adminActor
+    );
+    store.recon.transitionInspection(inspection.id, "CAPTURE_IN_PROGRESS", adminActor);
+  });
+
+  return true;
+}
+
+export function reconcileReconOperations(store: MemoryStore): boolean {
+  if (store.inspections.size === 0) return false;
+  if (store.vehicleIntakes.size > 0) return reconcileMissingReconIntakes(store);
+
+  const inspector = ensureSeedUser(store, { id: "inspector-john-smith", name: "John Smith", role: "inspector" });
+  const maria = ensureSeedUser(store, { id: "inspector-maria-lee", name: "Maria Lee", role: "inspector" });
+  const gateOps = ensureSeedUser(store, { id: "inspector-gate-ops", name: "Gate Ops", role: "inspector" });
+  const reviewer = ensureSeedUser(store, { id: "review-lead", name: "Review Lead", role: "reviewer" });
+  const reconCoordinator = ensureSeedUser(store, {
+    id: "recon-coordinator",
+    name: "Alex Rivera",
+    role: "recon_coordinator"
+  });
+  const consignorApprover = ensureSeedUser(store, {
+    id: "consignor-approver-sdg",
+    name: "Morgan Ellis",
+    role: "consignor_approver"
+  });
+  const technician = ensureSeedUser(store, {
+    id: "technician-body-01",
+    name: "Sam Patel",
+    role: "technician"
+  });
+  const admin = ensureSeedUser(store, { id: "operations-admin", name: "Operations Admin", role: "admin" });
+  const reviewerActor: Actor = { id: reviewer.id, name: reviewer.name, role: reviewer.role };
+  const reconActor: Actor = { id: reconCoordinator.id, name: reconCoordinator.name, role: reconCoordinator.role };
+  const adminActor: Actor = { id: admin.id, name: admin.name, role: admin.role };
+  const inspectorActors: Record<string, Actor> = {
+    "John Smith": { id: inspector.id, name: inspector.name, role: inspector.role },
+    "Maria Lee": { id: maria.id, name: maria.name, role: maria.role },
+    "Gate Ops": { id: gateOps.id, name: gateOps.name, role: gateOps.role }
+  };
+
+  const southeastDealerGroup = store.recon.createConsignorAccount({
+    name: "Southeast Dealer Group",
+    accountType: "DEALERSHIP",
+    authorizedUserIds: [consignorApprover.id]
+  }, adminActor);
+  const fleetRemarketing = store.recon.createConsignorAccount({
+    name: "Fleet Remarketing Partners",
+    accountType: "FLEET",
+    authorizedUserIds: []
+  }, adminActor);
+  store.recon.createPolicy({
+    consignorAccountId: southeastDealerGroup.id,
+    name: "Managed retail-ready policy",
+    approvalMode: "AUTO_APPROVE_UNDER_LIMIT",
+    totalVehicleLimit: 1_500,
+    serviceRules: {
+      DETAIL: { enabled: true, automaticApprovalLimit: 250 },
+      MECHANICAL: { enabled: true, automaticApprovalLimit: 400 },
+      BODY: { enabled: true, automaticApprovalLimit: 500 },
+      TIRE: { enabled: true, automaticApprovalLimit: 350 },
+      GLASS: { enabled: true, automaticApprovalLimit: 300 },
+      THIRD_PARTY: { enabled: false, automaticApprovalLimit: 0 }
+    },
+    costOverrunTolerance: 75
+  }, adminActor);
+  store.recon.createPolicy({
+    consignorAccountId: fleetRemarketing.id,
+    name: "Fleet approval required",
+    approvalMode: "MANUAL",
+    totalVehicleLimit: 1_000,
+    serviceRules: {
+      DETAIL: { enabled: true, automaticApprovalLimit: 0 },
+      MECHANICAL: { enabled: true, automaticApprovalLimit: 0 },
+      BODY: { enabled: true, automaticApprovalLimit: 0 },
+      TIRE: { enabled: true, automaticApprovalLimit: 0 },
+      GLASS: { enabled: true, automaticApprovalLimit: 0 },
+      THIRD_PARTY: { enabled: true, automaticApprovalLimit: 0 }
+    },
+    costOverrunTolerance: 50
+  }, adminActor);
+
+  const seedClock = Date.parse(process.env.INSPECTIQ_FIXED_NOW ?? new Date().toISOString());
+  const inspections = [...store.inspections.values()];
+  const saleOffsetsHours = [48, 18, 30, 72, 5, 12];
+  inspections.forEach((inspection, index) => {
+    const fleetVehicle = inspection.vin === "4S4BTAFC8P3204430";
+    const account = fleetVehicle ? fleetRemarketing : southeastDealerGroup;
+    const saleOffsetHours = saleOffsetsHours[index] ?? 24 + index * 6;
+    store.recon.createVehicleIntake({
+      inspectionId: inspection.id,
+      consignorAccountId: account.id,
+      facility: fleetVehicle ? "Atlanta South" : "Atlanta Main",
+      yardZone: `Z${Math.floor(index / 3) + 1}`,
+      parkingSpace: `P-${String(index + 17).padStart(3, "0")}`,
+      saleDateTime: new Date(seedClock + saleOffsetHours * 3_600_000).toISOString(),
+      lane: `Lane ${index % 3 + 1}`,
+      runNumber: String(120 + index),
+      saleEventId: `ATL-${new Date(seedClock).toISOString().slice(0, 10)}`,
+      inspectionType: "VISUAL_CONDITION_REPORT"
+    }, adminActor);
+    store.recon.assignInspection(
+      inspection.id,
+      inspectorActors[inspection.inspectorName]?.id ?? inspector.id,
+      new Date(seedClock + (2 + index) * 3_600_000).toISOString(),
+      adminActor
+    );
+  });
+
+  const workflowByVin = new Map<string, Array<"CAPTURE_IN_PROGRESS" | "RETAKE_REQUIRED" | "REVIEW_READY" | "CR_PUBLISHED">>([
+    ["5NMJF3DE5RH407769", ["CAPTURE_IN_PROGRESS"]],
+    ["4T1G11AK0MU520503", ["CAPTURE_IN_PROGRESS", "RETAKE_REQUIRED"]],
+    ["1HGCV1F49LA129627", ["CAPTURE_IN_PROGRESS", "REVIEW_READY"]],
+    ["1FMCU9H6XNUB81389", ["CAPTURE_IN_PROGRESS", "REVIEW_READY", "CR_PUBLISHED"]],
+    ["KNMAT2MV6KP514068", ["CAPTURE_IN_PROGRESS", "REVIEW_READY", "CR_PUBLISHED"]],
+    ["4S4BTAFC8P3204430", ["CAPTURE_IN_PROGRESS"]]
+  ]);
+  for (const inspection of inspections) {
+    const hasPublishedReport = Boolean(store.latestFinalReport(inspection.id)?.finalizedAt);
+    const statuses = (workflowByVin.get(inspection.vin) ?? [])
+      .filter((status) => status !== "CR_PUBLISHED" || hasPublishedReport);
+    for (const status of statuses) {
+      store.recon.transitionInspection(inspection.id, status, reviewerActor);
+    }
+  }
+
+  const ford = inspections.find((inspection) => inspection.vin === "1FMCU9H6XNUB81389");
+  const nissan = inspections.find((inspection) => inspection.vin === "KNMAT2MV6KP514068");
+  if (!ford || !nissan) return true;
+  const referenceReportsPublished = [ford, nissan]
+    .every((inspection) => Boolean(store.latestFinalReport(inspection.id)?.finalizedAt));
+  if (!referenceReportsPublished) return true;
+
+  const fordRecommendations = [
+    store.recon.createRecommendation(ford.id, {
+      damageItemId: null,
+      serviceType: "DETAIL",
+      recommendedAction: "Complete exterior wash, interior vacuum, and sale-lane presentation.",
+      estimatedCost: 175,
+      estimatedDurationHours: 1.5,
+      expectedGradeLift: 0.1,
+      supportingPhotoIds: [],
+      notes: "CR 4.7: presentation-only scope under the consignor's sale-prep policy; no repair finding is asserted."
+    }, reconActor)
+  ];
+  store.recon.submitEstimate(ford.id, fordRecommendations.map((item) => item.id), reconActor);
+  const firstWorkOrder = store.recon.workOrdersForInspection(ford.id)[0];
+  if (firstWorkOrder) {
+    store.recon.updateWorkOrder(firstWorkOrder.id, {
+      action: "ASSIGN_TECHNICIAN",
+      assignedTechnician: technician.id,
+      expectedVersion: firstWorkOrder.version
+    }, reconActor);
+    store.recon.updateWorkOrder(firstWorkOrder.id, {
+      action: "START",
+      expectedVersion: firstWorkOrder.version
+    }, reconActor);
+    store.recon.updateWorkOrder(firstWorkOrder.id, {
+      action: "SEND_TO_QC",
+      expectedVersion: firstWorkOrder.version
+    }, reconActor);
+    store.recon.recordQualityControl(firstWorkOrder.id, {
+      decision: "PASS",
+      notes: "Authorized presentation work verified against the work-order scope.",
+      expectedVersion: firstWorkOrder.version
+    }, reviewerActor);
+  }
+  const nissanRecommendations = [
+    store.recon.createRecommendation(nissan.id, {
+      damageItemId: null,
+      serviceType: "DETAIL",
+      recommendedAction: "Complete the account-standard sale-presentation detail.",
+      estimatedCost: 175,
+      estimatedDurationHours: 1.5,
+      expectedGradeLift: 0.1,
+      supportingPhotoIds: [],
+      notes: "CR 4.1: standard sale-presentation scope under the consignor's 4.0-4.4 policy band."
+    }, reconActor),
+    store.recon.createRecommendation(nissan.id, {
+      damageItemId: null,
+      serviceType: "MECHANICAL",
+      recommendedAction: "Complete the high-mileage pre-sale condition verification before the sale run.",
+      estimatedCost: 275,
+      estimatedDurationHours: 1.5,
+      expectedGradeLift: 0,
+      supportingPhotoIds: [],
+      notes: "CR 4.1 and 91,168 miles trigger verification only; no mechanical defect is asserted."
+    }, reconActor)
+  ];
+  store.recon.submitEstimate(nissan.id, nissanRecommendations.map((recommendation) => recommendation.id), reconActor);
+
+  const nissanOrders = store.recon.workOrdersForInspection(nissan.id);
+  const nissanDetailOrder = nissanOrders.find((order) => order.serviceDepartment === "DETAIL");
+  if (nissanDetailOrder) {
+    store.recon.updateWorkOrder(nissanDetailOrder.id, {
+      action: "ASSIGN_TECHNICIAN",
+      assignedTechnician: technician.id,
+      expectedVersion: nissanDetailOrder.version
+    }, reconActor);
+    store.recon.updateWorkOrder(nissanDetailOrder.id, {
+      action: "START",
+      expectedVersion: nissanDetailOrder.version
+    }, reconActor);
+    store.recon.updateWorkOrder(nissanDetailOrder.id, {
+      action: "SEND_TO_QC",
+      expectedVersion: nissanDetailOrder.version
+    }, reconActor);
+    store.recon.recordQualityControl(nissanDetailOrder.id, {
+      decision: "PASS",
+      notes: "Sale-presentation tasks were verified against the authorized scope.",
+      expectedVersion: nissanDetailOrder.version
+    }, reviewerActor);
+  }
+
+  const nissanMechanicalOrder = nissanOrders.find((order) => order.serviceDepartment === "MECHANICAL");
+  if (nissanMechanicalOrder) {
+    store.recon.updateWorkOrder(nissanMechanicalOrder.id, {
+      action: "ASSIGN_TECHNICIAN",
+      assignedTechnician: technician.id,
+      expectedVersion: nissanMechanicalOrder.version
+    }, reconActor);
+    store.recon.updateWorkOrder(nissanMechanicalOrder.id, {
+      action: "START",
+      expectedVersion: nissanMechanicalOrder.version
+    }, reconActor);
+    store.recon.updateWorkOrder(nissanMechanicalOrder.id, {
+      action: "REVISE_ESTIMATE",
+      currentEstimatedCost: 425,
+      expectedVersion: nissanMechanicalOrder.version
+    }, reconActor);
+  }
+
+  return true;
 }

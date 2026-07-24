@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { useActor } from "../App.js";
 import { StatusPill } from "../components/StatusPill.js";
+import { formatConditionGrade } from "../conditionGrade.js";
 import type { Inspection } from "../types.js";
 import { isCaptureQueueInspection, isReviewQueueInspection } from "../workflowMetrics.js";
 
@@ -98,7 +99,12 @@ export function DashboardPage() {
                   <strong>{inspection.year} {inspection.make} {inspection.model}</strong>
                   <small>{inspection.trim || "Base"} · {inspection.mileage.toLocaleString()} mi</small>
                 </td>
-                <td>{inspection.vin}</td>
+                <td>
+                  <span className="vin-cell">{inspection.vin}</span>
+                  <Link className="vin-reference-link" to={`/inspections/${inspection.id}?reference=nhtsa`}>
+                    NHTSA decode
+                  </Link>
+                </td>
                 <td><StatusPill status={inspection.status} /></td>
                 <td>
                   <div className="progress-cell">
@@ -106,7 +112,9 @@ export function DashboardPage() {
                     <div><i style={{ width: `${inspection.completenessPercentage}%` }} /></div>
                   </div>
                 </td>
-                <td>{inspection.conditionGrade?.grade ?? "Not graded"}</td>
+                <td>{inspection.conditionGrade
+                  ? formatConditionGrade(inspection.conditionGrade, true)
+                  : "Not graded"}</td>
                 <td>{inspection.buyerVisibleReady ? "Buyer-visible" : inspection.humanReviewFlag ? <span className="review-flag"><AlertTriangle size={14} /> Review hold</span> : `${inspection.readinessIssueCount ?? 0} blockers`}</td>
                 <td>{new Date(inspection.updatedAt).toLocaleString()}</td>
                 <td>

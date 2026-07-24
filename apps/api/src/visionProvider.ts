@@ -84,11 +84,11 @@ function uniqueNonEmpty(values: string[]): string[] {
 }
 
 function damageConfidenceThreshold(): number {
-  const configured = Number(process.env.MIN_DAMAGE_CONFIDENCE ?? "0.80");
-  return Number.isFinite(configured) ? configured : 0.80;
+  const configured = Number(process.env.MIN_DAMAGE_CONFIDENCE ?? "0.85");
+  return Number.isFinite(configured) ? configured : 0.85;
 }
 
-function normalizeVisionOutput(output: VisionOutput, declaredAngle?: VisionOutput["photoAngle"] | null): VisionOutput {
+export function normalizeVisionOutput(output: VisionOutput, declaredAngle?: VisionOutput["photoAngle"] | null): VisionOutput {
   const evidenceAngle = output.photoAngle === "odometer"
     || output.photoAngle === "vin_plate"
     || declaredAngle === "odometer"
@@ -123,9 +123,54 @@ function normalizeVisionOutput(output: VisionOutput, declaredAngle?: VisionOutpu
     ...output.imageQuality,
     notes: uniqueNonEmpty(output.imageQuality.notes).slice(0, 2)
   };
-  let qualityWarnings = output.imageQuality.retakeRequired || output.imageQuality.grade === "retake"
+  let photoAngle = output.photoAngle;
+  let confidence = output.confidence;
+  let qualityWarnings = output.imageQuality.retakeRequired
+    || output.imageQuality.grade === "retake"
+    || output.imageQuality.grade === "review"
     ? uniqueNonEmpty(output.qualityWarnings).slice(0, 1)
     : [];
+  const sideAngles = new Set<VisionOutput["photoAngle"]>(["driver_side", "passenger_side"]);
+  const declaredSide = declaredAngle && sideAngles.has(declaredAngle) ? declaredAngle : null;
+  const orientation = output.vehicleOrientation;
+  const orientationSide = orientation && orientation.confidence >= 0.75
+    ? orientation.frontDirection === "left"
+      ? "driver_side"
+      : orientation.frontDirection === "right"
+        ? "passenger_side"
+        : null
+    : null;
+
+  if (orientationSide && sideAngles.has(photoAngle) && photoAngle !== orientationSide) {
+    photoAngle = orientationSide;
+    confidence = Math.min(confidence, orientation?.confidence ?? confidence, 0.85);
+    imageQuality.grade = "review";
+    qualityWarnings = [
+      `Side label corrected from vehicle front direction; confirm ${orientationSide.replace("_", " ")} before release.`
+    ];
+  } else if (declaredSide && sideAngles.has(photoAngle) && photoAngle !== declaredSide && !orientationSide) {
+    photoAngle = "unknown";
+    confidence = Math.min(confidence, 0.49);
+    imageQuality.grade = "review";
+    qualityWarnings = ["Side identity conflicts with the capture slot and lacks reliable orientation evidence; reviewer confirmation required."];
+  }
+
+  if (declaredSide && orientationSide && declaredSide !== orientationSide) {
+    imageQuality.grade = "review";
+    qualityWarnings = [
+      `Vehicle orientation indicates ${orientationSide.replace("_", " ")}, not the declared ${declaredSide.replace("_", " ")} slot.`
+    ];
+  }
+  const directViewClaimed = (declaredAngle === "front" || declaredAngle === "rear")
+    && photoAngle === declaredAngle
+    && output.imageQuality.grade === "pass";
+  const contradictoryViewNote = imageQuality.notes.some((note) =>
+    /\b(?:three[- ]quarter|3\/4)\b/i.test(note)
+  );
+  if (directViewClaimed && contradictoryViewNote) {
+    imageQuality.grade = "review";
+    qualityWarnings = ["Model angle fields and description disagree; reviewer must confirm the required view."];
+  }
   if (declaredAngle === "odometer" && !extractedText.odometer) {
     imageQuality.grade = "retake";
     imageQuality.retakeRequired = true;
@@ -139,6 +184,8 @@ function normalizeVisionOutput(output: VisionOutput, declaredAngle?: VisionOutpu
 
   return {
     ...output,
+    photoAngle,
+    confidence,
     imageQuality,
     qualityWarnings,
     detectedDamageCandidates: credibleDamage,
@@ -154,9 +201,10 @@ function boundedText(value: unknown, maxLength: number): string | null {
   return trimmed.length > maxLength ? trimmed.slice(0, maxLength - 1).trimEnd() : trimmed;
 }
 
-function prepareBedrockOutput(value: unknown): unknown {
+export function prepareBedrockOutput(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   const output = JSON.parse(JSON.stringify(value)) as {
+    vehicleOrientation?: { cues?: unknown };
     imageQuality?: { notes?: unknown };
     qualityWarnings?: unknown;
     detectedDamageCandidates?: Array<{
@@ -166,6 +214,12 @@ function prepareBedrockOutput(value: unknown): unknown {
     }>;
   };
 
+  if (output.vehicleOrientation && Array.isArray(output.vehicleOrientation.cues)) {
+    output.vehicleOrientation.cues = output.vehicleOrientation.cues
+      .map((item) => boundedText(item, 160))
+      .filter(Boolean)
+      .slice(0, 3);
+  }
   if (output.imageQuality && Array.isArray(output.imageQuality.notes)) {
     output.imageQuality.notes = output.imageQuality.notes
       .map((item) => boundedText(item, 160))
@@ -418,27 +472,43 @@ export const localVisionProvider: VisionProvider = {
   }
 };
 
+export function buildBedrockVisionPrompt(input: {
+  filename: string;
+  declaredAngle?: VisionOutput["photoAngle"] | null;
+}): string {
+  return [
+      "You are an automotive inspection image-analysis service.",
+      `Filename: ${input.filename}.`,
+      `Declared capture slot: ${input.declaredAngle ?? "unknown"}.`,
+      "The filename and declared capture slot are routing metadata, not visual evidence. Classify the image pixels first; never copy either value into photoAngle.",
+      "Compare the pixel-based classification with the declared slot only after classification. If they disagree, preserve the pixel-based result and explain the mismatch in qualityWarnings.",
+      "A direct front or rear view has the vehicle centered, both lamps similarly sized, and little side body visible. A three-quarter view exposes substantial side body or doors and does not satisfy a required direct front or rear view.",
+      "A direct side view shows the vehicle profile with minimal front or rear fascia. Three-quarter side views require review when the declared slot requires a direct side capture.",
+      "For a side view, identify the vehicle's front end and state whether it points left or right in the image before naming the side.",
+      "For an unmirrored North American left-hand-drive vehicle: front pointing left shows driver side; front pointing right shows passenger side.",
+      "Use visible grille/headlamp versus tail-lamp cues to establish front direction. If the image may be mirrored or the front end is unclear, use unknown.",
+      "Return no more than three concise vehicleOrientation cues.",
+      "Return driver_side or passenger_side only when vehicleOrientation supports that side. If the physical side is ambiguous, return unknown with lower confidence and require human review.",
+      "Return only strict JSON matching this TypeScript shape:",
+      "{ photoAngle: 'front'|'rear'|'driver_side'|'passenger_side'|'interior'|'engine_bay'|'odometer'|'vin_plate'|'unknown', confidence: number, vehicleOrientation: { frontDirection: 'left'|'right'|'center'|'unknown', confidence: number, cues: string[] }, imageQuality: { grade: 'pass'|'review'|'retake', blurScore: number, exposureScore: number, framingScore: number, resolutionScore: number, occlusionRisk: number, retakeRequired: boolean, notes: string[] }, qualityWarnings: string[], detectedDamageCandidates: Array<{ location: string, damageType: 'scratch'|'dent'|'paint_damage'|'crack'|'wheel_damage'|'glass_damage'|'interior_wear'|'unknown', severityEstimate: 'minor'|'moderate'|'severe'|'unknown', confidence: number, explanation: string, repairEstimateUsd: { min: number, max: number, rationale: string }, requiresHumanConfirmation: boolean }>, extractedText: { vin?: string, odometer?: string }, humanReviewRequired: boolean }.",
+      "Use 0-1 confidence values. If unsure, use unknown angle, lower confidence, and humanReviewRequired true.",
+      "Never invent VIN or odometer values unless legible. Mark retakeRequired true for blur, poor framing, low light, occlusion, or non-vehicle images.",
+      "For odometer or VIN-plate capture slots, do not return damage candidates; extract the text only if legible or request retake.",
+      "Keep reviewer work bounded: return at most one qualityWarnings item and at most one detectedDamageCandidates item. Omit damage candidates below 0.85 confidence.",
+      "The structured angle, quality grade, retake flag, warnings, and notes must agree. Do not describe an image as three-quarter in notes while marking a direct required view as pass.",
+      "Each note, warning, location, and rationale must be concise; keep each string under 120 characters."
+    ].join("\n");
+}
+
 export const bedrockVisionProvider: VisionProvider = {
   name: "bedrockVisionProvider",
-  promptVersion: "photo-analysis-v2",
+  promptVersion: "photo-analysis-v4",
   async analyze(input) {
     const startedAt = Date.now();
     const image = await loadImageInput(input);
     const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1" });
     const modelId = process.env.BEDROCK_MODEL_ID ?? "us.anthropic.claude-sonnet-4-6";
-    const prompt = [
-      "You are an automotive inspection image-analysis service.",
-      `Filename: ${input.filename}.`,
-      `Declared capture slot: ${input.declaredAngle ?? "unknown"}.`,
-      "When the declared capture slot is present and the visual evidence reasonably matches it, use that value as photoAngle. If the image contradicts the declared slot or quality is too poor, keep the visual classification and explain the mismatch in qualityWarnings.",
-      "Return only strict JSON matching this TypeScript shape:",
-      "{ photoAngle: 'front'|'rear'|'driver_side'|'passenger_side'|'interior'|'engine_bay'|'odometer'|'vin_plate'|'unknown', confidence: number, imageQuality: { grade: 'pass'|'review'|'retake', blurScore: number, exposureScore: number, framingScore: number, resolutionScore: number, occlusionRisk: number, retakeRequired: boolean, notes: string[] }, qualityWarnings: string[], detectedDamageCandidates: Array<{ location: string, damageType: 'scratch'|'dent'|'paint_damage'|'crack'|'wheel_damage'|'glass_damage'|'interior_wear'|'unknown', severityEstimate: 'minor'|'moderate'|'severe'|'unknown', confidence: number, explanation: string, repairEstimateUsd: { min: number, max: number, rationale: string }, requiresHumanConfirmation: boolean }>, extractedText: { vin?: string, odometer?: string }, humanReviewRequired: boolean }.",
-      "Use 0-1 confidence values. If unsure, use unknown angle, lower confidence, and humanReviewRequired true.",
-      "Never invent VIN or odometer values unless legible. Mark retakeRequired true for blur, poor framing, low light, occlusion, or non-vehicle images.",
-      "For odometer or VIN-plate capture slots, do not return damage candidates; extract the text only if legible or request retake.",
-      "Keep reviewer work bounded: return at most one qualityWarnings item and at most one detectedDamageCandidates item. Omit damage candidates below 0.80 confidence.",
-      "Each note, warning, location, and rationale must be concise; keep each string under 120 characters."
-    ].join("\n");
+    const prompt = buildBedrockVisionPrompt(input);
     const response = await client.send(new ConverseCommand({
       modelId,
       messages: [{
@@ -522,37 +592,69 @@ function imageFormat(mimeType: string | null | undefined, filename: string): "jp
   return "jpeg";
 }
 
+export function detectImageFormat(
+  bytes: Uint8Array,
+  mimeType: string | null | undefined,
+  filename: string
+): "jpeg" | "png" | "webp" | "gif" {
+  if (bytes.length >= 12) {
+    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg";
+    if (
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47
+    ) return "png";
+    const header = Buffer.from(bytes.subarray(0, 12)).toString("ascii");
+    if (header.startsWith("GIF87a") || header.startsWith("GIF89a")) return "gif";
+    if (header.startsWith("RIFF") && header.slice(8, 12) === "WEBP") return "webp";
+  }
+  return imageFormat(mimeType, filename);
+}
+
+function loadedImage(
+  bytes: Uint8Array,
+  mimeType: string | null | undefined,
+  filename: string
+): { bytes: Uint8Array; format: "jpeg" | "png" | "webp" | "gif" } {
+  return { bytes, format: detectImageFormat(bytes, mimeType, filename) };
+}
+
 async function loadImageInput(input: Parameters<VisionProvider["analyze"]>[0]): Promise<{ bytes: Uint8Array; format: "jpeg" | "png" | "webp" | "gif" }> {
   if (input.objectBucket && input.objectKey && input.objectBucket !== "inspectiq-sample-images") {
-    return {
-      bytes: await readS3ObjectBytes(input.objectBucket, input.objectKey),
-      format: imageFormat(input.mimeType, input.filename)
-    };
+    return loadedImage(
+      await readS3ObjectBytes(input.objectBucket, input.objectKey),
+      input.mimeType,
+      input.filename
+    );
   }
 
   if (input.storageKey.startsWith("data:")) {
     const [meta, payload] = input.storageKey.split(",", 2);
     if (!payload) throw new Error("Invalid data URL image payload.");
-    return {
-      bytes: Buffer.from(payload, meta.endsWith(";base64") || meta.includes(";base64") ? "base64" : "utf8"),
-      format: imageFormat(input.mimeType ?? meta, input.filename)
-    };
+    return loadedImage(
+      Buffer.from(payload, meta.endsWith(";base64") || meta.includes(";base64") ? "base64" : "utf8"),
+      input.mimeType ?? meta,
+      input.filename
+    );
   }
 
   if (input.storageKey.startsWith("/sample-images/")) {
-    return {
-      bytes: await readFile(sampleImageFilePath(input.storageKey)),
-      format: imageFormat(input.mimeType, input.filename)
-    };
+    return loadedImage(
+      await readFile(sampleImageFilePath(input.storageKey)),
+      input.mimeType,
+      input.filename
+    );
   }
 
   if (input.storageKey.startsWith("https://")) {
     const response = await fetch(input.storageKey);
     if (!response.ok) throw new Error(`Unable to fetch external sample image: ${response.status}`);
-    return {
-      bytes: new Uint8Array(await response.arrayBuffer()),
-      format: imageFormat(input.mimeType ?? response.headers.get("content-type"), input.filename)
-    };
+    return loadedImage(
+      new Uint8Array(await response.arrayBuffer()),
+      input.mimeType ?? response.headers.get("content-type"),
+      input.filename
+    );
   }
 
   throw new Error("Bedrock vision provider requires an S3 object, sample image, or data URL payload.");

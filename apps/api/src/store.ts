@@ -37,6 +37,7 @@ import type {
 import { conflict, notFound, versionConflict } from "./errors.js";
 import { currentCorrelationId } from "./requestContext.js";
 import { assertTransition, canTransition } from "./stateMachine.js";
+import { ReconStore } from "./reconStore.js";
 
 type CreateInspectionInput = z.infer<typeof CreateInspectionSchema>;
 type SuggestionAssignmentRole = Extract<UserRole, "inspector" | "reviewer">;
@@ -127,6 +128,42 @@ function validateSuggestionValue(suggestion: VisionSuggestion): unknown {
   return ExtractedTextSuggestionSchema.parse(suggestion.suggestedValueJson);
 }
 
+function suggestionValueRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function normalizedSuggestionText(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizedOdometer(value: unknown): string {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits.replace(/^0+(?=\d)/, "");
+}
+
+function suggestionSemanticKey(input: Pick<VisionSuggestion, "photoId" | "suggestionType" | "suggestedValueJson">): string {
+  const value = suggestionValueRecord(input.suggestedValueJson);
+  let finding: string;
+  if (input.suggestionType === "photo_angle") {
+    finding = normalizedSuggestionText(value.photoAngle);
+  } else if (input.suggestionType === "quality_warning") {
+    finding = normalizedSuggestionText(value.warning);
+  } else if (input.suggestionType === "extracted_text") {
+    const vin = String(value.vin ?? "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+    const odometer = normalizedOdometer(value.odometer);
+    finding = `${vin}:${odometer}`;
+  } else {
+    finding = [
+      normalizedSuggestionText(value.location),
+      normalizedSuggestionText(value.damageType),
+      normalizedSuggestionText(value.severityEstimate)
+    ].join(":");
+  }
+  return `${input.photoId}:${input.suggestionType}:${finding}`;
+}
+
 export class MemoryStore {
   users = new Map<string, User>();
   inspections = new Map<string, Inspection>();
@@ -143,6 +180,55 @@ export class MemoryStore {
   identityVerifications = new Map<string, IdentityVerification>();
   auditEvents = new Map<string, AuditEvent>();
   domainEvents = new Map<string, DomainEventOutbox>();
+  recon = new ReconStore(this);
+
+  get consignorAccounts() {
+    return this.recon.consignorAccounts;
+  }
+
+  get reconPolicies() {
+    return this.recon.reconPolicies;
+  }
+
+  get vehicleIntakes() {
+    return this.recon.vehicleIntakes;
+  }
+
+  get inspectionAssignments() {
+    return this.recon.inspectionAssignments;
+  }
+
+  get saleAssignments() {
+    return this.recon.saleAssignments;
+  }
+
+  get vehicleLocationEvents() {
+    return this.recon.vehicleLocationEvents;
+  }
+
+  get reconRecommendations() {
+    return this.recon.reconRecommendations;
+  }
+
+  get reconAuthorizations() {
+    return this.recon.reconAuthorizations;
+  }
+
+  get workOrders() {
+    return this.recon.workOrders;
+  }
+
+  get workOrderTasks() {
+    return this.recon.workOrderTasks;
+  }
+
+  get qualityControlResults() {
+    return this.recon.qualityControlResults;
+  }
+
+  get saleReadinessAssessments() {
+    return this.recon.saleReadinessAssessments;
+  }
 
   assertMutableInspection(inspectionId: string, action: string): Inspection {
     const inspection = this.getInspection(inspectionId);
@@ -168,6 +254,7 @@ export class MemoryStore {
     this.identityVerifications.clear();
     this.auditEvents.clear();
     this.domainEvents.clear();
+    this.recon.reset();
   }
 
   addUser(input: Pick<User, "name" | "role"> & { id?: string }): User {
@@ -456,25 +543,6 @@ export class MemoryStore {
     force?: boolean;
   }, actor: Actor): PhotoAnalysisResult {
     this.assertMutableInspection(photo.inspectionId, "analyze photos");
-    const duplicate = [...this.analyses.values()].find((analysis) =>
-      analysis.photoId === photo.id
-      && analysis.status === "completed"
-      && analysis.provider === input.provider
-      && analysis.promptVersion === input.promptVersion
-    );
-    if (duplicate && !input.force) {
-      if (input.jobId) {
-        const job = this.imageAnalysisJobs.get(input.jobId);
-        if (job) {
-          job.status = "completed";
-          job.errorMessage = null;
-          job.updatedAt = now();
-          job.completedAt = job.updatedAt;
-        }
-      }
-      return duplicate;
-    }
-
     const analysis: PhotoAnalysisResult = {
       id: id(),
       photoId: photo.id,
@@ -517,17 +585,17 @@ export class MemoryStore {
       }
     }
 
-    this.createSuggestion({
+    const currentSuggestions: CreateVisionSuggestionInput[] = [{
       inspectionId: photo.inspectionId,
       photoId: photo.id,
       suggestionType: "photo_angle",
       suggestedValueJson: { photoAngle: input.validated.photoAngle },
       confidence: input.validated.confidence,
       explanation: `Likely photo angle: ${input.validated.photoAngle}. Reviewer confirmation required.`
-    });
+    }];
 
     for (const warning of input.validated.qualityWarnings) {
-      this.createSuggestion({
+      currentSuggestions.push({
         inspectionId: photo.inspectionId,
         photoId: photo.id,
         suggestionType: "quality_warning",
@@ -538,7 +606,7 @@ export class MemoryStore {
     }
 
     for (const candidate of input.validated.detectedDamageCandidates) {
-      this.createSuggestion({
+      currentSuggestions.push({
         inspectionId: photo.inspectionId,
         photoId: photo.id,
         suggestionType: "damage_candidate",
@@ -549,15 +617,21 @@ export class MemoryStore {
     }
 
     if (input.validated.extractedText.odometer || input.validated.extractedText.vin) {
-      this.createSuggestion({
+      currentSuggestions.push({
         inspectionId: photo.inspectionId,
         photoId: photo.id,
-      suggestionType: "extracted_text",
-      suggestedValueJson: input.validated.extractedText,
-      confidence: input.validated.confidence,
-      explanation: "Possible odometer or VIN text detected. Reviewer confirmation required before approval."
-    });
+        suggestionType: "extracted_text",
+        suggestedValueJson: input.validated.extractedText,
+        confidence: input.validated.confidence,
+        explanation: "Possible odometer or VIN text detected. Reviewer confirmation required before approval."
+      });
     }
+
+    this.supersedePendingPhotoSuggestions(photo, currentSuggestions, actor, {
+      provider: input.provider,
+      promptVersion: input.promptVersion
+    });
+    for (const suggestion of currentSuggestions) this.createSuggestion(suggestion);
 
     this.addAudit(photo.inspectionId, actor, "photo.analyzed", {
       jobId: input.jobId ?? null,
@@ -587,6 +661,36 @@ export class MemoryStore {
       });
     }
     return analysis;
+  }
+
+  supersedePendingPhotoSuggestions(
+    photo: VehiclePhoto,
+    currentSuggestions: CreateVisionSuggestionInput[],
+    actor: Actor,
+    source: { provider: string; promptVersion: string }
+  ): string[] {
+    const currentKeys = new Set(currentSuggestions.map((suggestion) => suggestionSemanticKey(suggestion)));
+    const removedSuggestionIds: string[] = [];
+    for (const suggestion of this.suggestions.values()) {
+      if (
+        suggestion.photoId !== photo.id ||
+        suggestion.status !== "pending" ||
+        currentKeys.has(suggestionSemanticKey(suggestion))
+      ) {
+        continue;
+      }
+      this.suggestions.delete(suggestion.id);
+      removedSuggestionIds.push(suggestion.id);
+    }
+    if (removedSuggestionIds.length > 0) {
+      this.addAudit(photo.inspectionId, actor, "suggestion.superseded", {
+        photoId: photo.id,
+        removedSuggestionIds,
+        provider: source.provider,
+        promptVersion: source.promptVersion
+      });
+    }
+    return removedSuggestionIds;
   }
 
   saveReferenceMapping(photo: VehiclePhoto, input: {
@@ -633,18 +737,8 @@ export class MemoryStore {
       suggestionType: "photo_angle",
       suggestedValueJson: { photoAngle: input.validated.photoAngle },
       confidence: input.validated.confidence,
-      explanation: `Reference manifest maps this image to the ${input.validated.photoAngle} checklist slot. Reviewer confirmation required.`
+      explanation: `Photo is assigned to the ${input.validated.photoAngle} required view. Reviewer confirmation required.`
     });
-    for (const warning of input.validated.qualityWarnings) {
-      this.createSuggestion({
-        inspectionId: photo.inspectionId,
-        photoId: photo.id,
-        suggestionType: "quality_warning",
-        suggestedValueJson: { warning, imageQuality: input.validated.imageQuality },
-        confidence: Math.min(input.validated.confidence, 0.75),
-        explanation: `Reference-source QA note: ${warning} Reviewer confirmation required.`
-      });
-    }
     this.addAudit(photo.inspectionId, actor, "reference_evidence.mapped", {
       photoId: photo.id,
       declaredAngle: photo.declaredAngle,
@@ -705,6 +799,27 @@ export class MemoryStore {
   }
 
   createSuggestion(input: CreateVisionSuggestionInput): VisionSuggestion {
+    const semanticKey = suggestionSemanticKey(input);
+    const existing = [...this.suggestions.values()].find((suggestion) =>
+      suggestionSemanticKey(suggestion) === semanticKey
+    );
+    if (existing) {
+      if (existing.status === "pending") {
+        const changed =
+          JSON.stringify(existing.suggestedValueJson) !== JSON.stringify(input.suggestedValueJson) ||
+          existing.confidence !== input.confidence ||
+          existing.explanation !== input.explanation;
+        existing.suggestedValueJson = input.suggestedValueJson;
+        existing.confidence = input.confidence;
+        existing.explanation = input.explanation;
+        if (input.assignedToRole !== undefined) existing.assignedToRole = input.assignedToRole;
+        if (input.assignedToUserId !== undefined) existing.assignedToUserId = input.assignedToUserId;
+        if (input.dueAt !== undefined) existing.dueAt = input.dueAt;
+        if (changed) existing.version += 1;
+      }
+      return existing;
+    }
+
     const createdAt = now();
     const { assignedToRole, assignedToUserId, dueAt, ...suggestionInput } = input;
     const suggestion: VisionSuggestion = {
@@ -729,6 +844,57 @@ export class MemoryStore {
     return [...this.suggestions.values()]
       .filter((suggestion) => suggestion.inspectionId === inspectionId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  reconcileDuplicateSuggestions(actor: Actor): number {
+    const groups = new Map<string, VisionSuggestion[]>();
+    for (const suggestion of this.suggestions.values()) {
+      const key = suggestionSemanticKey(suggestion);
+      groups.set(key, [...(groups.get(key) ?? []), suggestion]);
+    }
+
+    const removedByInspection = new Map<string, string[]>();
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      const ranked = [...group].sort((left, right) => {
+        const statusRank = (suggestion: VisionSuggestion) => {
+          if (suggestion.status === "accepted" || suggestion.status === "rejected") return 4;
+          if (suggestion.status === "edited") return 3;
+          return 2;
+        };
+        const rankDifference = statusRank(right) - statusRank(left);
+        if (rankDifference !== 0) return rankDifference;
+        if (statusRank(left) >= 3) {
+          const rightDecision = right.resolvedAt ?? right.reviewedAt ?? right.createdAt;
+          const leftDecision = left.resolvedAt ?? left.reviewedAt ?? left.createdAt;
+          const decisionDifference = rightDecision.localeCompare(leftDecision);
+          if (decisionDifference !== 0) return decisionDifference;
+        }
+        const createdDifference = left.createdAt.localeCompare(right.createdAt);
+        return createdDifference !== 0 ? createdDifference : left.id.localeCompare(right.id);
+      });
+      const keeper = ranked[0]!;
+      for (const duplicate of ranked.slice(1)) {
+        for (const verification of this.identityVerifications.values()) {
+          if (verification.sourceSuggestionId === duplicate.id) {
+            verification.sourceSuggestionId = keeper.id;
+          }
+        }
+        this.suggestions.delete(duplicate.id);
+        removedByInspection.set(duplicate.inspectionId, [
+          ...(removedByInspection.get(duplicate.inspectionId) ?? []),
+          duplicate.id
+        ]);
+      }
+    }
+
+    for (const [inspectionId, removedSuggestionIds] of removedByInspection) {
+      this.addAudit(inspectionId, actor, "suggestion.duplicates_reconciled", {
+        removedSuggestionIds,
+        reason: "Repeated analysis or import runs created the same review finding for one photo."
+      });
+    }
+    return [...removedByInspection.values()].reduce((total, ids) => total + ids.length, 0);
   }
 
   getSuggestion(idValue: string): VisionSuggestion {
@@ -919,8 +1085,13 @@ export class MemoryStore {
     notes: string;
     source: "manual" | "vision_suggestion";
     confirmedBy?: string | null;
+    idempotencyKey?: string | null;
   }, actor: Actor, writeAudit = true): DamageItem {
     this.assertMutableInspection(input.inspectionId, "add damage");
+    if (input.idempotencyKey) {
+      const existing = this.damageByIdempotencyKey(input.inspectionId, input.idempotencyKey);
+      if (existing) return existing;
+    }
     const item: DamageItem = {
       id: id(),
       inspectionId: input.inspectionId,
@@ -931,6 +1102,7 @@ export class MemoryStore {
       notes: input.notes,
       source: input.source,
       confirmedBy: input.confirmedBy ?? actor.id,
+      idempotencyKey: input.idempotencyKey ?? null,
       createdAt: now(),
       updatedAt: now()
     };
@@ -971,6 +1143,12 @@ export class MemoryStore {
   listDamage(inspectionId: string): DamageItem[] {
     this.getInspection(inspectionId);
     return [...this.damageItems.values()].filter((item) => item.inspectionId === inspectionId);
+  }
+
+  damageByIdempotencyKey(inspectionId: string, idempotencyKey: string): DamageItem | null {
+    return [...this.damageItems.values()].find((item) =>
+      item.inspectionId === inspectionId && item.idempotencyKey === idempotencyKey
+    ) ?? null;
   }
 
   upsertIdentityVerification(input: {
@@ -1022,24 +1200,70 @@ export class MemoryStore {
       .sort((a, b) => a.field.localeCompare(b.field));
   }
 
-  saveGrade(inspectionId: string, grade: Omit<ConditionGrade, "id" | "inspectionId" | "createdAt">, actor: Actor): ConditionGrade {
-    const existing = this.latestGrade(inspectionId);
-    if (existing && existing.gradingVersion === grade.gradingVersion) return existing;
+  saveGrade(inspectionId: string, grade: {
+    suggestedGrade: number;
+    conditionGradeBeforeRecon: number;
+    evidenceBlockers: string[];
+    explanationJson: unknown;
+    gradingVersion: string;
+  }, actor: Actor, idempotencyKey: string | null = null): ConditionGrade {
+    if (idempotencyKey) {
+      const existing = this.gradeByIdempotencyKey(inspectionId, idempotencyKey);
+      if (existing) return existing;
+    }
     const saved: ConditionGrade = {
       id: id(),
       inspectionId,
+      approvedGrade: null,
+      estimatedGradeAfterRecon: grade.conditionGradeBeforeRecon,
+      reviewedBy: null,
+      overrideReason: null,
+      idempotencyKey,
+      version: 1,
       createdAt: now(),
+      reviewedAt: null,
       ...grade
     };
     this.conditionGrades.set(saved.id, saved);
-    this.transition(inspectionId, "GRADED", actor, "inspection.status_changed");
     this.addAudit(inspectionId, actor, "condition.grade_generated", {
       gradeId: saved.id,
-      score: saved.score,
-      grade: saved.grade,
+      suggestedGrade: saved.suggestedGrade,
+      evidenceBlockers: saved.evidenceBlockers,
       gradingVersion: saved.gradingVersion
     });
     return saved;
+  }
+
+  approveGrade(inspectionId: string, approvedGrade: number, overrideReason: string | null, actor: Actor): ConditionGrade {
+    const grade = this.latestGrade(inspectionId);
+    if (!grade) throw conflict("Calculate an InspectIQ Reference Grade before approval.");
+    if (grade.evidenceBlockers.length > 0) {
+      throw conflict("Resolve required evidence blockers before approving the reference grade.", {
+        evidenceBlockers: grade.evidenceBlockers
+      });
+    }
+    const differsFromSuggestion = Math.abs(approvedGrade - grade.suggestedGrade) >= 0.05;
+    if (differsFromSuggestion && !overrideReason?.trim()) {
+      throw conflict("An override reason is required when the approved grade differs from the suggested grade.");
+    }
+    grade.approvedGrade = Math.round(Math.max(0, Math.min(5, approvedGrade)) * 10) / 10;
+    grade.conditionGradeBeforeRecon = grade.approvedGrade;
+    grade.estimatedGradeAfterRecon = grade.approvedGrade;
+    grade.reviewedBy = actor.id;
+    grade.overrideReason = differsFromSuggestion ? overrideReason!.trim() : null;
+    grade.reviewedAt = now();
+    grade.version += 1;
+    const inspection = this.getInspection(inspectionId);
+    if (inspection.status === "READY_FOR_GRADING") {
+      this.transition(inspectionId, "GRADED", actor, "inspection.status_changed");
+    }
+    this.addAudit(inspectionId, actor, "condition.grade_approved", {
+      gradeId: grade.id,
+      suggestedGrade: grade.suggestedGrade,
+      approvedGrade: grade.approvedGrade,
+      overrideReason: grade.overrideReason
+    });
+    return grade;
   }
 
   latestGrade(inspectionId: string): ConditionGrade | null {
@@ -1048,14 +1272,21 @@ export class MemoryStore {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
   }
 
+  gradeByIdempotencyKey(inspectionId: string, idempotencyKey: string): ConditionGrade | null {
+    return [...this.conditionGrades.values()].find((grade) =>
+      grade.inspectionId === inspectionId && grade.idempotencyKey === idempotencyKey
+    ) ?? null;
+  }
+
   createReportJob(inspectionId: string, idempotencyKey: string | null, actor: Actor): AiReportJob {
-    const active = [...this.reportJobs.values()].find((job) =>
-      job.inspectionId === inspectionId &&
-      job.status !== "failed" &&
-      job.status !== "completed" &&
-      (idempotencyKey ? job.idempotencyKey === idempotencyKey : true)
-    );
-    if (active) return active;
+    const existing = idempotencyKey
+      ? this.reportJobByIdempotencyKey(inspectionId, idempotencyKey)
+      : [...this.reportJobs.values()].find((job) =>
+          job.inspectionId === inspectionId &&
+          job.status !== "failed" &&
+          job.status !== "completed"
+        ) ?? null;
+    if (existing) return existing;
     const timestamp = now();
     const job: AiReportJob = {
       id: id(),
@@ -1160,6 +1391,16 @@ export class MemoryStore {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
   }
 
+  reportJobByIdempotencyKey(inspectionId: string, idempotencyKey: string): AiReportJob | null {
+    return [...this.reportJobs.values()].find((job) =>
+      job.inspectionId === inspectionId && job.idempotencyKey === idempotencyKey
+    ) ?? null;
+  }
+
+  reportDraftForJob(jobId: string): AiReportDraft | null {
+    return [...this.reportDrafts.values()].find((draft) => draft.jobId === jobId) ?? null;
+  }
+
   latestReportDraft(inspectionId: string): AiReportDraft | null {
     return [...this.reportDrafts.values()]
       .filter((draft) => draft.inspectionId === inspectionId)
@@ -1227,8 +1468,8 @@ export class MemoryStore {
       `Exterior: ${inspection.exteriorColor}`,
       `Source: ${inspection.sellerSource}`,
       "",
-      `Condition Grade: ${grade ? `${grade.grade} (${grade.score}/100)` : "Not graded"}`,
-      `Estimated Reconditioning: ${estimateLabel}`,
+      `InspectIQ Reference Grade: ${grade?.approvedGrade != null ? `${grade.approvedGrade.toFixed(1)} / 5.0` : "Not approved"}`,
+      `Illustrative Repair Estimate: ${estimateLabel}`,
       "",
       "Confirmed Damage",
       ...damageLines,
@@ -1309,6 +1550,10 @@ export class MemoryStore {
     this.transition(inspection.id, "FINALIZED", actor, "inspection.status_changed");
     this.addAudit(inspection.id, actor, "report.finalized", { reportId, version: report.version });
     this.emitDomainEvent("report.finalized", inspection.id, actor, {
+      reportId,
+      version: report.version
+    });
+    this.emitDomainEvent("condition_report.published", inspection.id, actor, {
       reportId,
       version: report.version
     });
@@ -1436,7 +1681,7 @@ export class MemoryStore {
         label: "Image analysis success",
         value: modelAnalyses.length === 0 ? "No model runs" : percentLabel(completedAnalyses, modelAnalyses.length, 100),
         status: analysisRate >= 0.98 ? "healthy" : analysisRate >= 0.9 ? "watch" : "blocked",
-        evidence: `${completedAnalyses} completed, ${failedAnalyses} failed model analyses. Reference manifest mappings are excluded.`
+        evidence: `${completedAnalyses} completed, ${failedAnalyses} failed model analyses. Imported checklist mappings are excluded.`
       },
       {
         metric: "image_quality_retake_rate",
@@ -1619,13 +1864,13 @@ export class MemoryStore {
         action: "Complete the human review queue."
       });
     }
-    if (!this.latestGrade(inspectionId)) {
+    if (this.latestGrade(inspectionId)?.approvedGrade == null) {
       issues.push({
         type: "condition_grade_missing",
         severity: "blocker",
-        label: "Condition grade missing",
-        detail: "The condition report does not have a deterministic grade.",
-        action: "Run condition grading after evidence is complete."
+        label: "InspectIQ Reference Grade not approved",
+        detail: "A reviewer must approve or override the suggested 0.0-5.0 grade.",
+        action: "Calculate and approve the reference grade after evidence review."
       });
     }
     const estimateMissing = damageItems.some((item) => {

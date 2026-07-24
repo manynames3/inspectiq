@@ -10,7 +10,12 @@ vi.mock("@aws-sdk/client-dynamodb", async (importOriginal) => {
   };
 });
 
-import { reserveBedrockUsage } from "./operationsStore.js";
+import {
+  claimInspectionOperation,
+  completeInspectionOperation,
+  failInspectionOperation,
+  reserveBedrockUsage
+} from "./operationsStore.js";
 
 function key(command: unknown): string {
   const input = (command as { input?: { Key?: { pk?: { S?: string } } } }).input;
@@ -63,6 +68,64 @@ describe("reserveBedrockUsage", () => {
 
     await expect(reserveBedrockUsage("imageAnalyses", "duplicate-regression")).resolves.toMatchObject({
       imageAnalyses: 2
+    });
+  });
+
+  it("retries transient transaction conflicts without losing the reservation", async () => {
+    let transactionAttempts = 0;
+    sendMock.mockImplementation(async (command) => {
+      const commandName = command?.constructor?.name;
+      if (commandName === "TransactWriteItemsCommand") {
+        transactionAttempts += 1;
+        if (transactionAttempts < 3) {
+          throw Object.assign(
+            new Error("Transaction cancelled [None, TransactionConflict]"),
+            { name: "TransactionCanceledException" }
+          );
+        }
+        return {};
+      }
+      if (key(command).startsWith("COST#")) return { Item: { imageAnalyses: { N: "3" } } };
+      throw new Error(`Unexpected command: ${commandName}`);
+    });
+
+    await expect(reserveBedrockUsage("imageAnalyses", "conflict-regression")).resolves.toMatchObject({
+      imageAnalyses: 3
+    });
+    expect(transactionAttempts).toBe(3);
+  });
+});
+
+describe("inspection operation idempotency", () => {
+  it("claims once, reports in-flight retries, and replays the completed result", async () => {
+    delete process.env.OPERATIONS_TABLE_NAME;
+    const inspectionId = "inspection-idempotency-test";
+    const operationKey = "inspection-idempotency-test:report:abc123";
+
+    await expect(claimInspectionOperation(inspectionId, "report", operationKey)).resolves.toEqual({
+      status: "claimed"
+    });
+    await expect(claimInspectionOperation(inspectionId, "report", operationKey)).resolves.toEqual({
+      status: "in_progress"
+    });
+
+    await completeInspectionOperation(inspectionId, "report", operationKey, "report-job-1");
+    await expect(claimInspectionOperation(inspectionId, "report", operationKey)).resolves.toEqual({
+      status: "completed",
+      resultId: "report-job-1"
+    });
+  });
+
+  it("allows a failed operation to be claimed again", async () => {
+    delete process.env.OPERATIONS_TABLE_NAME;
+    const inspectionId = "inspection-failed-idempotency-test";
+    const operationKey = "inspection-failed-idempotency-test:report:def456";
+
+    await claimInspectionOperation(inspectionId, "report", operationKey);
+    await failInspectionOperation(inspectionId, "report", operationKey, "Provider timeout");
+
+    await expect(claimInspectionOperation(inspectionId, "report", operationKey)).resolves.toEqual({
+      status: "claimed"
     });
   });
 });

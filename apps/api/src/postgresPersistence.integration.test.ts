@@ -37,13 +37,22 @@ integration("Postgres row persistence", () => {
       inspectorName: "CI Inspector"
     }, actor);
     inspectionId = inspection.id;
+    store.recon.createConsignorAccount({
+      name: "Postgres JSON Account",
+      accountType: "DEALERSHIP",
+      authorizedUserIds: [actor.id]
+    }, actor);
     await savePostgresRows(store, pool);
 
     const migrations = await pool.query<{ version: string }>("select version from schema_migrations order by version");
     expect(migrations.rows.map((row) => row.version)).toEqual([
       "0001_event_foundation.sql",
       "0002_report_versions.sql",
-      "0003_analysis_metadata.sql"
+      "0003_analysis_metadata.sql",
+      "0004_inspection_recon.sql",
+      "0005_suggestion_idempotency.sql",
+      "0006_normalize_ocr_suggestion_keys.sql",
+      "0007_inspection_operation_idempotency.sql"
     ]);
     const persisted = await pool.query(
       "select (select count(*) from inspections) inspections, (select count(*) from audit_events) audits, (select count(*) from domain_events) events"
@@ -51,6 +60,11 @@ integration("Postgres row persistence", () => {
     expect(Number(persisted.rows[0]?.inspections)).toBe(1);
     expect(Number(persisted.rows[0]?.audits)).toBe(1);
     expect(Number(persisted.rows[0]?.events)).toBe(1);
+    const account = await pool.query<{ authorized_user_ids_json: string[] }>(
+      "select authorized_user_ids_json from consignor_accounts where name = $1",
+      ["Postgres JSON Account"]
+    );
+    expect(account.rows[0]?.authorized_user_ids_json).toEqual([actor.id]);
   });
 
   it("rejects a stale reviewer update and rolls back its audit row", async () => {
@@ -74,5 +88,100 @@ integration("Postgres row persistence", () => {
     const auditCountAfter = Number((await pool.query("select count(*) count from audit_events")).rows[0]?.count);
     expect(record.rows[0]).toMatchObject({ mileage: 14310, version: version + 1 });
     expect(auditCountAfter).toBe(auditCountBefore + 1);
+  });
+
+  it("persists one damage item and grade for each inspection-scoped operation key", async () => {
+    const store = new MemoryStore();
+    await loadPostgresRows(store, pool);
+    const damageInput = {
+      inspectionId,
+      location: "right rear wheel",
+      damageType: "wheel_damage" as const,
+      severity: "minor" as const,
+      notes: "Idempotency integration proof.",
+      source: "manual" as const,
+      idempotencyKey: `${inspectionId}:damage:test-operation`
+    };
+    const firstDamage = store.addDamage(damageInput, actor);
+    const duplicateDamage = store.addDamage(damageInput, actor);
+    expect(duplicateDamage.id).toBe(firstDamage.id);
+
+    const gradeInput = {
+      suggestedGrade: 4.2,
+      conditionGradeBeforeRecon: 4.2,
+      evidenceBlockers: [],
+      explanationJson: { deductions: [] },
+      gradingVersion: "idempotency-integration-v1"
+    };
+    const gradeKey = `${inspectionId}:grade:test-operation`;
+    const firstGrade = store.saveGrade(inspectionId, gradeInput, actor, gradeKey);
+    const duplicateGrade = store.saveGrade(inspectionId, gradeInput, actor, gradeKey);
+    expect(duplicateGrade.id).toBe(firstGrade.id);
+
+    await savePostgresRows(store, pool);
+    const persisted = await pool.query(
+      `select
+         (select count(*) from damage_items where inspection_id = $1 and idempotency_key = $2) damage_count,
+         (select count(*) from condition_grades where inspection_id = $1 and idempotency_key = $3) grade_count`,
+      [inspectionId, damageInput.idempotencyKey, gradeKey]
+    );
+    expect(Number(persisted.rows[0]?.damage_count)).toBe(1);
+    expect(Number(persisted.rows[0]?.grade_count)).toBe(1);
+  });
+
+  it("prevents duplicate actionable findings for the same photo", async () => {
+    const store = new MemoryStore();
+    await loadPostgresRows(store, pool);
+    const photo = store.addPhoto({
+      inspectionId,
+      storageKey: `/uploads/${inspectionId}/front.jpg`,
+      originalFilename: "front.jpg",
+      mimeType: "image/jpeg",
+      uploadedBy: actor.id,
+      declaredAngle: "front"
+    }, actor);
+    const suggestion = store.createSuggestion({
+      inspectionId,
+      photoId: photo.id,
+      suggestionType: "quality_warning",
+      suggestedValueJson: { warning: "Image is too dark." },
+      confidence: 0.72,
+      explanation: "Image is too dark. Reviewer confirmation required."
+    });
+    await savePostgresRows(store, pool);
+
+    await expect(pool.query(
+      `insert into vision_suggestions (
+        id, inspection_id, photo_id, suggestion_type, suggested_value_json, confidence,
+        explanation, status, assigned_to_role, due_at, created_at, version
+      )
+      select
+        $1, inspection_id, photo_id, suggestion_type, suggested_value_json, confidence,
+        explanation, status, assigned_to_role, due_at, created_at, version
+      from vision_suggestions where id = $2`,
+      ["duplicate-quality-warning", suggestion.id]
+    )).rejects.toMatchObject({ code: "23505" });
+
+    const odometerSuggestion = store.createSuggestion({
+      inspectionId,
+      photoId: photo.id,
+      suggestionType: "extracted_text",
+      suggestedValueJson: { odometer: "079037" },
+      confidence: 0.91,
+      explanation: "Detected odometer reading. Reviewer confirmation required."
+    });
+    await savePostgresRows(store, pool);
+
+    await expect(pool.query(
+      `insert into vision_suggestions (
+        id, inspection_id, photo_id, suggestion_type, suggested_value_json, confidence,
+        explanation, status, assigned_to_role, due_at, created_at, version
+      )
+      select
+        $1, inspection_id, photo_id, suggestion_type, '{"odometer":"79037"}'::jsonb, confidence,
+        explanation, status, assigned_to_role, due_at, created_at, version
+      from vision_suggestions where id = $2`,
+      ["duplicate-odometer-reading", odometerSuggestion.id]
+    )).rejects.toMatchObject({ code: "23505" });
   });
 });

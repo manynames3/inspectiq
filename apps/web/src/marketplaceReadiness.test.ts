@@ -61,10 +61,19 @@ function baseBundle(extraSuggestions: VisionSuggestion[] = []): InspectionBundle
     damageItems: [],
     conditionGrade: {
       id: "grade-1",
-      score: 84,
-      grade: "B",
-      explanationJson: {},
-      gradingVersion: "local-test"
+      inspectionId: "inspection-1",
+      suggestedGrade: 4.2,
+      approvedGrade: 4.2,
+      conditionGradeBeforeRecon: 4.2,
+      estimatedGradeAfterRecon: 4.2,
+      reviewedBy: "review-lead",
+      overrideReason: null,
+      evidenceBlockers: [],
+      explanationJson: { baseGrade: 5, deductions: [] },
+      gradingVersion: "local-test",
+      version: 1,
+      createdAt: "2026-07-03T17:50:00.000Z",
+      reviewedAt: "2026-07-03T17:52:00.000Z"
     },
     aiReportJob: null,
     aiReportDraft: null,

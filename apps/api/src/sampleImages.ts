@@ -34,6 +34,7 @@ export type SamplePhotoSet = {
 
 const externalGalleryLicense = "External OEM gallery URL; image is referenced for model-matched review and not copied into this repository.";
 const externalListingLicense = "External dealer listing URL; image is referenced for source provenance and not copied into this repository.";
+const externalMarketplaceListingLicense = "External marketplace listing URL; image is referenced for source provenance and not copied into this repository.";
 const cc0License = "CC0 1.0 Universal Public Domain Dedication; resized for the evaluation corpus.";
 const publicDomainLicense = "Public domain; resized for the evaluation corpus.";
 const skodaRoomsterDamageSourceUrl = "https://commons.wikimedia.org/wiki/File:%C5%A0koda_Roomster_Blue_Dented.jpg";
@@ -46,6 +47,7 @@ const hondaAccordCarfaxListingUrl = "https://www.carfax.com/vehicle/1HGCV1F49LA1
 const fordEscapeDealerListingUrl = "https://www.dchkayhonda.com/inventory/used-2022-ford-escape-sel-awd-sport-utility-1fmcu9h6xnub81389/";
 const nissanRogueDealerListingUrl = "https://www.westherr.com/inventory/used-2019-nissan-rogue-sv-awd-sport-utility-knmat2mv6kp514068/";
 const subaruOutbackDealerListingUrl = "https://www.akarautosales.com/details-2023-subaru-outback-premium_cvt-used-4s4btafc8p3204430.html";
+const acuraTlxCopartListingUrl = "https://www.copart.com/lot/56620356/salvage-2015-acura-tlx-tech-il-chicago-north";
 
 function carsDirect(
   key: string,
@@ -77,8 +79,7 @@ function dealerListing(
   label: string,
   angle: PhotoAngle,
   sourceUrl: string,
-  sourceName = "Dealer listing photo set",
-  analysis: Partial<Pick<SampleImage, "referenceAngleConfidence" | "referenceQualityGrade" | "referenceRetakeRequired" | "referenceQualityWarnings" | "referenceQualityNotes">> = {}
+  sourceName = "Dealer listing photo set"
 ): SampleImage {
   return {
     key,
@@ -89,32 +90,51 @@ function dealerListing(
     mimeType: "image/jpeg",
     sourceName,
     sourceUrl,
-    sourceLicense: externalListingLicense,
-    ...analysis
+    sourceLicense: externalListingLicense
+  };
+}
+
+function marketplaceListing(
+  key: string,
+  filename: string,
+  storageKey: string,
+  label: string,
+  angle: PhotoAngle,
+  sourceUrl: string,
+  sourceName: string
+): SampleImage {
+  return {
+    key,
+    filename,
+    storageKey,
+    label,
+    angle,
+    mimeType: "image/jpeg",
+    sourceName,
+    sourceUrl,
+    sourceLicense: externalMarketplaceListingLicense
   };
 }
 
 export const sampleImages: SampleImage[] = [
+  marketplaceListing("acura-tlx-front", "2015-acura-tlx-front.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/a63326f202984090932e9fb5d54bcc0c_hrs.jpg", "2015 Acura TLX Tech front", "front", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-rear", "2015-acura-tlx-rear.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/b4da9f8632d64af8b9b5665021456312_hrs.jpg", "2015 Acura TLX Tech rear", "rear", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-driver-side", "2015-acura-tlx-driver-side.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/c4160fc96bc4400599b2861bc2ee2b4a_hrs.jpg", "2015 Acura TLX Tech driver side", "driver_side", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-passenger-side", "2015-acura-tlx-passenger-side.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/7e4aea6354e840688a04dbdc345350fe_hrs.jpg", "2015 Acura TLX Tech passenger side", "passenger_side", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-interior", "2015-acura-tlx-interior.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/57ebf4005e144101ab2d61263b237f76_hrs.jpg", "2015 Acura TLX Tech interior", "interior", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-odometer", "2015-acura-tlx-odometer.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/da801942d5844d8e9ce1785230aee8d5_hrs.jpg", "2015 Acura TLX Tech odometer", "odometer", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+  marketplaceListing("acura-tlx-front-damage-detail", "2015-acura-tlx-front-damage-detail.jpg", "https://cs.copart.com/v1/AUTH_svc.pdoc00001/ids-c-prod-lpp/0626/bf1a26d38f5e4f03aecb7384d2095a0e_hrs.jpg", "2015 Acura TLX Tech front-left damage detail", "driver_side", acuraTlxCopartListingUrl, "Copart lot 56620356"),
+
   dealerListing("hyundai-tucson-front", "2024-hyundai-tucson-front.jpg", "https://carfax-img.vast.com/carfax/v2/-8689993197238208383/27/640x480", "2024 Hyundai Tucson SEL front", "front", hyundaiTucsonCarfaxListingUrl, "CARFAX listing photo set"),
   dealerListing("hyundai-tucson-rear", "2024-hyundai-tucson-rear.jpg", "https://carfax-img.vast.com/carfax/v2/-8689993197238208383/3/640x480", "2024 Hyundai Tucson SEL rear", "rear", hyundaiTucsonCarfaxListingUrl, "CARFAX listing photo set"),
   dealerListing("hyundai-tucson-driver-side", "2024-hyundai-tucson-driver-side.jpg", "https://carfax-img.vast.com/carfax/v2/-8689993197238208383/25/640x480", "2024 Hyundai Tucson SEL driver side", "driver_side", hyundaiTucsonCarfaxListingUrl, "CARFAX listing photo set"),
-  dealerListing("hyundai-tucson-passenger-side", "2024-hyundai-tucson-passenger-side.jpg", "https://carfax-img.vast.com/carfax/v2/-8689993197238208383/20/640x480", "2024 Hyundai Tucson SEL passenger side", "passenger_side", hyundaiTucsonCarfaxListingUrl, "CARFAX listing photo set", {
-    referenceAngleConfidence: 0.84,
-    referenceQualityGrade: "review",
-    referenceQualityWarnings: ["Passenger-side listing photo is angled; reviewer should confirm required-angle match before release."],
-    referenceQualityNotes: ["Dealer listing source is usable, but not a clean perpendicular passenger-side capture."]
-  }),
+  dealerListing("hyundai-tucson-passenger-side", "2024-hyundai-tucson-passenger-side.jpg", "https://carfax-img.vast.com/carfax/v2/-8689993197238208383/20/640x480", "2024 Hyundai Tucson SEL passenger side", "passenger_side", hyundaiTucsonCarfaxListingUrl, "CARFAX listing photo set"),
   dealerListing("hyundai-tucson-interior", "2024-hyundai-tucson-interior.jpg", "https://carfax-img.vast.com/carfax/v2/-8689993197238208383/2/640x480", "2024 Hyundai Tucson SEL interior", "interior", hyundaiTucsonCarfaxListingUrl, "CARFAX listing photo set"),
   carsDirect("hyundai-tucson-engine-bay", "2024-hyundai-tucson-engine-bay.jpg", "https://cdcssl.ibsrv.net/autodata/images/?img=USD40HYS021B021025.jpg&width=536", "2024 Hyundai Tucson SEL engine bay", "engine_bay", "https://www.carsdirect.com/hyundai/tucson/2024/pictures"),
   dealerListing("hyundai-tucson-odometer", "2024-hyundai-tucson-odometer.jpg", "https://carfax-img.vast.com/carfax/v2/-8689993197238208383/8/640x480", "2024 Hyundai Tucson SEL odometer", "odometer", hyundaiTucsonCarfaxListingUrl, "CARFAX listing photo set"),
   dealerListing("hyundai-tucson-vin-plate", "2024-hyundai-tucson-vin-plate.jpg", "https://carfax-img.vast.com/carfax/v2/-8689993197238208383/22/640x480", "2024 Hyundai Tucson SEL VIN plate", "vin_plate", hyundaiTucsonCarfaxListingUrl, "CARFAX listing photo set"),
 
-  dealerListing("toyota-camry-front", "2021-toyota-camry-front.jpg", "https://pictures.dealer.com/a/autonationhondaofrenton/0484/002c87ec96ae6c3cb575e0ce2e4029f0x.jpg", "2021 Toyota Camry SE front", "front", toyotaCamryAutoNationListingUrl, "AutoNation Honda Renton dealer listing", {
-    referenceAngleConfidence: 0.78,
-    referenceQualityGrade: "review",
-    referenceQualityWarnings: ["Front listing photo is a three-quarter angle; reviewer should request a direct front retake if buyer-facing standards require it."],
-    referenceQualityNotes: ["Matched the vehicle, but the capture angle is not a clean direct-front inspection photo."]
-  }),
+  dealerListing("toyota-camry-front", "2021-toyota-camry-front.jpg", "https://pictures.dealer.com/a/autonationhondaofrenton/0484/002c87ec96ae6c3cb575e0ce2e4029f0x.jpg", "2021 Toyota Camry SE front", "front", toyotaCamryAutoNationListingUrl, "AutoNation Honda Renton dealer listing"),
   dealerListing("toyota-camry-rear", "2021-toyota-camry-rear.jpg", "https://pictures.dealer.com/a/autonationhondaofrenton/0274/c85cb9ecfb1627d962c96e9293214f3cx.jpg", "2021 Toyota Camry SE rear", "rear", toyotaCamryAutoNationListingUrl, "AutoNation Honda Renton dealer listing"),
   dealerListing("toyota-camry-driver-side", "2021-toyota-camry-driver-side.jpg", "https://pictures.dealer.com/a/autonationhondaofrenton/1322/e6e4b282530332636ec5b08a9deb7917x.jpg", "2021 Toyota Camry SE driver side", "driver_side", toyotaCamryAutoNationListingUrl, "AutoNation Honda Renton dealer listing"),
   dealerListing("toyota-camry-passenger-side", "2021-toyota-camry-passenger-side.jpg", "https://pictures.dealer.com/a/autonationhondaofrenton/0256/5b85963c8e93f790932729eee709cbaex.jpg", "2021 Toyota Camry SE passenger side", "passenger_side", toyotaCamryAutoNationListingUrl, "AutoNation Honda Renton dealer listing"),
@@ -125,18 +145,8 @@ export const sampleImages: SampleImage[] = [
 
   dealerListing("honda-accord-front", "2020-honda-accord-front.jpg", "https://carfax-img.vast.com/carfax/v2/866048677535386941/6/640x480", "2020 Honda Accord EX front", "front", hondaAccordCarfaxListingUrl, "CARFAX listing photo set"),
   dealerListing("honda-accord-rear", "2020-honda-accord-rear.jpg", "https://carfax-img.vast.com/carfax/v2/866048677535386941/3/640x480", "2020 Honda Accord EX rear", "rear", hondaAccordCarfaxListingUrl, "CARFAX listing photo set"),
-  dealerListing("honda-accord-driver-side", "2020-honda-accord-driver-side.jpg", "https://carfax-img.vast.com/carfax/v2/866048677535386941/8/640x480", "2020 Honda Accord EX driver side", "driver_side", hondaAccordCarfaxListingUrl, "CARFAX listing photo set", {
-    referenceAngleConfidence: 0.86,
-    referenceQualityGrade: "review",
-    referenceQualityWarnings: ["Driver-side listing photo is angled; reviewer should confirm it satisfies the required side-view standard."],
-    referenceQualityNotes: ["Dealer listing source is useful for context, but should not be treated as a high-confidence direct side capture."]
-  }),
-  dealerListing("honda-accord-passenger-side", "2020-honda-accord-passenger-side.jpg", "https://carfax-img.vast.com/carfax/v2/866048677535386941/1/640x480", "2020 Honda Accord EX passenger side", "passenger_side", hondaAccordCarfaxListingUrl, "CARFAX listing photo set", {
-    referenceAngleConfidence: 0.82,
-    referenceQualityGrade: "review",
-    referenceQualityWarnings: ["Passenger-side listing photo is rear three-quarter; reviewer should confirm angle before release."],
-    referenceQualityNotes: ["This is a real vehicle listing photo, but not a clean perpendicular passenger-side capture."]
-  }),
+  dealerListing("honda-accord-driver-side", "2020-honda-accord-driver-side.jpg", "https://carfax-img.vast.com/carfax/v2/866048677535386941/1/640x480", "2020 Honda Accord EX driver side", "driver_side", hondaAccordCarfaxListingUrl, "CARFAX listing photo set"),
+  dealerListing("honda-accord-passenger-side", "2020-honda-accord-passenger-side.jpg", "https://carfax-img.vast.com/carfax/v2/866048677535386941/9/640x480", "2020 Honda Accord EX passenger side", "passenger_side", hondaAccordCarfaxListingUrl, "CARFAX listing photo set"),
   dealerListing("honda-accord-interior", "2020-honda-accord-interior.jpg", "https://carfax-img.vast.com/carfax/v2/866048677535386941/12/640x480", "2020 Honda Accord EX interior", "interior", hondaAccordCarfaxListingUrl, "CARFAX listing photo set"),
   dealerListing("honda-accord-engine-bay", "2020-honda-accord-engine-bay.jpg", "https://carfax-img.vast.com/carfax/v2/866048677535386941/25/640x480", "2020 Honda Accord EX engine bay", "engine_bay", hondaAccordCarfaxListingUrl, "CARFAX listing photo set"),
   dealerListing("honda-accord-odometer", "2020-honda-accord-odometer.jpg", "https://carfax-img.vast.com/carfax/v2/866048677535386941/31/640x480", "2020 Honda Accord EX odometer", "odometer", hondaAccordCarfaxListingUrl, "CARFAX listing photo set"),
@@ -162,18 +172,8 @@ export const sampleImages: SampleImage[] = [
 
   dealerListing("subaru-outback-front", "2023-subaru-outback-front.jpg", "https://cdn.ebizautos.media/used-2023-subaru-outback-premiumcvt-14413-23008396-2-640.jpg", "2023 Subaru Outback Premium front", "front", subaruOutbackDealerListingUrl, "A-Kar Auto Sales dealer listing"),
   dealerListing("subaru-outback-rear", "2023-subaru-outback-rear.jpg", "https://cdn.ebizautos.media/used-2023-subaru-outback-premiumcvt-14413-23008396-5-640.jpg", "2023 Subaru Outback Premium rear", "rear", subaruOutbackDealerListingUrl, "A-Kar Auto Sales dealer listing"),
-  dealerListing("subaru-outback-driver-side", "2023-subaru-outback-driver-side.jpg", "https://cdn.ebizautos.media/used-2023-subaru-outback-premiumcvt-14413-23008396-7-640.jpg", "2023 Subaru Outback Premium driver side", "driver_side", subaruOutbackDealerListingUrl, "A-Kar Auto Sales dealer listing", {
-    referenceAngleConfidence: 0.86,
-    referenceQualityGrade: "review",
-    referenceQualityWarnings: ["Driver-side listing photo is angled; reviewer should confirm required-angle match."],
-    referenceQualityNotes: ["Listing photo is vehicle-specific but closer to a three-quarter view than a direct inspection side photo."]
-  }),
-  dealerListing("subaru-outback-passenger-side", "2023-subaru-outback-passenger-side.jpg", "https://cdn.ebizautos.media/used-2023-subaru-outback-premiumcvt-14413-23008396-3-640.jpg", "2023 Subaru Outback Premium passenger side", "passenger_side", subaruOutbackDealerListingUrl, "A-Kar Auto Sales dealer listing", {
-    referenceAngleConfidence: 0.86,
-    referenceQualityGrade: "review",
-    referenceQualityWarnings: ["Passenger-side listing photo is angled; reviewer should confirm required-angle match."],
-    referenceQualityNotes: ["Listing photo is vehicle-specific but closer to a three-quarter view than a direct inspection side photo."]
-  }),
+  dealerListing("subaru-outback-driver-side", "2023-subaru-outback-driver-side.jpg", "https://cdn.ebizautos.media/used-2023-subaru-outback-premiumcvt-14413-23008396-7-640.jpg", "2023 Subaru Outback Premium driver side", "driver_side", subaruOutbackDealerListingUrl, "A-Kar Auto Sales dealer listing"),
+  dealerListing("subaru-outback-passenger-side", "2023-subaru-outback-passenger-side.jpg", "https://cdn.ebizautos.media/used-2023-subaru-outback-premiumcvt-14413-23008396-3-640.jpg", "2023 Subaru Outback Premium passenger side", "passenger_side", subaruOutbackDealerListingUrl, "A-Kar Auto Sales dealer listing"),
   dealerListing("subaru-outback-interior", "2023-subaru-outback-interior.jpg", "https://cdn.ebizautos.media/used-2023-subaru-outback-premiumcvt-14413-23008396-12-640.jpg", "2023 Subaru Outback Premium interior", "interior", subaruOutbackDealerListingUrl, "A-Kar Auto Sales dealer listing"),
   dealerListing("subaru-outback-engine-bay", "2023-subaru-outback-engine-bay.jpg", "https://cdn.ebizautos.media/used-2023-subaru-outback-premiumcvt-14413-23008396-38-640.jpg", "2023 Subaru Outback Premium engine bay", "engine_bay", subaruOutbackDealerListingUrl, "A-Kar Auto Sales dealer listing"),
   dealerListing("subaru-outback-odometer", "2023-subaru-outback-odometer.jpg", "https://cdn.ebizautos.media/used-2023-subaru-outback-premiumcvt-14413-23008396-24-640.jpg", "2023 Subaru Outback Premium odometer", "odometer", subaruOutbackDealerListingUrl, "A-Kar Auto Sales dealer listing"),
@@ -198,6 +198,15 @@ export const sampleImages: SampleImage[] = [
 ];
 
 export const sampleBundles: Record<string, string[]> = {
+  "acura-tlx-tech-copart-set": [
+    "acura-tlx-front",
+    "acura-tlx-rear",
+    "acura-tlx-driver-side",
+    "acura-tlx-passenger-side",
+    "acura-tlx-interior",
+    "acura-tlx-odometer",
+    "acura-tlx-front-damage-detail"
+  ],
   "complete-clean-set": [
     "hyundai-tucson-front",
     "hyundai-tucson-rear",

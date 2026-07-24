@@ -11,7 +11,7 @@ InspectIQ is production-shaped, not a claim that a portfolio corpus and low-volu
 | Relational integrity | Numbered migrations, `schema_migrations`, normalized Neon rows, changed-row transactions, conditional versions, `409 VERSION_CONFLICT`, and business/audit/outbox co-commit. |
 | Event reliability | Versioned `DomainEventV1` outbox, EventBridge, Python projector, transactional DynamoDB duplicate suppression, TTL timelines, latest state, domain-event DLQ, alarms, and Admin replay. |
 | AI governance | Strict schemas, no-fallback promotion workflow, model/prompt/latency/token/cost/failure metadata, monthly reservations, reviewer approval, and buyer-output redaction. |
-| Auth | Cognito OIDC/PKCE, JWT/JWKS validation, role claims, RBAC, object authorization, read-only evaluation mode, and no role switching for authenticated users. |
+| Auth | Cognito OIDC/PKCE, JWT/JWKS validation, role claims, RBAC, object authorization, isolated session-only evaluation actions, and no role switching for authenticated users. |
 | Operations | Correlation IDs through API/SQS/events, X-Ray, CloudWatch dashboard/alarms, SNS option, Platform Health, failed job/event recovery, and $50 budget thresholds. |
 | Quality gates | Node/web/mobile tests, Python grading/projector tests, Postgres service integration in CI, browser E2E, Axe/viewport checks, screenshot regression, Terraform validation, and Android release build. |
 

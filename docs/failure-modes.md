@@ -10,7 +10,8 @@
 - Grading unavailable: local fallback mirrors the Python grading rules; production should fail closed or retry based on policy.
 - Grading before evidence: API returns conflict with missing evidence.
 - Report provider failure: job moves to failed and inspection moves to `REPORT_FAILED`.
-- Duplicate report request: idempotency key returns or rejects active job.
+- Duplicate business mutation: keys are scoped as inspection + operation + client request/state; Postgres uniqueness prevents duplicate damage and grade records.
+- Concurrent report request: a leased DynamoDB claim admits one Lambda worker, the completed Postgres job is replayed on retry, and failed or expired claims can be reclaimed.
 - Finalization too early: blocked unless report exists, evidence is complete, and status transition is valid.
 - Double-click finalize: endpoint returns the already finalized report.
 - Audit write failure: production should emit a structured error and fail the business action if accountability would be lost.

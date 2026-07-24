@@ -23,7 +23,7 @@ const storageKey = "inspectiq.auth.session";
 const localStorageKey = "inspectiq.local.session";
 const verifierKey = "inspectiq.auth.pkce.verifier";
 const stateKey = "inspectiq.auth.pkce.state";
-const roles = ["admin", "reviewer", "inspector"] as const;
+const roles = ["inspector", "reviewer", "recon_coordinator", "consignor_approver", "technician", "admin"] as const;
 const directRoleClaimKeys = [
   "custom:role",
   "custom:inspectiq_role",
@@ -36,12 +36,18 @@ const groupRoleClaimKeys = ["cognito:groups", "groups", "roles"] as const;
 const localProfiles: Record<Actor["role"], Pick<Actor, "id" | "name" | "role">> = {
   inspector: { id: "inspector-john-smith", name: "John Smith", role: "inspector" },
   reviewer: { id: "review-lead", name: "Review Lead", role: "reviewer" },
+  recon_coordinator: { id: "recon-coordinator", name: "Alex Rivera", role: "recon_coordinator" },
+  consignor_approver: { id: "consignor-approver-sdg", name: "Morgan Ellis", role: "consignor_approver" },
+  technician: { id: "technician-body-01", name: "Sam Patel", role: "technician" },
   admin: { id: "admin-operator", name: "Admin Operator", role: "admin" }
 };
 
 const evaluationProfiles: Record<Actor["role"], Pick<Actor, "id" | "name" | "role">> = {
   inspector: { id: "evaluation-inspector", name: "John Smith", role: "inspector" },
   reviewer: { id: "evaluation-reviewer", name: "Evaluation Reviewer", role: "reviewer" },
+  recon_coordinator: { id: "evaluation-recon_coordinator", name: "Evaluation Recon Coordinator", role: "recon_coordinator" },
+  consignor_approver: { id: "evaluation-consignor_approver", name: "Evaluation Consignor Approver", role: "consignor_approver" },
+  technician: { id: "evaluation-technician", name: "Evaluation Technician", role: "technician" },
   admin: { id: "evaluation-admin", name: "Evaluation Admin", role: "admin" }
 };
 
@@ -103,7 +109,7 @@ function roleFromString(value: unknown): Actor["role"] | null {
 
   const compact = normalized.replace(/[^a-z]/g, "");
   const withoutProductPrefix = compact.startsWith("inspectiq") ? compact.slice("inspectiq".length) : compact;
-  return roles.find((role) => withoutProductPrefix === role) ?? null;
+  return roles.find((role) => withoutProductPrefix === role.replace(/[^a-z]/g, "")) ?? null;
 }
 
 function stringList(value: unknown): string[] {

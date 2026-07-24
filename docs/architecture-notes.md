@@ -66,6 +66,7 @@ sudo apt-get install graphviz
 - SQS carries image-analysis jobs to a Lambda image worker and has a DLQ.
 - Bedrock is used by the image worker for multimodal image analysis and by the API for report drafting.
 - Postgres outbox events publish to a custom EventBridge bus; a Python 3.12 Lambda writes idempotency, latest state, a TTL timeline, and monthly model usage to on-demand DynamoDB.
+- The same API/Postgres/outbox boundaries carry the inspection-to-recon workflow: consignor policy evaluation, explicit authorization, authorized work orders, QC, and sale-readiness projection. No new always-on service is needed for that business expansion.
 - EventBridge and image-analysis failures have separate SQS DLQs with health/replay controls.
 - CloudWatch/X-Ray, alarms, SNS, the `inspectiq-ops` dashboard, and a $50 AWS Budget support operations and cost control.
 - GitHub Actions runs web/mobile/backend checks, Postgres integration, Maestro, Python tests, Terraform planning, approved apply, and Cloudflare deployment.
@@ -101,8 +102,9 @@ sudo apt-get install graphviz
 
 ## Security
 
-- Cognito OIDC and groups drive role-aware access.
+- Cognito OIDC groups drive role-aware access for Inspector, Reviewer, Recon Coordinator, Consignor Approver, Technician, and Admin responsibilities.
 - The Lambda API validates JWT/JWKS claims and object-level authorization on protected routes. The current catch-all API Gateway route is intentionally `NONE` so health/evaluation and protected paths share one integration; the provisioned authorizer is reserved for future route decomposition.
+- Consignor Approvers are restricted to represented consignor accounts, and policy authorization remains distinguishable from a human decision.
 - S3 blocks public access and uses server-side encryption.
 - Secrets Manager stores the Neon pooled connection string.
 - Lambda IAM policy is scoped to the required S3, SQS, Secrets Manager, and Bedrock actions.

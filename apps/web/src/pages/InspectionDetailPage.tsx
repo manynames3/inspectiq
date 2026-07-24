@@ -1,14 +1,17 @@
-import { AlertTriangle, ArrowDown, Bot, Check, ChevronLeft, ChevronRight, Download, FileText, Filter, GitCompare, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X } from "lucide-react";
-import { estimateDamageRepairCost, maxImageUploadBytes, maxLocalPreviewUploadBytes, requiredPhotoAngles, supportedImageUploadMimeTypes } from "@inspectiq/shared";
+import { AlertTriangle, ArrowDown, BadgeInfo, Bot, Check, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Filter, GitCompare, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X } from "lucide-react";
+import { canRole, estimateDamageRepairCost, maxImageUploadBytes, maxLocalPreviewUploadBytes, requiredPhotoAngles, supportedImageUploadMimeTypes } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiClientError, apiUrl, assetUrl, requestHeaders } from "../api.js";
 import { useActor } from "../App.js";
 import { isEvaluationSession, storedLocalSession } from "../auth.js";
 import { StatusPill } from "../components/StatusPill.js";
-import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider } from "../evidenceProvenance.js";
+import { conditionGradeView, formatConditionGrade } from "../conditionGrade.js";
+import { loadEvaluationDamage, saveEvaluationDamage } from "../evaluationDamage.js";
+import { applyEvaluationReview, clearEvaluationReview, recordEvaluationReview } from "../evaluationReview.js";
+import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider, operatorEvidenceExplanation } from "../evidenceProvenance.js";
 import { deriveMarketplaceReadiness, formatReportReadiness } from "../marketplaceReadiness.js";
-import type { Inspection, InspectionBundle, PhotoAnalysisResult, ReportVersion, SamplePhotoSet, VehiclePhoto, VisionSuggestion } from "../types.js";
+import type { DamageItem, Inspection, InspectionBundle, PhotoAnalysisResult, ReportVersion, SamplePhotoSet, VehiclePhoto, VehicleReference, VisionSuggestion } from "../types.js";
 import { inspectionNeedsWork, isReviewQueueInspection } from "../workflowMetrics.js";
 
 const requiredAngles = [...requiredPhotoAngles];
@@ -22,10 +25,8 @@ type ConditionDockTab = "grading" | "damage";
 type ReportDockTab = "draft" | "summary";
 
 type GradeExplanationView = {
-  deductions?: Array<{ reason?: string; points?: number }>;
-  completionPenalty?: number;
-  mileageAdjustment?: number;
-  ageAdjustment?: number;
+  baseGrade?: number;
+  deductions?: Array<{ reason?: string; amount?: number }>;
 };
 
 type ReportOutputView = {
@@ -34,6 +35,12 @@ type ReportOutputView = {
   missingEvidence?: string[];
   recommendedDisclosure?: string;
   reasoningSummary?: string;
+  conditionReportSections?: Array<{
+    key: string;
+    title: string;
+    status: "VERIFIED" | "OBSERVED" | "NOT_OBSERVED" | "NOT_APPLICABLE" | "REQUIRES_REVIEW";
+    observations: string[];
+  }>;
 };
 
 function formatAngleLabel(value: string | null | undefined) {
@@ -64,7 +71,7 @@ function photoSourceLabel(photo: Pick<VehiclePhoto, "objectBucket" | "storageKey
   if (photo.sourceName === "CarsDirect OEM photo gallery") return "Sourced vehicle image";
   if (photo.sourceName) return photo.sourceName;
   if (photo.objectBucket && photo.objectBucket !== "inspectiq-sample-images") return "Uploaded image";
-  if (photo.objectBucket === "inspectiq-sample-images" || photo.storageKey.startsWith("/sample-images/")) return "Reference evidence";
+  if (photo.objectBucket === "inspectiq-sample-images" || photo.storageKey.startsWith("/sample-images/")) return "Source photo";
   if (photo.storageKey.startsWith("data:")) return "Inline evidence";
   return "Evidence image";
 }
@@ -163,14 +170,14 @@ function suggestionFacts(suggestion: VisionSuggestion): SuggestionFact[] {
 function referenceSuggestionFacts(suggestion: VisionSuggestion): SuggestionFact[] {
   const value = suggestionValueRecord(suggestion);
   if (suggestion.suggestionType === "photo_angle") {
-    return [{ label: "Checklist Slot", value: formatAngleLabel(formatSuggestionValue(value.photoAngle)) }];
+    return [{ label: "Required View", value: formatAngleLabel(formatSuggestionValue(value.photoAngle)) }];
   }
   if (suggestion.suggestionType === "quality_warning") {
     const quality = qualityValueRecord(value.imageQuality);
     return [
-      { label: "Source QA Status", value: formatTitleValue(quality.grade ?? "review") },
+      { label: "Evidence Status", value: formatTitleValue(quality.grade ?? "review") },
       { label: "Retake Required", value: quality.retakeRequired === true ? "Yes" : "No" },
-      { label: "Action", value: quality.retakeRequired === true ? "Replace source image before release" : "Reviewer can accept if the source image is usable" }
+      { label: "Action", value: quality.retakeRequired === true ? "Replace photo before release" : "Reviewer can accept if the photo is usable" }
     ];
   }
   return suggestionFacts(suggestion);
@@ -184,8 +191,8 @@ function conditionGradeExplanation(grade: InspectionBundle["conditionGrade"]): G
 function conditionGradeDeductions(grade: InspectionBundle["conditionGrade"]) {
   const explanation = conditionGradeExplanation(grade);
   if (!Array.isArray(explanation.deductions)) return [];
-  return explanation.deductions.filter((item): item is { reason: string; points: number } => (
-    typeof item.reason === "string" && typeof item.points === "number"
+  return explanation.deductions.filter((item): item is { reason: string; amount: number } => (
+    typeof item.reason === "string" && typeof item.amount === "number"
   ));
 }
 
@@ -361,6 +368,16 @@ function editSuggestionPayload(suggestion: VisionSuggestion): { suggestedValue: 
   };
 }
 
+function reportOverview(reportBody: string) {
+  const normalized = reportBody.trim();
+  if (!normalized) return "";
+
+  const [overview] = normalized.split(/\n(?=(?:Notable defects|Missing evidence|Condition report sections|Recommended disclosure|Review rationale):)/i);
+  if (overview.length < normalized.length) return overview.trim();
+  if (normalized.length <= 900) return normalized;
+  return `${normalized.slice(0, 900).trimEnd()}…`;
+}
+
 function suggestionFocus(suggestion: VisionSuggestion) {
   const value = suggestionValueRecord(suggestion);
   if (suggestion.suggestionType === "damage_candidate") return formatTitleValue(value.location);
@@ -376,7 +393,8 @@ function suggestionFocus(suggestion: VisionSuggestion) {
 
 function suggestionNote(suggestion: VisionSuggestion) {
   const value = suggestionValueRecord(suggestion);
-  return typeof value.explanation === "string" && value.explanation.length > 0 ? value.explanation : suggestion.explanation;
+  const explanation = typeof value.explanation === "string" && value.explanation.length > 0 ? value.explanation : suggestion.explanation;
+  return operatorEvidenceExplanation(explanation);
 }
 
 function suggestionPriority(suggestion: VisionSuggestion) {
@@ -416,17 +434,17 @@ function photoQualityView(
     if (qualitySuggestion && (qualitySuggestion.status === "pending" || qualitySuggestion.status === "edited")) {
       return {
         status: "review",
-        label: "Source QA review",
-        detail: formatTitleValue(suggestionValue.warning ?? "Reviewer should confirm the source image fits the required capture slot"),
+        label: "Review required",
+        detail: formatTitleValue(suggestionValue.warning ?? "Reviewer should confirm the photo fits the required view"),
         scores: []
       };
     }
     return {
       status: photo.qualityStatus === "fail" ? "retake" : "ready",
-      label: photo.qualityStatus === "fail" ? "Replace source" : "Source reviewed",
+      label: photo.qualityStatus === "fail" ? "Replace photo" : "Ready",
       detail: photo.qualityStatus === "fail"
-        ? "The reference image does not satisfy the documented capture requirement."
-        : "Mapped from documented source metadata; no model quality score is claimed.",
+        ? "The photo does not satisfy the required checklist view."
+        : "Photo is assigned to the required checklist view.",
       scores: []
     };
   }
@@ -582,6 +600,7 @@ async function waitForPhotoAnalysisCompletion(inspectionId: string, photoIds: st
 
 export function InspectionDetailPage() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const { actor, can } = useActor();
   const [bundle, setBundle] = useState<InspectionBundle | null>(null);
   const [inspections, setInspections] = useState<Inspection[]>([]);
@@ -603,15 +622,27 @@ export function InspectionDetailPage() {
     severity: "minor",
     notes: "Manual inspector note."
   });
+  const [damageOperationId, setDamageOperationId] = useState(() => crypto.randomUUID());
+  const [evaluationDamageItems, setEvaluationDamageItems] = useState<DamageItem[]>([]);
   const [reportBody, setReportBody] = useState("");
   const [reportComment, setReportComment] = useState("");
   const [reportVersions, setReportVersions] = useState<ReportVersion[]>([]);
   const [comparedReportVersion, setComparedReportVersion] = useState<ReportVersion | null>(null);
+  const [vehicleReferenceOpen, setVehicleReferenceOpen] = useState(searchParams.get("reference") === "nhtsa");
+  const [vehicleReference, setVehicleReference] = useState<VehicleReference | null>(null);
+  const [vehicleReferenceLoading, setVehicleReferenceLoading] = useState(false);
+  const [vehicleReferenceError, setVehicleReferenceError] = useState<string | null>(null);
 
   async function load() {
     if (!id) return;
     setError(null);
-    const nextBundle = await api<InspectionBundle>(`/api/inspections/${id}`, {}, actor);
+    const loadedBundle = await api<InspectionBundle>(`/api/inspections/${id}`, {}, actor);
+    const nextBundle = actor.id.startsWith("evaluation-")
+      ? {
+          ...loadedBundle,
+          suggestions: applyEvaluationReview(window.sessionStorage, loadedBundle.inspection.id, loadedBundle.suggestions)
+        }
+      : loadedBundle;
     setBundle(nextBundle);
     setReportBody(nextBundle.finalReport?.reportBody ?? "");
     setReportComment(nextBundle.finalReport?.reviewerComment ?? "");
@@ -654,9 +685,72 @@ export function InspectionDetailPage() {
     }
   }
 
+  async function reviewSuggestion(
+    suggestion: VisionSuggestion,
+    status: "accepted" | "rejected" | "edited",
+    edit?: { suggestedValue: unknown; explanation?: string }
+  ) {
+    if (!actor.id.startsWith("evaluation-")) {
+      const path = status === "edited"
+        ? `/api/vision-suggestions/${suggestion.id}`
+        : `/api/vision-suggestions/${suggestion.id}/${status === "accepted" ? "accept" : "reject"}`;
+      const options = status === "edited"
+        ? { method: "PATCH", body: JSON.stringify({ ...edit, expectedVersion: suggestion.version }) }
+        : { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) };
+      return runAction(status, () => api(path, options, actor));
+    }
+
+    setBusy(status);
+    setError(null);
+    try {
+      recordEvaluationReview(window.sessionStorage, actor, suggestion, status, edit);
+      setBundle((current) => current ? {
+        ...current,
+        suggestions: applyEvaluationReview(window.sessionStorage, current.inspection.id, current.suggestions)
+      } : current);
+      setEvaluationDamageItems(loadEvaluationDamage(window.sessionStorage, suggestion.inspectionId));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function loadVehicleReference() {
+    if (!id || vehicleReferenceLoading) return;
+    setVehicleReferenceLoading(true);
+    setVehicleReferenceError(null);
+    try {
+      setVehicleReference(await api<VehicleReference>(`/api/inspections/${id}/vehicle-reference`, {}, actor));
+    } catch (err) {
+      setVehicleReferenceError(err instanceof Error ? err.message : "NHTSA VIN decoding is unavailable.");
+    } finally {
+      setVehicleReferenceLoading(false);
+    }
+  }
+
   useEffect(() => {
     void load().catch((err) => setError(err instanceof Error ? err.message : "Failed to load inspection."));
   }, [id, actor]);
+
+  useEffect(() => {
+    setVehicleReference(null);
+    setVehicleReferenceError(null);
+    setVehicleReferenceOpen(searchParams.get("reference") === "nhtsa");
+    setDamageOperationId(crypto.randomUUID());
+  }, [id, searchParams]);
+
+  useEffect(() => {
+    if (!id || !actor.id.startsWith("evaluation-")) {
+      setEvaluationDamageItems([]);
+      return;
+    }
+    setEvaluationDamageItems(loadEvaluationDamage(window.sessionStorage, id));
+  }, [actor.id, id]);
+
+  useEffect(() => {
+    if (vehicleReferenceOpen && !vehicleReference && !vehicleReferenceLoading && !vehicleReferenceError) {
+      void loadVehicleReference();
+    }
+  }, [vehicleReferenceOpen, vehicleReference, vehicleReferenceLoading, vehicleReferenceError, id, actor]);
 
   const confirmedAngles = useMemo(() => {
     const values = new Set<string>();
@@ -750,6 +844,10 @@ export function InspectionDetailPage() {
   const reviewedSuggestions = bundle.suggestions.filter((suggestion) => suggestion.status === "accepted" || suggestion.status === "rejected");
   const acceptedSuggestions = reviewedSuggestions.filter((suggestion) => suggestion.status === "accepted");
   const rejectedSuggestions = reviewedSuggestions.filter((suggestion) => suggestion.status === "rejected");
+  const evaluationReviewCount = bundle.suggestions.filter((suggestion) =>
+    suggestion.reviewedBy === actor.name
+    && (suggestion.status === "accepted" || suggestion.status === "rejected" || suggestion.status === "edited")
+  ).length;
   const isFinalizedInspection = bundle.inspection.status === "FINALIZED";
   const workflowStep = bundle.inspection.status === "FINALIZED" ? 4 : bundle.inspection.status === "HUMAN_REVIEW_REQUIRED" || bundle.inspection.status === "AI_DRAFTED" ? 3 : bundle.conditionGrade ? 2 : 1;
   const capturedEvidencePercent = Math.round((requiredAngles.filter((angle) => capturedAngles.has(angle)).length / requiredAngles.length) * 100);
@@ -760,9 +858,14 @@ export function InspectionDetailPage() {
   const blockerIssues = (bundle.readinessIssues ?? []).filter((issue) => issue.severity === "blocker");
   const watchIssues = (bundle.readinessIssues ?? []).filter((issue) => issue.severity === "watch");
   const visibleReadinessIssues = [...blockerIssues, ...watchIssues].slice(0, 3);
-  const gradeExplanation = conditionGradeExplanation(bundle.conditionGrade);
   const gradeDeductions = conditionGradeDeductions(bundle.conditionGrade);
+  const gradeView = conditionGradeView(bundle.conditionGrade);
+  const gradeEvidenceBlockers = Array.isArray(bundle.conditionGrade?.evidenceBlockers)
+    ? bundle.conditionGrade.evidenceBlockers
+    : [];
   const reportOutput = reportOutputView(bundle.aiReportDraft);
+  const reportBodyOverview = reportOverview(reportBody);
+  const hasAdditionalReportContent = reportBodyOverview.length < reportBody.trim().length;
   const reportSummary = reportOutput.summary
     ?? bundle.finalReport?.reportBody.split("\n").find((line) => line.trim().length > 0)?.replace(/^Summary:\s*/i, "")
     ?? "Draft the report to generate a reviewer-ready condition summary.";
@@ -774,17 +877,19 @@ export function InspectionDetailPage() {
   const missingEvidence = reportOutput.missingEvidence?.length
     ? reportOutput.missingEvidence
     : marketplaceReadiness.blockers.filter((blocker) => blocker.toLowerCase().includes("missing"));
+  const isEvaluationWorkspace = actor.id.startsWith("evaluation-");
+  const canPreviewDamage = isEvaluationWorkspace && canRole(actor.role, "damage:create");
   const canCaptureEvidence = can("photo:capture");
   const canAnalyzePhotos = can("photo:analyze");
-  const canReviewSuggestions = can("suggestion:review");
+  const canReviewSuggestions = can("suggestion:review") || (isEvaluationWorkspace && canRole(actor.role, "suggestion:review"));
   const canAssignSuggestions = can("suggestion:assign");
   const canConfirmDamage = can("damage:create");
   const canGrade = can("grade:calculate");
+  const canApproveGrade = can("grade:approve");
   const canDraftReport = can("report:draft");
   const canEditReport = can("report:edit");
   const canApproveReport = can("report:approve");
   const canFinalizeReport = can("report:finalize");
-  const isEvaluationWorkspace = actor.id.startsWith("evaluation-");
   const canRequestReportDraft = bundle.inspection.status === "GRADED" ||
     bundle.inspection.status === "REPORT_FAILED" ||
     bundle.inspection.status === "HUMAN_REVIEW_REQUIRED";
@@ -793,8 +898,51 @@ export function InspectionDetailPage() {
   const sampleAttachDisabled = !referenceEvidenceEnabled || captureDisabled || !matchedSamplePhotoSet;
   const analysisDisabled = busy !== null || isFinalizedInspection || !canAnalyzePhotos;
   const reviewDisabled = busy !== null || isFinalizedInspection || !canReviewSuggestions;
-  const damageDisabled = busy !== null || isFinalizedInspection || !canConfirmDamage;
+  const damageDisabled = busy !== null || isFinalizedInspection || (!canConfirmDamage && !canPreviewDamage);
+  const damageDisabledReason = finalizedActionTitle
+    ?? (!canConfirmDamage && !canPreviewDamage
+      ? isEvaluationWorkspace
+        ? "Select Inspector, Reviewer, or Admin to preview manual damage entry."
+        : "Inspector, Reviewer, or Admin access required."
+      : undefined);
+  const damageHelperText = damageDisabledReason
+    ?? (canPreviewDamage
+      ? "Evaluation sandbox: preview items stay in this browser tab and do not change the inspection record."
+      : undefined);
+  const damageItemsForDisplay = isEvaluationWorkspace
+    ? [...bundle.damageItems, ...evaluationDamageItems]
+    : bundle.damageItems;
+
+  function addEvaluationDamagePreview() {
+    if (!id || !canPreviewDamage || isFinalizedInspection) return;
+    const location = damageForm.location.trim();
+    if (!location) {
+      setError("Enter the damaged area before adding a preview item.");
+      return;
+    }
+    const previewItem: DamageItem = {
+      id: `evaluation-damage-${typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now()}`,
+      inspectionId: id,
+      photoId: null,
+      location,
+      damageType: damageForm.damageType,
+      severity: damageForm.severity,
+      notes: damageForm.notes,
+      source: "evaluation_preview"
+    };
+    const nextItems = [...evaluationDamageItems, previewItem];
+    setEvaluationDamageItems(nextItems);
+    saveEvaluationDamage(window.sessionStorage, id, nextItems);
+    setError(null);
+  }
+
+  function clearEvaluationDamagePreview() {
+    if (!id) return;
+    setEvaluationDamageItems([]);
+    saveEvaluationDamage(window.sessionStorage, id, []);
+  }
   const gradeDisabled = busy !== null || isFinalizedInspection || !canGrade;
+  const approveGradeDisabled = busy !== null || isFinalizedInspection || !canApproveGrade || gradeView?.reviewState !== "suggested" || gradeEvidenceBlockers.length > 0;
   const draftReportDisabled = busy !== null || isFinalizedInspection || !canDraftReport || !canRequestReportDraft;
   const editReportDisabled = isFinalizedInspection || !canEditReport;
   const approveReportDisabled = !bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || isFinalizedInspection || !canApproveReport || busy !== null;
@@ -864,7 +1012,7 @@ export function InspectionDetailPage() {
         : pendingAnalysisRows.length > 0
           ? "Run image analysis to verify angle, damage, OCR, and quality signals."
           : bundle.photos.every((photo) => isReferenceEvidence(photo, analysisResultByPhotoId.get(photo.id)))
-            ? "Required photos are mapped to documented checklist slots with no open source-review blocker."
+            ? "Required photos are present with no open evidence-review blocker."
             : "Required photos have usable analysis signals and no open retake blocker.";
   const hasModelAnalysis = [...analysisResultByPhotoId.values()].some((analysis) => !isReferenceProvider(analysis.provider));
   const referenceOnlyEvidence = bundle.photos.length > 0 && !hasModelAnalysis;
@@ -877,20 +1025,20 @@ export function InspectionDetailPage() {
         : pendingAnalysisRows.length > 0
           ? "Image analysis in progress."
           : reviewedSuggestions.length > 0
-            ? referenceOnlyEvidence ? "Evidence mappings reviewed." : "AI findings reviewed."
+            ? referenceOnlyEvidence ? "Evidence reviewed." : "AI findings reviewed."
             : referenceOnlyEvidence ? "No pending evidence decisions." : "No pending AI findings.";
   const reviewRailBody = pendingSuggestions.length > 0
     ? null
     : isFinalizedInspection
       ? referenceOnlyEvidence
-        ? "Reference mappings and reviewer decisions are complete; the condition report is locked for buyer-facing release."
+        ? "Evidence checks and reviewer decisions are complete; the condition report is locked for buyer-facing release."
         : "All AI findings have been resolved and the condition report is locked for buyer-facing release."
       : bundle.photos.length === 0
         ? "Capture required angles before running image analysis."
         : pendingAnalysisRows.length > 0
           ? "Queued image jobs are still processing. Refresh after completion to review findings."
           : reviewedSuggestions.length > 0
-            ? referenceOnlyEvidence ? "No open reference-evidence decisions remain for this inspection." : "No open AI decisions remain for this inspection."
+            ? referenceOnlyEvidence ? "No open evidence decisions remain for this inspection." : "No open AI decisions remain for this inspection."
             : "Run analysis after capture to create reviewable findings.";
   const analyzedPhotoCount = bundle.photos.filter((photo) => photo.analysisStatus === "completed").length;
   const confirmedReviewItems = acceptedSuggestions.slice(0, 3).map((suggestion) => `${formatTitleValue(suggestionFocus(suggestion))} · ${formatSuggestionType(suggestion.suggestionType)}`);
@@ -991,6 +1139,14 @@ export function InspectionDetailPage() {
               <button className={`secondary-button dense-toggle ${queueCollapsed ? "active" : ""}`} onClick={() => setQueueCollapsed((current) => !current)}>{queueCollapsed ? "Show queue" : "Hide queue"}</button>
               <button className={`secondary-button dense-toggle ${reviewRailCollapsed ? "active" : ""}`} onClick={() => setReviewRailCollapsed((current) => !current)}>{reviewRailCollapsed ? "Show review" : "Hide review"}</button>
               <button
+                className={`secondary-button ${vehicleReferenceOpen ? "active" : ""}`}
+                aria-expanded={vehicleReferenceOpen}
+                aria-controls="vehicle-reference-panel"
+                onClick={() => setVehicleReferenceOpen((current) => !current)}
+              >
+                <BadgeInfo size={16} /> VIN details
+              </button>
+              <button
                 className="secondary-button"
                 disabled={isFinalizedInspection || !canAssignSuggestions || pendingSuggestions.length === 0 || busy !== null}
                 title={finalizedActionTitle ?? (!canAssignSuggestions ? "Reviewer or Admin access required" : pendingSuggestions.length === 0 ? "No open findings to assign" : undefined)}
@@ -1010,6 +1166,56 @@ export function InspectionDetailPage() {
             </div>
           </div>
           <div className="detail-readiness-header">
+            {vehicleReferenceOpen ? (
+              <section id="vehicle-reference-panel" className="vehicle-reference-panel" aria-label="NHTSA VIN reference">
+                <div className="vehicle-reference-heading">
+                  <div>
+                    <span className="eyebrow">Vehicle reference</span>
+                    <strong>NHTSA vPIC VIN decode</strong>
+                    <small>Manufacturer-submitted specifications. This is not an accident, title, ownership, or condition-history report.</small>
+                  </div>
+                  <button className="icon-button" aria-label="Close VIN details" onClick={() => setVehicleReferenceOpen(false)}>
+                    <X size={16} />
+                  </button>
+                </div>
+                {vehicleReferenceLoading ? <p className="vehicle-reference-state">Retrieving NHTSA vehicle specifications...</p> : null}
+                {vehicleReferenceError ? (
+                  <div className="vehicle-reference-error">
+                    <span>{vehicleReferenceError}</span>
+                    <button className="secondary-button" onClick={() => void loadVehicleReference()}><RefreshCw size={14} /> Retry</button>
+                  </div>
+                ) : null}
+                {vehicleReference ? (
+                  <>
+                    <div className={`vehicle-reference-validation ${vehicleReference.validVin ? "valid" : "review"}`}>
+                      <strong>{vehicleReference.validVin ? "VIN decoded cleanly" : "VIN needs review"}</strong>
+                      <span>{vehicleReference.validationMessage}</span>
+                    </div>
+                    <dl className="vehicle-reference-grid">
+                      {[
+                        ["Vehicle", [vehicleReference.specifications.modelYear, vehicleReference.specifications.make, vehicleReference.specifications.model].filter(Boolean).join(" ")],
+                        ["Trim / series", [vehicleReference.specifications.trim, vehicleReference.specifications.series].filter((value, index, values) => value && values.indexOf(value) === index).join(" · ")],
+                        ["Body class", vehicleReference.specifications.bodyClass],
+                        ["Drive type", vehicleReference.specifications.driveType],
+                        ["Fuel", vehicleReference.specifications.fuelType],
+                        ["Engine", vehicleReference.specifications.engine],
+                        ["Manufacturer", vehicleReference.specifications.manufacturer],
+                        ["Assembly plant", vehicleReference.specifications.plant]
+                      ].filter((item) => item[1]).map(([label, value]) => (
+                        <div key={label}>
+                          <dt>{label}</dt>
+                          <dd>{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <div className="vehicle-reference-source">
+                      <span>Retrieved {new Date(vehicleReference.retrievedAt).toLocaleString()} from {vehicleReference.provider}</span>
+                      <a href={vehicleReference.sourceUrl} target="_blank" rel="noreferrer">View NHTSA response <ExternalLink size={13} /></a>
+                    </div>
+                  </>
+                ) : null}
+              </section>
+            ) : null}
             <div className="marketplace-readiness-strip" aria-label="Marketplace readiness">
               <span className={marketplaceReadiness.crStatus === "CR ready" ? "ready" : "blocked"}>
                 <strong>{reportReadiness.label}</strong>
@@ -1055,7 +1261,7 @@ export function InspectionDetailPage() {
               <div className="workflow-status">
                 <h2>Workflow status</h2>
                 <div className={`workflow-steps step-${workflowStep}`}>
-                  {["Inspection", referenceOnlyEvidence ? "Evidence Mapping" : "AI Analysis", "Human Review", "Report"].map((label, index) => {
+                  {["Inspection", referenceOnlyEvidence ? "Evidence Review" : "AI Analysis", "Human Review", "Report"].map((label, index) => {
                     const stepNumber = index + 1;
                     const stepState = workflowStep > stepNumber ? "complete" : workflowStep === stepNumber ? "current" : "upcoming";
                     return (
@@ -1136,7 +1342,7 @@ export function InspectionDetailPage() {
                       const analysis = analysisResultByPhotoId.get(photo.id);
                       const referenceEvidence = isReferenceEvidence(photo, analysis);
                       const confidenceLabel = typeof photo.detectedAngleConfidence === "number" ? `${Math.round(photo.detectedAngleConfidence * 100)}%` : "Pending";
-                      const angleConfidenceLabel = referenceEvidence ? "Reference slot" : confidenceLabel === "Pending" ? "Angle pending" : `Angle ${confidenceLabel}`;
+                      const angleConfidenceLabel = referenceEvidence ? "Required view" : confidenceLabel === "Pending" ? "Angle pending" : `Angle ${confidenceLabel}`;
                       const providerLabel = analysisProviderLabel(analysis);
                       const quality = photoQualityView(photo, qualitySuggestionsByPhotoId.get(photo.id), job?.status, analysis);
                       return (
@@ -1144,7 +1350,7 @@ export function InspectionDetailPage() {
                           <ProtectedPhotoImage photo={photo} />
                           <div title={`${photo.originalFilename} · ${quality.detail}`}>
                             <strong>{photoDisplayName(photo)}</strong>
-                            <span className={`photo-confidence-badge ${!referenceEvidence && confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={referenceEvidence ? "Reference manifest checklist mapping" : `Required-angle match confidence ${confidenceLabel}`}>
+                            <span className={`photo-confidence-badge ${!referenceEvidence && confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={referenceEvidence ? "Required checklist view" : `Required-angle match confidence ${confidenceLabel}`}>
                               {angleConfidenceLabel}
                             </span>
                             <span className="photo-file-name">{quality.label}</span>
@@ -1154,7 +1360,7 @@ export function InspectionDetailPage() {
                               <span className="photo-source-chip">{photoSourceLabel(photo)}</span>
                             )}
                             <span className={`analysis-job-chip job-${job?.status ?? photo.analysisStatus}`}>
-                              {referenceEvidence ? "Reference mapped" : `Analysis ${formatJobStatus(job?.status ?? photo.analysisStatus)}`}
+                              {referenceEvidence ? "Checklist matched" : `Analysis ${formatJobStatus(job?.status ?? photo.analysisStatus)}`}
                             </span>
                             {providerLabel ? (
                               <span className={`analysis-provider-chip ${analysis?.provider === "bedrockVisionProvider" ? "provider-bedrock" : "provider-imported"}`}>
@@ -1223,18 +1429,18 @@ export function InspectionDetailPage() {
           <section className="bottom-dock">
             <article className="dock-panel">
               <div className="dock-tabs" role="tablist" aria-label="Condition review">
-                <button type="button" role="tab" aria-selected={conditionDockTab === "grading"} className={conditionDockTab === "grading" ? "active" : ""} onClick={() => setConditionDockTab("grading")}>Condition grading</button>
+                <button type="button" role="tab" aria-selected={conditionDockTab === "grading"} className={conditionDockTab === "grading" ? "active" : ""} onClick={() => setConditionDockTab("grading")}>Condition Report (CR)</button>
                 <button type="button" role="tab" aria-selected={conditionDockTab === "damage"} className={conditionDockTab === "damage" ? "active" : ""} onClick={() => setConditionDockTab("damage")}>Damage items</button>
               </div>
               {conditionDockTab === "grading" ? (
                 <div className="dock-body grading-dock-body">
                   <div className="panel-header">
-                    <h2>Condition grading</h2>
-                    <span>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} grade` : "Not calculated"}</span>
+                    <h2>Condition Report (CR)</h2>
+                    <span>{gradeView?.reviewState === "approved" ? "Reviewer approved" : gradeView ? "Approval required" : bundle.conditionGrade ? "Grade unavailable" : "Not calculated"}</span>
                   </div>
                   <div className="grade-result-card">
-                    <strong>{bundle.conditionGrade ? `${bundle.conditionGrade.score}/100` : "Grade pending"}</strong>
-                    <span>{bundle.conditionGrade ? "Deterministic score based on required evidence, mileage, age, and confirmed damage." : "Calculate the grade after required photo evidence is confirmed."}</span>
+                    <strong>{bundle.conditionGrade ? formatConditionGrade(bundle.conditionGrade) : "Grade pending"}</strong>
+                    <span>{gradeView ? "Condition grade based on required evidence and reviewer-confirmed findings." : bundle.conditionGrade ? "This grade record is incompatible and must be recalculated." : "Calculate the grade after required photo evidence is confirmed."}</span>
                   </div>
                   <div className="grading-stat-grid">
                     <span><strong>{capturedEvidencePercent}%</strong><small>Evidence complete</small></span>
@@ -1244,52 +1450,91 @@ export function InspectionDetailPage() {
                   </div>
                   <div className="grade-detail-list compact-list" tabIndex={0} role="region" aria-label="Condition grade details">
                     {gradeDeductions.length > 0 ? gradeDeductions.map((deduction) => (
-                      <span key={`${deduction.reason}-${deduction.points}`}>
+                      <span key={`${deduction.reason}-${deduction.amount}`}>
                         <strong>{deduction.reason}</strong>
-                        <small>-{deduction.points} pts</small>
+                        <small>-{deduction.amount.toFixed(1)}</small>
                       </span>
                     )) : <p className="empty-dock-state">No damage deductions recorded.</p>}
-                    {bundle.conditionGrade ? (
-                      <>
-                        <span><strong>Evidence completion penalty</strong><small>-{gradeExplanation.completionPenalty ?? 0} pts</small></span>
-                        <span><strong>Mileage adjustment</strong><small>-{gradeExplanation.mileageAdjustment ?? 0} pts</small></span>
-                        <span><strong>Age adjustment</strong><small>-{gradeExplanation.ageAdjustment ?? 0} pts</small></span>
-                      </>
-                    ) : null}
+                    {gradeEvidenceBlockers.map((blocker) => (
+                      <span key={blocker}><strong>Evidence blocker</strong><small>{blocker}</small></span>
+                    ))}
                   </div>
                   <div className="dock-actions">
                     <button className="secondary-button" disabled={gradeDisabled} title={finalizedActionTitle ?? (canGrade ? undefined : "Reviewer or Admin access required")} onClick={() => void runAction("grade", () => api(`/api/inspections/${id}/grade`, { method: "POST", body: JSON.stringify({ idempotencyKey: `grade-${id}` }) }, actor))}>
                       <ShieldCheck size={16} /> Calculate grade
                     </button>
+                    {gradeView?.reviewState === "suggested" ? (
+                      <button className="primary-button" disabled={approveGradeDisabled} title={gradeEvidenceBlockers.length > 0 ? "Resolve evidence blockers before approval." : undefined} onClick={() => void runAction("approve-grade", () => api(`/api/inspections/${id}/condition-grade/approve`, {
+                        method: "POST",
+                        body: JSON.stringify({ approvedGrade: gradeView.value })
+                      }, actor))}>
+                        <Check size={16} /> Approve {gradeView.value.toFixed(1)}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ) : (
                 <div className="dock-body damage-dock-body">
                   <div className="panel-header">
                     <h2>Damage items</h2>
-                    <span>{bundle.damageItems.length} confirmed</span>
+                    <span>
+                      {bundle.damageItems.length} confirmed
+                      {evaluationDamageItems.length > 0 ? ` · ${evaluationDamageItems.length} preview` : ""}
+                    </span>
                   </div>
                   <div className="damage-list compact-list">
-                    {bundle.damageItems.length > 0 ? bundle.damageItems.map((item) => (
-                      <div key={item.id} className="damage-row">
+                    {damageItemsForDisplay.length > 0 ? damageItemsForDisplay.map((item) => (
+                      <div key={item.id} className={`damage-row ${item.source === "evaluation_preview" ? "evaluation-preview" : ""}`}>
                         <strong>{item.location}</strong>
                         <span>{item.severity} {item.damageType.replaceAll("_", " ")}</span>
-                        <small>{item.source === "vision_suggestion" ? "AI-suggested, human-confirmed" : "Manual"}</small>
+                        <small>
+                          {item.source === "vision_suggestion"
+                            ? "AI-suggested, human-confirmed"
+                            : item.source === "evaluation_preview"
+                              ? "Session preview · not saved"
+                              : "Manual"}
+                        </small>
                       </div>
                     )) : <p className="empty-dock-state">No confirmed damage items.</p>}
                   </div>
                   <div className="damage-form">
-                    <input disabled={damageDisabled} value={damageForm.location} onChange={(event) => setDamageForm((current) => ({ ...current, location: event.target.value }))} />
-                    <select disabled={damageDisabled} value={damageForm.damageType} onChange={(event) => setDamageForm((current) => ({ ...current, damageType: event.target.value }))}>
+                    <input aria-label="Damaged area" disabled={damageDisabled} value={damageForm.location} onChange={(event) => setDamageForm((current) => ({ ...current, location: event.target.value }))} />
+                    <select aria-label="Damage type" disabled={damageDisabled} value={damageForm.damageType} onChange={(event) => setDamageForm((current) => ({ ...current, damageType: event.target.value }))}>
                       {["scratch", "dent", "crack", "paint_damage", "glass_damage", "wheel_damage", "interior_wear", "unknown"].map((value) => <option key={value}>{value}</option>)}
                     </select>
-                    <select disabled={damageDisabled} value={damageForm.severity} onChange={(event) => setDamageForm((current) => ({ ...current, severity: event.target.value }))}>
+                    <select aria-label="Damage severity" disabled={damageDisabled} value={damageForm.severity} onChange={(event) => setDamageForm((current) => ({ ...current, severity: event.target.value }))}>
                       {["minor", "moderate", "severe", "unknown"].map((value) => <option key={value}>{value}</option>)}
                     </select>
-                    <button className="secondary-button" disabled={damageDisabled} title={finalizedActionTitle ?? (canConfirmDamage ? undefined : "Reviewer or Admin access required")} onClick={() => void runAction("damage", () => api(`/api/inspections/${id}/damage`, { method: "POST", body: JSON.stringify(damageForm) }, actor))}>
+                    <button
+                      className="secondary-button"
+                      disabled={damageDisabled}
+                      title={damageDisabledReason}
+                      onClick={() => {
+                        if (canPreviewDamage) {
+                          addEvaluationDamagePreview();
+                          return;
+                        }
+                        void runAction("damage", async () => {
+                          await api(`/api/inspections/${id}/damage`, {
+                            method: "POST",
+                            headers: { "idempotency-key": damageOperationId },
+                            body: JSON.stringify({ ...damageForm, idempotencyKey: damageOperationId })
+                          }, actor);
+                          setDamageOperationId(crypto.randomUUID());
+                        });
+                      }}
+                    >
                       <Pencil size={16} /> Add
                     </button>
                   </div>
+                  {damageHelperText ? (
+                    <div className={`damage-permission-row ${canPreviewDamage ? "evaluation-preview" : ""}`}>
+                      <p className="damage-permission-note">{damageHelperText}</p>
+                      {canPreviewDamage && evaluationDamageItems.length > 0 ? (
+                        <button className="text-button" type="button" onClick={clearEvaluationDamagePreview}>Clear preview</button>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               )}
             </article>
@@ -1302,7 +1547,21 @@ export function InspectionDetailPage() {
               {reportDockTab === "draft" ? (
                 <div className="dock-body report-dock-body">
                   <div className="report-actions dock-actions">
-                    <button className="secondary-button" disabled={draftReportDisabled} title={draftReportDisabledReason || undefined} onClick={() => void runAction("report", () => api(`/api/inspections/${id}/ai-report`, { method: "POST", body: JSON.stringify({ idempotencyKey: `report-${id}` }) }, actor))}>
+                    <button className="secondary-button" disabled={draftReportDisabled} title={draftReportDisabledReason || undefined} onClick={() => void runAction("report", () => {
+                      if (bundle.inspection.status === "REPORT_FAILED" && bundle.aiReportJob) {
+                        const retryKey = `report-retry-${bundle.aiReportJob.id}`;
+                        return api(`/api/ai-report-jobs/${bundle.aiReportJob.id}/retry`, {
+                          method: "POST",
+                          headers: { "idempotency-key": retryKey },
+                          body: JSON.stringify({ idempotencyKey: retryKey })
+                        }, actor);
+                      }
+                      return api(`/api/inspections/${id}/ai-report`, {
+                        method: "POST",
+                        headers: { "idempotency-key": `report-${id}-${bundle.conditionGrade?.id ?? "pending"}` },
+                        body: JSON.stringify({ idempotencyKey: `report-${id}-${bundle.conditionGrade?.id ?? "pending"}` })
+                      }, actor);
+                    })}>
                       <Bot size={16} /> {draftReportButtonLabel}
                     </button>
                   </div>
@@ -1314,17 +1573,29 @@ export function InspectionDetailPage() {
                     </div>
                   ) : null}
                   <div className="grade-strip">
-                    <strong>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} · ${bundle.conditionGrade.score}` : "Grade not calculated"}</strong>
-                    <span>{bundle.conditionGrade ? "Score based on evidence completeness, mileage, age, and confirmed damage." : "Condition score appears after grading."}</span>
-                  </div>
-                  {bundle.aiReportDraft ? (
-                    <div className="ai-draft" tabIndex={0} role="region" aria-label="AI report draft summary">
-                      <h3>Draft summary</h3>
-                      <p>{bundle.aiReportDraft.outputJson.summary}</p>
-                      <small>Confidence {Math.round(bundle.aiReportDraft.confidence * 100)}% · human review {bundle.aiReportDraft.humanReviewRequired ? "required" : "optional"}</small>
+                    <div>
+                      <strong>{bundle.conditionGrade ? formatConditionGrade(bundle.conditionGrade) : "Grade not calculated"}</strong>
+                      <span>{gradeView?.reviewState === "approved" ? "Reviewer-approved condition grade." : gradeView ? "Suggested grade requires reviewer approval." : bundle.conditionGrade ? "Recalculate this incompatible grade record." : "Condition grade appears after grading."}</span>
                     </div>
-                  ) : null}
-                  <textarea aria-label="Buyer-facing condition report" value={reportBody} disabled={editReportDisabled} onChange={(event) => setReportBody(event.target.value)} placeholder="Generate a report draft to review buyer-ready language." />
+                    {bundle.aiReportDraft ? (
+                      <small>Draft confidence {Math.round(bundle.aiReportDraft.confidence * 100)}% · human review {bundle.aiReportDraft.humanReviewRequired ? "required" : "optional"}</small>
+                    ) : null}
+                  </div>
+                  {editReportDisabled ? (
+                    <>
+                      <div className={`report-document ${reportBodyOverview ? "" : "empty"}`} role="region" aria-label="Buyer-facing condition report overview">
+                        {reportBodyOverview || "Generate a report draft to review buyer-ready language."}
+                      </div>
+                      {hasAdditionalReportContent ? (
+                        <details className="report-full-details">
+                          <summary>View complete report</summary>
+                          <div className="report-document" role="region" aria-label="Complete buyer-facing condition report">{reportBody.trim()}</div>
+                        </details>
+                      ) : null}
+                    </>
+                  ) : (
+                    <textarea className="report-document-editor" aria-label="Buyer-facing condition report" value={reportBody} onChange={(event) => setReportBody(event.target.value)} placeholder="Generate a report draft to review buyer-ready language." />
+                  )}
                   {bundle.finalReport ? (
                     <div className="report-review-state">
                       <div>
@@ -1333,7 +1604,11 @@ export function InspectionDetailPage() {
                       </div>
                       <label>
                         <span>Reviewer comment</span>
-                        <textarea value={reportComment} disabled={editReportDisabled} onChange={(event) => setReportComment(event.target.value)} placeholder="Record evidence checks, disclosure edits, or approval rationale." />
+                        {editReportDisabled ? (
+                          <p className="reviewer-comment-readonly">{reportComment.trim() || "No reviewer comment recorded."}</p>
+                        ) : (
+                          <textarea value={reportComment} onChange={(event) => setReportComment(event.target.value)} placeholder="Record evidence checks, disclosure edits, or approval rationale." />
+                        )}
                       </label>
                     </div>
                   ) : null}
@@ -1404,6 +1679,24 @@ export function InspectionDetailPage() {
                       </ul>
                     ) : <p>No notable items recorded.</p>}
                   </div>
+                  {(reportOutput.conditionReportSections?.length ?? 0) > 0 ? (
+                    <details className="summary-section report-section-details">
+                      <summary>Condition report sections ({reportOutput.conditionReportSections?.length})</summary>
+                      <div className="report-section-list">
+                        {reportOutput.conditionReportSections?.map((section) => (
+                          <article key={section.key}>
+                            <header>
+                              <strong>{section.title}</strong>
+                              <span className={`queue-status section-${section.status.toLowerCase()}`}>{section.status.replaceAll("_", " ")}</span>
+                            </header>
+                            <ul className="summary-list">
+                              {section.observations.map((observation) => <li key={observation}>{observation}</li>)}
+                            </ul>
+                          </article>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
                   <div className="summary-section">
                     <strong>Release Notes</strong>
                     <p>{reportOutput.recommendedDisclosure ?? (missingEvidence.length > 0 ? missingEvidence.join(" ") : "Evidence is complete. Reviewer can finalize once the draft is approved.")}</p>
@@ -1429,7 +1722,21 @@ export function InspectionDetailPage() {
         <aside className="review-column" tabIndex={0} aria-label="Evidence finding review">
           <div className="review-heading">
             <strong>{reviewRailTitle}</strong>
-            {!canReviewSuggestions && !isFinalizedInspection ? <span>Reviewer or Admin action required.</span> : null}
+            {isEvaluationWorkspace && canReviewSuggestions && !isFinalizedInspection ? (
+              evaluationReviewCount > 0 ? (
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    clearEvaluationReview(window.sessionStorage, id);
+                    setEvaluationDamageItems(loadEvaluationDamage(window.sessionStorage, id));
+                    void load();
+                  }}
+                >
+                  Reset {evaluationReviewCount} session decision{evaluationReviewCount === 1 ? "" : "s"}
+                </button>
+              ) : <span>Session-only decisions</span>
+            ) : null}
+            {!canReviewSuggestions && !isFinalizedInspection ? <span>Select Reviewer or Admin to review.</span> : null}
           </div>
           {pendingSuggestions.length === 0 ? (
             <div className={`review-empty-state ${isFinalizedInspection ? "complete" : ""}`}>
@@ -1463,9 +1770,9 @@ export function InspectionDetailPage() {
               photo={photosById.get(suggestion.photoId)}
               analysis={analysisResultByPhotoId.get(suggestion.photoId)}
               disabled={reviewDisabled}
-              onAccept={() => runAction("accept", () => api(`/api/vision-suggestions/${suggestion.id}/accept`, { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) }, actor))}
-              onReject={() => runAction("reject", () => api(`/api/vision-suggestions/${suggestion.id}/reject`, { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) }, actor))}
-              onEdit={(value) => runAction("edit", () => api(`/api/vision-suggestions/${suggestion.id}`, { method: "PATCH", body: JSON.stringify({ ...value, expectedVersion: suggestion.version }) }, actor))}
+              onAccept={() => reviewSuggestion(suggestion, "accepted")}
+              onReject={() => reviewSuggestion(suggestion, "rejected")}
+              onEdit={(value) => reviewSuggestion(suggestion, "edited", value)}
             />
           ))}
         </aside>
@@ -1486,12 +1793,12 @@ function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onRej
   const confidencePercent = Math.round(suggestion.confidence * 100);
   const referenceEvidence = Boolean(photo && isReferenceEvidence(photo, analysis));
   const rows = referenceEvidence ? referenceSuggestionFacts(suggestion) : suggestionFacts(suggestion);
-  const providerLabel = analysisProviderLabel(analysis) ?? "Analysis provider";
+  const providerLabel = analysisProviderLabel(analysis);
   return (
     <article className="suggestion-card">
       <div className="suggestion-context">
         <span>Focus: <strong>{suggestionFocus(suggestion)}</strong></span>
-        <span className="model-chip">{providerLabel} <ChevronRight size={13} /></span>
+        {providerLabel ? <span className="model-chip">{providerLabel} <ChevronRight size={13} /></span> : null}
       </div>
       {photo ? (
         <div className="suggestion-photo">
@@ -1506,17 +1813,12 @@ function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onRej
             <dd>{value}</dd>
           </div>
         ))}
-        {referenceEvidence ? (
-          <div className="confidence-fact">
-            <dt>Provenance</dt>
-            <dd>Source manifest + reviewer decision</dd>
-          </div>
-        ) : (
+        {!referenceEvidence ? (
           <div className="confidence-fact">
             <dt>Confidence</dt>
             <dd><ConfidenceMeter percent={confidencePercent} /></dd>
           </div>
-        )}
+        ) : null}
         <div className="notes-fact">
           <dt>Notes</dt>
           <dd>{suggestionNote(suggestion)}</dd>

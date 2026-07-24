@@ -23,6 +23,24 @@ const adminHeaders = {
   "x-actor-role": "admin"
 };
 
+const reconCoordinatorHeaders = {
+  "x-actor-id": "recon-coordinator",
+  "x-actor-name": "Alex Rivera",
+  "x-actor-role": "recon_coordinator"
+};
+
+const consignorApproverHeaders = {
+  "x-actor-id": "consignor-approver-sdg",
+  "x-actor-name": "Morgan Ellis",
+  "x-actor-role": "consignor_approver"
+};
+
+const unrelatedConsignorHeaders = {
+  "x-actor-id": "consignor-approver-unrelated",
+  "x-actor-name": "Unrelated Consignor",
+  "x-actor-role": "consignor_approver"
+};
+
 const mutableEnvKeys = [
   "AUTH_MODE",
   "OIDC_ISSUER",
@@ -38,7 +56,10 @@ const mutableEnvKeys = [
   "ENABLE_REFERENCE_EVIDENCE",
   "ENABLE_EVALUATION_MODE",
   "IMAGE_UPLOAD_MODE",
-  "IMAGE_BUCKET"
+  "IMAGE_BUCKET",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN"
 ] as const;
 const originalEnv = Object.fromEntries(mutableEnvKeys.map((key) => [key, process.env[key]]));
 
@@ -198,10 +219,131 @@ describe("InspectIQ API", () => {
       }),
       expect.objectContaining({
         inspection: expect.objectContaining({ vin: "KNMAT2MV6KP514068" }),
+        finalReport: expect.objectContaining({ finalizedBy: "review-lead" })
+      }),
+      expect.objectContaining({
+        inspection: expect.objectContaining({ vin: "1HGCV1F49LA129627" }),
         aiReportDraft: expect.objectContaining({ humanReviewRequired: true }),
         finalReport: expect.objectContaining({ finalizedAt: null })
       })
     ]));
+  });
+
+  it("lets the assigned inspector and an admin add manual damage while evaluation roles remain read-only", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id as string;
+
+    await request(api)
+      .post(`/api/inspections/${inspectionId}/damage`)
+      .set(inspectorHeaders)
+      .send({
+        location: "right rear wheel",
+        damageType: "wheel_damage",
+        severity: "minor",
+        notes: "Inspector-confirmed curb rash."
+      })
+      .expect(201);
+
+    await request(api)
+      .post(`/api/inspections/${inspectionId}/damage`)
+      .set(adminHeaders)
+      .send({
+        location: "front bumper",
+        damageType: "scratch",
+        severity: "minor",
+        notes: "Admin-confirmed paint transfer."
+      })
+      .expect(201);
+
+    process.env.ENABLE_EVALUATION_MODE = "true";
+    for (const role of ["inspector", "admin"]) {
+      await request(api)
+        .post(`/api/evaluation/inspections/${inspectionId}/damage`)
+        .set("x-actor-role", role)
+        .send({
+          location: "left rear door",
+          damageType: "dent",
+          severity: "minor",
+          notes: "Evaluation attempt."
+        })
+        .expect(403);
+    }
+
+    expect(store.listDamage(inspectionId)).toHaveLength(2);
+  });
+
+  it("enforces consignor scope and completes estimate-overrun recovery through the API", async () => {
+    const queue = await request(api)
+      .get("/api/operations/recon")
+      .set(reconCoordinatorHeaders)
+      .expect(200);
+    const nissan = queue.body.data.find((record: { inspection: { vin: string } }) =>
+      record.inspection.vin === "KNMAT2MV6KP514068"
+    );
+    expect(nissan).toBeDefined();
+
+    await request(api)
+      .get(`/api/operations/recon/${nissan.inspection.id}`)
+      .set(unrelatedConsignorHeaders)
+      .expect(403);
+
+    const scoped = await request(api)
+      .get(`/api/operations/recon/${nissan.inspection.id}`)
+      .set(consignorApproverHeaders)
+      .expect(200);
+    const mechanicalOrder = scoped.body.data.workOrders.find((order: { serviceDepartment: string }) =>
+      order.serviceDepartment === "MECHANICAL"
+    );
+    const mechanicalTask = mechanicalOrder.tasks[0];
+    const mechanicalAuthorization = scoped.body.data.authorizations.find((authorization: { recommendationId: string }) =>
+      authorization.recommendationId === mechanicalTask.recommendationId
+    );
+
+    await request(api)
+      .post(`/api/recon/authorizations/${mechanicalAuthorization.id}/decision`)
+      .set(consignorApproverHeaders)
+      .send({
+        decision: "APPROVE",
+        decisionReason: "Approved the revised verification estimate before the sale deadline.",
+        authorizedAmount: mechanicalOrder.currentEstimatedCost,
+        expectedVersion: mechanicalAuthorization.version
+      })
+      .expect(200);
+
+    const operationAfterApproval = await request(api)
+      .get(`/api/operations/recon/${nissan.inspection.id}`)
+      .set(reconCoordinatorHeaders)
+      .expect(200);
+    const approvedMechanicalOrder = operationAfterApproval.body.data.workOrders.find(
+      (order: { id: string }) => order.id === mechanicalOrder.id
+    );
+
+    const started = await request(api)
+      .patch(`/api/work-orders/${mechanicalOrder.id}`)
+      .set(reconCoordinatorHeaders)
+      .send({ action: "START", expectedVersion: approvedMechanicalOrder.version })
+      .expect(200);
+    const sentToQc = await request(api)
+      .patch(`/api/work-orders/${mechanicalOrder.id}`)
+      .set(reconCoordinatorHeaders)
+      .send({ action: "SEND_TO_QC", expectedVersion: started.body.data.version })
+      .expect(200);
+    await request(api)
+      .post(`/api/work-orders/${mechanicalOrder.id}/quality-control`)
+      .set(reconCoordinatorHeaders)
+      .send({
+        decision: "PASS",
+        notes: "Reauthorized condition-verification scope completed.",
+        expectedVersion: sentToQc.body.data.version
+      })
+      .expect(201);
+
+    const readiness = await request(api)
+      .post(`/api/inspections/${nissan.inspection.id}/sale-readiness`)
+      .set(reconCoordinatorHeaders)
+      .send({})
+      .expect(200);
+    expect(readiness.body.data).toMatchObject({ saleReady: true, blockers: [] });
   });
 
   it("blocks reference evidence loading when the production guard is disabled", async () => {
@@ -300,21 +442,37 @@ describe("InspectIQ API", () => {
       await request(api).post(`/api/vision-suggestions/${suggestion.id}/accept`).set(reviewerHeaders).send({}).expect(200);
     }
 
-    await request(api)
+    const damagePayload = {
+      location: "left rear wheel",
+      damageType: "wheel_damage",
+      severity: "minor",
+      notes: "Manual reviewer note from integration test.",
+      idempotencyKey: "damage-e2e"
+    };
+    const damage = await request(api)
       .post(`/api/inspections/${inspectionId}/damage`)
       .set(reviewerHeaders)
-      .send({
-        location: "left rear wheel",
-        damageType: "wheel_damage",
-        severity: "minor",
-        notes: "Manual reviewer note from integration test."
-      })
+      .set("idempotency-key", damagePayload.idempotencyKey)
+      .send(damagePayload)
       .expect(201);
+    const duplicateDamage = await request(api)
+      .post(`/api/inspections/${inspectionId}/damage`)
+      .set(reviewerHeaders)
+      .set("idempotency-key", damagePayload.idempotencyKey)
+      .send(damagePayload)
+      .expect(200);
+    expect(duplicateDamage.body.data.id).toBe(damage.body.data.id);
 
-    await request(api)
+    const grade = await request(api)
       .post(`/api/inspections/${inspectionId}/grade`)
       .set(reviewerHeaders)
       .send({ idempotencyKey: "grade-e2e" })
+      .expect(200);
+
+    await request(api)
+      .post(`/api/inspections/${inspectionId}/condition-grade/approve`)
+      .set(reviewerHeaders)
+      .send({ approvedGrade: grade.body.data.suggestedGrade })
       .expect(200);
 
     const report = await request(api)
@@ -576,8 +734,11 @@ describe("InspectIQ API", () => {
     });
   });
 
-  it("returns external reference-evidence URLs without S3 presigning", async () => {
+  it("previews the same private reference object that image analysis reads", async () => {
     process.env.IMAGE_UPLOAD_MODE = "presigned";
+    process.env.AWS_ACCESS_KEY_ID = "test-access-key";
+    process.env.AWS_SECRET_ACCESS_KEY = "test-secret-key";
+    delete process.env.AWS_SESSION_TOKEN;
     const created = await createInspection();
     const inspectionId = created.body.data.id as string;
     const storageKey = "https://example.test/reference-evidence/passenger-side.jpg";
@@ -600,10 +761,12 @@ describe("InspectIQ API", () => {
       .expect(200);
 
     expect(imagePreview.body.data).toMatchObject({
-      imageUrl: storageKey,
-      expiresInSeconds: null,
-      source: "reference-evidence"
+      expiresInSeconds: 900,
+      source: "object-storage"
     });
+    expect(imagePreview.body.data.imageUrl).toContain("inspectiq-test-images");
+    expect(imagePreview.body.data.imageUrl).toContain("passenger-side.jpg");
+    expect(imagePreview.body.data.imageUrl).not.toBe(storageKey);
   });
 
   it("allows read-only evaluation preview without allowing mutations", async () => {
@@ -718,7 +881,20 @@ describe("InspectIQ API", () => {
       .set(reviewerHeaders)
       .send({ idempotencyKey: "grade-e2e" })
       .expect(200);
-    expect(graded.body.data.score).toBeGreaterThan(0);
+    expect(graded.body.data.suggestedGrade).toBeGreaterThan(0);
+    expect(graded.body.data.approvedGrade).toBeNull();
+    const duplicateGrade = await request(api)
+      .post(`/api/inspections/${inspectionId}/grade`)
+      .set(reviewerHeaders)
+      .send({ idempotencyKey: "grade-e2e" })
+      .expect(200);
+    expect(duplicateGrade.body.data.id).toBe(graded.body.data.id);
+
+    await request(api)
+      .post(`/api/inspections/${inspectionId}/condition-grade/approve`)
+      .set(reviewerHeaders)
+      .send({ approvedGrade: graded.body.data.suggestedGrade })
+      .expect(200);
 
     const report = await request(api)
       .post(`/api/inspections/${inspectionId}/ai-report`)
@@ -727,7 +903,23 @@ describe("InspectIQ API", () => {
       .send({})
       .expect(200);
     expect(report.body.data.draft.outputJson.summary).toContain("Mazda");
+    expect(report.body.data.draft.outputJson.inspectionType).toBe("VISUAL_CONDITION_REPORT");
+    expect(report.body.data.draft.outputJson.conditionReportSections).toHaveLength(20);
+    expect(report.body.data.draft.outputJson.conditionReportSections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "VIN_VERIFICATION", title: "VIN verification" }),
+      expect.objectContaining({ key: "STRUCTURAL_OBSERVATIONS" }),
+      expect.objectContaining({ key: "ANNOUNCEMENTS_AND_DISCLOSURES" })
+    ]));
     expect(report.body.data.finalReport.id).toBeTruthy();
+    const duplicateReport = await request(api)
+      .post(`/api/inspections/${inspectionId}/ai-report`)
+      .set(reviewerHeaders)
+      .set("idempotency-key", "report-e2e")
+      .send({})
+      .expect(200);
+    expect(duplicateReport.body.data.job.id).toBe(report.body.data.job.id);
+    expect(duplicateReport.body.data.draft.id).toBe(report.body.data.draft.id);
+    expect(duplicateReport.body.data.finalReport.id).toBe(report.body.data.finalReport.id);
 
     const approved = await request(api)
       .post(`/api/reports/${report.body.data.finalReport.id}/approve`)
@@ -749,9 +941,13 @@ describe("InspectIQ API", () => {
     expect(eventTypes).toContain("image_analysis.started");
     expect(eventTypes).toContain("photo.analyzed");
     expect(eventTypes).toContain("condition.grade_generated");
+    expect(eventTypes).toContain("condition.grade_approved");
     expect(eventTypes).toContain("ai_report.generated");
     expect(eventTypes).toContain("damage.added");
     expect(eventTypes).toContain("report.finalized");
+    expect([...store.domainEvents.values()].some((event) =>
+      event.inspectionId === inspectionId && event.eventType === "condition_report.published"
+    )).toBe(true);
   });
 
   it("persists image-quality scores and retake policy from analysis output", async () => {
@@ -877,11 +1073,13 @@ describe("InspectIQ API", () => {
     inspection.status = "READY_FOR_GRADING";
     inspection.completenessPercentage = 100;
     store.saveGrade(inspection.id, {
-      score: 88,
-      grade: "B",
+      suggestedGrade: 4.4,
+      conditionGradeBeforeRecon: 4.4,
+      evidenceBlockers: [],
       explanationJson: { deductions: [] },
       gradingVersion: "test-grader"
     }, reviewer);
+    store.approveGrade(inspection.id, 4.4, null, reviewer);
     const failedJob = store.createReportJob(inspection.id, "test-failed-report", reviewer);
     store.markJobRunning(failedJob.id);
     store.failReportJob(failedJob.id, "Provider timeout", reviewer);
@@ -1223,6 +1421,8 @@ describe("InspectIQ API", () => {
 
     expect(exported.text).toContain("Condition Report:");
     expect(exported.text).toContain("Confirmed Damage");
+    expect(exported.text).toContain("VIN verification");
+    expect(exported.text).toContain("Announcements and disclosures");
     expect(exported.text).not.toContain("VisionOutputSchema");
     expect(exported.text).not.toContain("validated schema");
   });

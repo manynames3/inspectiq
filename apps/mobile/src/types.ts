@@ -135,7 +135,20 @@ export type InspectionBundle = {
   photoAnalysisResults?: PhotoAnalysisResult[];
   suggestions: VisionSuggestion[];
   damageItems: DamageItem[];
-  conditionGrade: { id: string; score: number; grade: string; explanationJson: unknown; gradingVersion: string } | null;
+  conditionGrade: {
+    id: string;
+    inspectionId: string;
+    suggestedGrade: number;
+    approvedGrade: number | null;
+    conditionGradeBeforeRecon: number;
+    estimatedGradeAfterRecon: number;
+    reviewedBy: string | null;
+    overrideReason: string | null;
+    evidenceBlockers: string[];
+    explanationJson: unknown;
+    gradingVersion: string;
+    version: number;
+  } | null;
   aiReportJob: { id: string; status: string; errorMessage: string | null } | null;
   aiReportDraft: { id: string; confidence: number; humanReviewRequired: boolean } | null;
   finalReport: FinalReport | null;
