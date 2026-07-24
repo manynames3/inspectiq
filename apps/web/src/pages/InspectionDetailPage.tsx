@@ -1386,13 +1386,13 @@ export function InspectionDetailPage() {
           <section className="bottom-dock">
             <article className="dock-panel">
               <div className="dock-tabs" role="tablist" aria-label="Condition review">
-                <button type="button" role="tab" aria-selected={conditionDockTab === "grading"} className={conditionDockTab === "grading" ? "active" : ""} onClick={() => setConditionDockTab("grading")}>Condition grading</button>
+                <button type="button" role="tab" aria-selected={conditionDockTab === "grading"} className={conditionDockTab === "grading" ? "active" : ""} onClick={() => setConditionDockTab("grading")}>Condition Report (CR)</button>
                 <button type="button" role="tab" aria-selected={conditionDockTab === "damage"} className={conditionDockTab === "damage" ? "active" : ""} onClick={() => setConditionDockTab("damage")}>Damage items</button>
               </div>
               {conditionDockTab === "grading" ? (
                 <div className="dock-body grading-dock-body">
                   <div className="panel-header">
-                    <h2>Condition grading</h2>
+                    <h2>Condition Report (CR)</h2>
                     <span>{gradeView?.reviewState === "approved" ? "Reviewer approved" : gradeView ? "Approval required" : bundle.conditionGrade ? "Grade unavailable" : "Not calculated"}</span>
                   </div>
                   <div className="grade-result-card">
