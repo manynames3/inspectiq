@@ -108,8 +108,11 @@ async function upsertRows(client: PoolClient, table: string, columns: string[], 
     .filter((column) => column !== "id")
     .map((column) => `${column} = excluded.${column}`)
     .join(", ");
+  const conflictClause = table === "vision_suggestions"
+    ? "on conflict do nothing"
+    : `on conflict (id) do update set ${updates}`;
   await client.query(
-    `insert into ${table} (${columns.join(", ")}) values ${rowSql.join(", ")} on conflict (id) do update set ${updates}`,
+    `insert into ${table} (${columns.join(", ")}) values ${rowSql.join(", ")} ${conflictClause}`,
     values
   );
 }

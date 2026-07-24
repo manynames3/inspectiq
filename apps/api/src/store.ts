@@ -128,6 +128,37 @@ function validateSuggestionValue(suggestion: VisionSuggestion): unknown {
   return ExtractedTextSuggestionSchema.parse(suggestion.suggestedValueJson);
 }
 
+function suggestionValueRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function normalizedSuggestionText(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function suggestionSemanticKey(input: Pick<VisionSuggestion, "photoId" | "suggestionType" | "suggestedValueJson">): string {
+  const value = suggestionValueRecord(input.suggestedValueJson);
+  let finding: string;
+  if (input.suggestionType === "photo_angle") {
+    finding = normalizedSuggestionText(value.photoAngle);
+  } else if (input.suggestionType === "quality_warning") {
+    finding = normalizedSuggestionText(value.warning);
+  } else if (input.suggestionType === "extracted_text") {
+    const vin = String(value.vin ?? "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+    const odometer = String(value.odometer ?? "").replace(/\D/g, "");
+    finding = `${vin}:${odometer}`;
+  } else {
+    finding = [
+      normalizedSuggestionText(value.location),
+      normalizedSuggestionText(value.damageType),
+      normalizedSuggestionText(value.severityEstimate)
+    ].join(":");
+  }
+  return `${input.photoId}:${input.suggestionType}:${finding}`;
+}
+
 export class MemoryStore {
   users = new Map<string, User>();
   inspections = new Map<string, Inspection>();
@@ -756,6 +787,27 @@ export class MemoryStore {
   }
 
   createSuggestion(input: CreateVisionSuggestionInput): VisionSuggestion {
+    const semanticKey = suggestionSemanticKey(input);
+    const existing = [...this.suggestions.values()].find((suggestion) =>
+      suggestionSemanticKey(suggestion) === semanticKey
+    );
+    if (existing) {
+      if (existing.status === "pending") {
+        const changed =
+          JSON.stringify(existing.suggestedValueJson) !== JSON.stringify(input.suggestedValueJson) ||
+          existing.confidence !== input.confidence ||
+          existing.explanation !== input.explanation;
+        existing.suggestedValueJson = input.suggestedValueJson;
+        existing.confidence = input.confidence;
+        existing.explanation = input.explanation;
+        if (input.assignedToRole !== undefined) existing.assignedToRole = input.assignedToRole;
+        if (input.assignedToUserId !== undefined) existing.assignedToUserId = input.assignedToUserId;
+        if (input.dueAt !== undefined) existing.dueAt = input.dueAt;
+        if (changed) existing.version += 1;
+      }
+      return existing;
+    }
+
     const createdAt = now();
     const { assignedToRole, assignedToUserId, dueAt, ...suggestionInput } = input;
     const suggestion: VisionSuggestion = {
@@ -780,6 +832,57 @@ export class MemoryStore {
     return [...this.suggestions.values()]
       .filter((suggestion) => suggestion.inspectionId === inspectionId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  reconcileDuplicateSuggestions(actor: Actor): number {
+    const groups = new Map<string, VisionSuggestion[]>();
+    for (const suggestion of this.suggestions.values()) {
+      const key = suggestionSemanticKey(suggestion);
+      groups.set(key, [...(groups.get(key) ?? []), suggestion]);
+    }
+
+    const removedByInspection = new Map<string, string[]>();
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      const ranked = [...group].sort((left, right) => {
+        const statusRank = (suggestion: VisionSuggestion) => {
+          if (suggestion.status === "accepted" || suggestion.status === "rejected") return 4;
+          if (suggestion.status === "edited") return 3;
+          return 2;
+        };
+        const rankDifference = statusRank(right) - statusRank(left);
+        if (rankDifference !== 0) return rankDifference;
+        if (statusRank(left) >= 3) {
+          const rightDecision = right.resolvedAt ?? right.reviewedAt ?? right.createdAt;
+          const leftDecision = left.resolvedAt ?? left.reviewedAt ?? left.createdAt;
+          const decisionDifference = rightDecision.localeCompare(leftDecision);
+          if (decisionDifference !== 0) return decisionDifference;
+        }
+        const createdDifference = left.createdAt.localeCompare(right.createdAt);
+        return createdDifference !== 0 ? createdDifference : left.id.localeCompare(right.id);
+      });
+      const keeper = ranked[0]!;
+      for (const duplicate of ranked.slice(1)) {
+        for (const verification of this.identityVerifications.values()) {
+          if (verification.sourceSuggestionId === duplicate.id) {
+            verification.sourceSuggestionId = keeper.id;
+          }
+        }
+        this.suggestions.delete(duplicate.id);
+        removedByInspection.set(duplicate.inspectionId, [
+          ...(removedByInspection.get(duplicate.inspectionId) ?? []),
+          duplicate.id
+        ]);
+      }
+    }
+
+    for (const [inspectionId, removedSuggestionIds] of removedByInspection) {
+      this.addAudit(inspectionId, actor, "suggestion.duplicates_reconciled", {
+        removedSuggestionIds,
+        reason: "Repeated analysis or import runs created the same review finding for one photo."
+      });
+    }
+    return [...removedByInspection.values()].reduce((total, ids) => total + ids.length, 0);
   }
 
   getSuggestion(idValue: string): VisionSuggestion {

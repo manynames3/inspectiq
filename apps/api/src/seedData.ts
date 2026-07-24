@@ -242,6 +242,7 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
   }
   changed = removeUnsupportedReferenceClaims(store) || changed;
   changed = removeReferenceMetadataOcrClaims(store) || changed;
+  changed = store.reconcileDuplicateSuggestions(systemActor) > 0 || changed;
   return changed;
 }
 

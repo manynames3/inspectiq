@@ -121,6 +121,23 @@ create table if not exists vision_suggestions (
   photo_id text not null references vehicle_photos(id) on delete cascade,
   suggestion_type text not null,
   suggested_value_json jsonb not null,
+  semantic_key text generated always as (
+    case suggestion_type
+      when 'photo_angle' then lower(btrim(coalesce(suggested_value_json ->> 'photoAngle', '')))
+      when 'quality_warning' then lower(btrim(coalesce(suggested_value_json ->> 'warning', '')))
+      when 'extracted_text' then
+        upper(regexp_replace(coalesce(suggested_value_json ->> 'vin', ''), '[^a-zA-Z0-9]', '', 'g'))
+        || ':' ||
+        regexp_replace(coalesce(suggested_value_json ->> 'odometer', ''), '[^0-9]', '', 'g')
+      when 'damage_candidate' then
+        lower(btrim(coalesce(suggested_value_json ->> 'location', '')))
+        || ':' ||
+        lower(btrim(coalesce(suggested_value_json ->> 'damageType', '')))
+        || ':' ||
+        lower(btrim(coalesce(suggested_value_json ->> 'severityEstimate', '')))
+      else suggested_value_json::text
+    end
+  ) stored,
   confidence numeric not null,
   explanation text not null,
   status text not null default 'pending' check (status in ('pending', 'accepted', 'rejected', 'edited')),
@@ -139,6 +156,24 @@ alter table vision_suggestions add column if not exists assigned_to_user_id text
 alter table vision_suggestions add column if not exists due_at timestamptz not null default now();
 alter table vision_suggestions add column if not exists resolved_at timestamptz;
 alter table vision_suggestions add column if not exists version integer not null default 1;
+alter table vision_suggestions
+  add column if not exists semantic_key text generated always as (
+    case suggestion_type
+      when 'photo_angle' then lower(btrim(coalesce(suggested_value_json ->> 'photoAngle', '')))
+      when 'quality_warning' then lower(btrim(coalesce(suggested_value_json ->> 'warning', '')))
+      when 'extracted_text' then
+        upper(regexp_replace(coalesce(suggested_value_json ->> 'vin', ''), '[^a-zA-Z0-9]', '', 'g'))
+        || ':' ||
+        regexp_replace(coalesce(suggested_value_json ->> 'odometer', ''), '[^0-9]', '', 'g')
+      when 'damage_candidate' then
+        lower(btrim(coalesce(suggested_value_json ->> 'location', '')))
+        || ':' ||
+        lower(btrim(coalesce(suggested_value_json ->> 'damageType', '')))
+        || ':' ||
+        lower(btrim(coalesce(suggested_value_json ->> 'severityEstimate', '')))
+      else suggested_value_json::text
+    end
+  ) stored;
 alter table vision_suggestions drop constraint if exists vision_suggestions_assigned_to_role_check;
 alter table vision_suggestions add constraint vision_suggestions_assigned_to_role_check check (assigned_to_role in ('inspector', 'reviewer'));
 

@@ -105,6 +105,7 @@ export const visionSuggestions = pgTable("vision_suggestions", {
   photoId: text("photo_id").notNull().references(() => vehiclePhotos.id),
   suggestionType: text("suggestion_type").notNull(),
   suggestedValueJson: jsonb("suggested_value_json").notNull(),
+  semanticKey: text("semantic_key"),
   confidence: numeric("confidence").notNull(),
   explanation: text("explanation").notNull(),
   status: text("status").notNull(),

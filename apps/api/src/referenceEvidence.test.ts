@@ -279,4 +279,73 @@ describe("reference evidence reconciliation", () => {
     expect(store.getPhoto(odometer.id).detectedAngleConfidence).toBe(0.91);
     expect(store.listSuggestions(toyota.id).some((suggestion) => suggestion.suggestionType === "extracted_text")).toBe(true);
   });
+
+  it("reuses the same actionable finding when a photo is analyzed repeatedly", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const honda = [...store.inspections.values()].find((inspection) => inspection.vin === "1HGCV1F49LA129627")!;
+    const passenger = store.listPhotos(honda.id).find((photo) => photo.declaredAngle === "passenger_side")!;
+    const warning = store.listSuggestions(honda.id).find((suggestion) =>
+      suggestion.photoId === passenger.id && suggestion.suggestionType === "quality_warning"
+    )!;
+    const suggestionCount = store.listSuggestions(honda.id).length;
+    const previousVersion = warning.version;
+
+    const repeated = store.createSuggestion({
+      inspectionId: honda.id,
+      photoId: passenger.id,
+      suggestionType: "quality_warning",
+      suggestedValueJson: {
+        warning: (warning.suggestedValueJson as { warning: string }).warning,
+        imageQuality: {
+          ...(warning.suggestedValueJson as { imageQuality: Record<string, unknown> }).imageQuality,
+          framingScore: 0.93
+        }
+      },
+      confidence: 0.74,
+      explanation: warning.explanation
+    });
+
+    expect(repeated.id).toBe(warning.id);
+    expect(repeated.version).toBe(previousVersion + 1);
+    expect(store.listSuggestions(honda.id)).toHaveLength(suggestionCount);
+  });
+
+  it("removes legacy duplicate review rows while retaining the completed decision", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const honda = [...store.inspections.values()].find((inspection) => inspection.vin === "1HGCV1F49LA129627")!;
+    const front = store.listPhotos(honda.id).find((photo) => photo.declaredAngle === "front")!;
+    const accepted = store.listSuggestions(honda.id).find((suggestion) =>
+      suggestion.photoId === front.id &&
+      suggestion.suggestionType === "photo_angle" &&
+      suggestion.status === "accepted"
+    )!;
+    store.suggestions.set("legacy-duplicate-angle", {
+      ...accepted,
+      id: "legacy-duplicate-angle",
+      status: "pending",
+      reviewedBy: null,
+      reviewedAt: null,
+      resolvedAt: null,
+      createdAt: new Date(Date.parse(accepted.createdAt) + 60_000).toISOString(),
+      version: 1
+    });
+
+    expect(reconcileReferenceEvidence(store)).toBe(true);
+    const matching = store.listSuggestions(honda.id).filter((suggestion) =>
+      suggestion.photoId === front.id &&
+      suggestion.suggestionType === "photo_angle" &&
+      JSON.stringify(suggestion.suggestedValueJson) === JSON.stringify(accepted.suggestedValueJson)
+    );
+    expect(matching).toEqual([expect.objectContaining({ id: accepted.id, status: "accepted" })]);
+    expect(store.auditForInspection(honda.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "suggestion.duplicates_reconciled",
+        detailsJson: expect.objectContaining({
+          removedSuggestionIds: ["legacy-duplicate-angle"]
+        })
+      })
+    ]));
+  });
 });
