@@ -79,6 +79,41 @@ describe("localVisionProvider", () => {
     expect(normalized.humanReviewRequired).toBe(true);
   });
 
+  it("filters marginal damage candidates below the production precision gate", () => {
+    const normalized = normalizeVisionOutput({
+      photoAngle: "rear",
+      confidence: 0.9,
+      imageQuality: {
+        grade: "pass",
+        blurScore: 0.9,
+        exposureScore: 0.9,
+        framingScore: 0.9,
+        resolutionScore: 0.9,
+        occlusionRisk: 0.05,
+        retakeRequired: false,
+        notes: []
+      },
+      qualityWarnings: [],
+      detectedDamageCandidates: [{
+        location: "rear bumper",
+        damageType: "scratch",
+        severityEstimate: "minor",
+        confidence: 0.84,
+        explanation: "Possible surface mark.",
+        repairEstimateUsd: {
+          min: 150,
+          max: 300,
+          rationale: "Preliminary cosmetic repair range."
+        },
+        requiresHumanConfirmation: true
+      }],
+      extractedText: {},
+      humanReviewRequired: true
+    }, "rear");
+
+    expect(normalized.detectedDamageCandidates).toEqual([]);
+  });
+
   it("does not invent damage from a clean Honda Accord listing photo", async () => {
     const result = await localVisionProvider.analyze({
       filename: "2020-honda-accord-rear.jpg",

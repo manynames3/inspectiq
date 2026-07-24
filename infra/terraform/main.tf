@@ -587,7 +587,7 @@ resource "aws_lambda_function" "api" {
       DOMAIN_EVENT_SOURCE                 = "inspectiq.api"
       DOMAIN_EVENT_DLQ_URL                = aws_sqs_queue.domain_event_dlq.url
       BEDROCK_VISION_FALLBACK             = "fail"
-      MIN_DAMAGE_CONFIDENCE               = "0.80"
+      MIN_DAMAGE_CONFIDENCE               = "0.85"
       AUTH_MODE                           = "jwt"
       OIDC_ISSUER                         = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.inspectiq.id}"
       OIDC_AUDIENCE                       = aws_cognito_user_pool_client.web.id
@@ -633,7 +633,7 @@ resource "aws_lambda_function" "image_worker" {
       DOMAIN_EVENT_BUS_NAME               = aws_cloudwatch_event_bus.domain.name
       DOMAIN_EVENT_SOURCE                 = "inspectiq.worker"
       BEDROCK_VISION_FALLBACK             = "fail"
-      MIN_DAMAGE_CONFIDENCE               = "0.80"
+      MIN_DAMAGE_CONFIDENCE               = "0.85"
       PG_POOL_SIZE                        = "2"
     }
   }

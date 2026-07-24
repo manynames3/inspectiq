@@ -84,8 +84,8 @@ function uniqueNonEmpty(values: string[]): string[] {
 }
 
 function damageConfidenceThreshold(): number {
-  const configured = Number(process.env.MIN_DAMAGE_CONFIDENCE ?? "0.80");
-  return Number.isFinite(configured) ? configured : 0.80;
+  const configured = Number(process.env.MIN_DAMAGE_CONFIDENCE ?? "0.85");
+  return Number.isFinite(configured) ? configured : 0.85;
 }
 
 export function normalizeVisionOutput(output: VisionOutput, declaredAngle?: VisionOutput["photoAngle"] | null): VisionOutput {
@@ -448,7 +448,7 @@ export function buildBedrockVisionPrompt(input: {
       "Use 0-1 confidence values. If unsure, use unknown angle, lower confidence, and humanReviewRequired true.",
       "Never invent VIN or odometer values unless legible. Mark retakeRequired true for blur, poor framing, low light, occlusion, or non-vehicle images.",
       "For odometer or VIN-plate capture slots, do not return damage candidates; extract the text only if legible or request retake.",
-      "Keep reviewer work bounded: return at most one qualityWarnings item and at most one detectedDamageCandidates item. Omit damage candidates below 0.80 confidence.",
+      "Keep reviewer work bounded: return at most one qualityWarnings item and at most one detectedDamageCandidates item. Omit damage candidates below 0.85 confidence.",
       "The structured angle, quality grade, retake flag, warnings, and notes must agree. Do not describe an image as three-quarter in notes while marking a direct required view as pass.",
       "Each note, warning, location, and rationale must be concise; keep each string under 120 characters."
     ].join("\n");
@@ -456,7 +456,7 @@ export function buildBedrockVisionPrompt(input: {
 
 export const bedrockVisionProvider: VisionProvider = {
   name: "bedrockVisionProvider",
-  promptVersion: "photo-analysis-v3",
+  promptVersion: "photo-analysis-v4",
   async analyze(input) {
     const startedAt = Date.now();
     const image = await loadImageInput(input);
