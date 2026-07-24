@@ -58,7 +58,9 @@ try {
   await page.goto(baseUrl, { waitUntil: "networkidle" });
   await expectBodyText(page, "VEHICLE INSPECTION WORKSPACE");
   const previewButton = page.getByRole("button", { name: "Open evaluation workspace" });
-  if (await previewButton.count() !== 1) fail("Open evaluation workspace button was not available.");
+  await previewButton.waitFor({ state: "visible", timeout: 20_000 }).catch(() => {
+    fail("Open evaluation workspace button was not available.");
+  });
   await previewButton.click();
   await expectBodyText(page, "Dashboard");
   await expectBodyText(page, "Operations control");
