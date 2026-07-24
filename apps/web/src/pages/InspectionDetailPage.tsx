@@ -1,5 +1,5 @@
 import { AlertTriangle, ArrowDown, BadgeInfo, Bot, Check, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Filter, GitCompare, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X } from "lucide-react";
-import { estimateDamageRepairCost, maxImageUploadBytes, maxLocalPreviewUploadBytes, requiredPhotoAngles, supportedImageUploadMimeTypes } from "@inspectiq/shared";
+import { canRole, estimateDamageRepairCost, maxImageUploadBytes, maxLocalPreviewUploadBytes, requiredPhotoAngles, supportedImageUploadMimeTypes } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiClientError, apiUrl, assetUrl, requestHeaders } from "../api.js";
@@ -7,9 +7,10 @@ import { useActor } from "../App.js";
 import { isEvaluationSession, storedLocalSession } from "../auth.js";
 import { StatusPill } from "../components/StatusPill.js";
 import { conditionGradeView, formatConditionGrade } from "../conditionGrade.js";
+import { loadEvaluationDamage, saveEvaluationDamage } from "../evaluationDamage.js";
 import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider } from "../evidenceProvenance.js";
 import { deriveMarketplaceReadiness, formatReportReadiness } from "../marketplaceReadiness.js";
-import type { Inspection, InspectionBundle, PhotoAnalysisResult, ReportVersion, SamplePhotoSet, VehiclePhoto, VehicleReference, VisionSuggestion } from "../types.js";
+import type { DamageItem, Inspection, InspectionBundle, PhotoAnalysisResult, ReportVersion, SamplePhotoSet, VehiclePhoto, VehicleReference, VisionSuggestion } from "../types.js";
 import { inspectionNeedsWork, isReviewQueueInspection } from "../workflowMetrics.js";
 
 const requiredAngles = [...requiredPhotoAngles];
@@ -619,6 +620,7 @@ export function InspectionDetailPage() {
     severity: "minor",
     notes: "Manual inspector note."
   });
+  const [evaluationDamageItems, setEvaluationDamageItems] = useState<DamageItem[]>([]);
   const [reportBody, setReportBody] = useState("");
   const [reportComment, setReportComment] = useState("");
   const [reportVersions, setReportVersions] = useState<ReportVersion[]>([]);
@@ -696,6 +698,14 @@ export function InspectionDetailPage() {
     setVehicleReferenceError(null);
     setVehicleReferenceOpen(searchParams.get("reference") === "nhtsa");
   }, [id, searchParams]);
+
+  useEffect(() => {
+    if (!id || !actor.id.startsWith("evaluation-")) {
+      setEvaluationDamageItems([]);
+      return;
+    }
+    setEvaluationDamageItems(loadEvaluationDamage(window.sessionStorage, id));
+  }, [actor.id, id]);
 
   useEffect(() => {
     if (vehicleReferenceOpen && !vehicleReference && !vehicleReferenceLoading && !vehicleReferenceError) {
@@ -824,6 +834,8 @@ export function InspectionDetailPage() {
   const missingEvidence = reportOutput.missingEvidence?.length
     ? reportOutput.missingEvidence
     : marketplaceReadiness.blockers.filter((blocker) => blocker.toLowerCase().includes("missing"));
+  const isEvaluationWorkspace = actor.id.startsWith("evaluation-");
+  const canPreviewDamage = isEvaluationWorkspace && canRole(actor.role, "damage:create");
   const canCaptureEvidence = can("photo:capture");
   const canAnalyzePhotos = can("photo:analyze");
   const canReviewSuggestions = can("suggestion:review");
@@ -835,7 +847,6 @@ export function InspectionDetailPage() {
   const canEditReport = can("report:edit");
   const canApproveReport = can("report:approve");
   const canFinalizeReport = can("report:finalize");
-  const isEvaluationWorkspace = actor.id.startsWith("evaluation-");
   const canRequestReportDraft = bundle.inspection.status === "GRADED" ||
     bundle.inspection.status === "REPORT_FAILED" ||
     bundle.inspection.status === "HUMAN_REVIEW_REQUIRED";
@@ -844,11 +855,49 @@ export function InspectionDetailPage() {
   const sampleAttachDisabled = !referenceEvidenceEnabled || captureDisabled || !matchedSamplePhotoSet;
   const analysisDisabled = busy !== null || isFinalizedInspection || !canAnalyzePhotos;
   const reviewDisabled = busy !== null || isFinalizedInspection || !canReviewSuggestions;
-  const damageDisabled = busy !== null || isFinalizedInspection || !canConfirmDamage;
-  const damageDisabledReason = isEvaluationWorkspace
-    ? "Read-only evaluation workspace. Sign in with Cognito to record confirmed damage."
-    : finalizedActionTitle
-      ?? (!canConfirmDamage ? "Inspector, Reviewer, or Admin access required." : undefined);
+  const damageDisabled = busy !== null || isFinalizedInspection || (!canConfirmDamage && !canPreviewDamage);
+  const damageDisabledReason = finalizedActionTitle
+    ?? (!canConfirmDamage && !canPreviewDamage
+      ? isEvaluationWorkspace
+        ? "Select Inspector, Reviewer, or Admin to preview manual damage entry."
+        : "Inspector, Reviewer, or Admin access required."
+      : undefined);
+  const damageHelperText = damageDisabledReason
+    ?? (canPreviewDamage
+      ? "Evaluation sandbox: preview items stay in this browser tab and do not change the inspection record."
+      : undefined);
+  const damageItemsForDisplay = isEvaluationWorkspace
+    ? [...bundle.damageItems, ...evaluationDamageItems]
+    : bundle.damageItems;
+
+  function addEvaluationDamagePreview() {
+    if (!id || !canPreviewDamage || isFinalizedInspection) return;
+    const location = damageForm.location.trim();
+    if (!location) {
+      setError("Enter the damaged area before adding a preview item.");
+      return;
+    }
+    const previewItem: DamageItem = {
+      id: `evaluation-damage-${typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now()}`,
+      inspectionId: id,
+      photoId: null,
+      location,
+      damageType: damageForm.damageType,
+      severity: damageForm.severity,
+      notes: damageForm.notes,
+      source: "evaluation_preview"
+    };
+    const nextItems = [...evaluationDamageItems, previewItem];
+    setEvaluationDamageItems(nextItems);
+    saveEvaluationDamage(window.sessionStorage, id, nextItems);
+    setError(null);
+  }
+
+  function clearEvaluationDamagePreview() {
+    if (!id) return;
+    setEvaluationDamageItems([]);
+    saveEvaluationDamage(window.sessionStorage, id, []);
+  }
   const gradeDisabled = busy !== null || isFinalizedInspection || !canGrade;
   const approveGradeDisabled = busy !== null || isFinalizedInspection || !canApproveGrade || gradeView?.reviewState !== "suggested" || gradeEvidenceBlockers.length > 0;
   const draftReportDisabled = busy !== null || isFinalizedInspection || !canDraftReport || !canRequestReportDraft;
@@ -1385,30 +1434,57 @@ export function InspectionDetailPage() {
                 <div className="dock-body damage-dock-body">
                   <div className="panel-header">
                     <h2>Damage items</h2>
-                    <span>{bundle.damageItems.length} confirmed</span>
+                    <span>
+                      {bundle.damageItems.length} confirmed
+                      {evaluationDamageItems.length > 0 ? ` · ${evaluationDamageItems.length} preview` : ""}
+                    </span>
                   </div>
                   <div className="damage-list compact-list">
-                    {bundle.damageItems.length > 0 ? bundle.damageItems.map((item) => (
-                      <div key={item.id} className="damage-row">
+                    {damageItemsForDisplay.length > 0 ? damageItemsForDisplay.map((item) => (
+                      <div key={item.id} className={`damage-row ${item.source === "evaluation_preview" ? "evaluation-preview" : ""}`}>
                         <strong>{item.location}</strong>
                         <span>{item.severity} {item.damageType.replaceAll("_", " ")}</span>
-                        <small>{item.source === "vision_suggestion" ? "AI-suggested, human-confirmed" : "Manual"}</small>
+                        <small>
+                          {item.source === "vision_suggestion"
+                            ? "AI-suggested, human-confirmed"
+                            : item.source === "evaluation_preview"
+                              ? "Session preview · not saved"
+                              : "Manual"}
+                        </small>
                       </div>
                     )) : <p className="empty-dock-state">No confirmed damage items.</p>}
                   </div>
                   <div className="damage-form">
-                    <input disabled={damageDisabled} value={damageForm.location} onChange={(event) => setDamageForm((current) => ({ ...current, location: event.target.value }))} />
-                    <select disabled={damageDisabled} value={damageForm.damageType} onChange={(event) => setDamageForm((current) => ({ ...current, damageType: event.target.value }))}>
+                    <input aria-label="Damaged area" disabled={damageDisabled} value={damageForm.location} onChange={(event) => setDamageForm((current) => ({ ...current, location: event.target.value }))} />
+                    <select aria-label="Damage type" disabled={damageDisabled} value={damageForm.damageType} onChange={(event) => setDamageForm((current) => ({ ...current, damageType: event.target.value }))}>
                       {["scratch", "dent", "crack", "paint_damage", "glass_damage", "wheel_damage", "interior_wear", "unknown"].map((value) => <option key={value}>{value}</option>)}
                     </select>
-                    <select disabled={damageDisabled} value={damageForm.severity} onChange={(event) => setDamageForm((current) => ({ ...current, severity: event.target.value }))}>
+                    <select aria-label="Damage severity" disabled={damageDisabled} value={damageForm.severity} onChange={(event) => setDamageForm((current) => ({ ...current, severity: event.target.value }))}>
                       {["minor", "moderate", "severe", "unknown"].map((value) => <option key={value}>{value}</option>)}
                     </select>
-                    <button className="secondary-button" disabled={damageDisabled} title={damageDisabledReason} onClick={() => void runAction("damage", () => api(`/api/inspections/${id}/damage`, { method: "POST", body: JSON.stringify(damageForm) }, actor))}>
+                    <button
+                      className="secondary-button"
+                      disabled={damageDisabled}
+                      title={damageDisabledReason}
+                      onClick={() => {
+                        if (canPreviewDamage) {
+                          addEvaluationDamagePreview();
+                          return;
+                        }
+                        void runAction("damage", () => api(`/api/inspections/${id}/damage`, { method: "POST", body: JSON.stringify(damageForm) }, actor));
+                      }}
+                    >
                       <Pencil size={16} /> Add
                     </button>
                   </div>
-                  {damageDisabledReason ? <p className="damage-permission-note">{damageDisabledReason}</p> : null}
+                  {damageHelperText ? (
+                    <div className={`damage-permission-row ${canPreviewDamage ? "evaluation-preview" : ""}`}>
+                      <p className="damage-permission-note">{damageHelperText}</p>
+                      {canPreviewDamage && evaluationDamageItems.length > 0 ? (
+                        <button className="text-button" type="button" onClick={clearEvaluationDamagePreview}>Clear preview</button>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               )}
             </article>

@@ -3045,6 +3045,12 @@ td small {
   color: var(--muted);
 }
 
+.damage-row.evaluation-preview {
+  border-style: dashed;
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
 .grade-result-card,
 .summary-section {
   border: 1px solid var(--border);
@@ -3283,6 +3289,25 @@ td small {
 .damage-permission-note {
   margin: 0;
   color: var(--muted);
+  font-size: 11px;
+}
+
+.damage-permission-row {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.damage-permission-row.evaluation-preview .damage-permission-note {
+  color: #1e40af;
+}
+
+.damage-permission-row .text-button {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 2px 0;
   font-size: 11px;
 }
 
