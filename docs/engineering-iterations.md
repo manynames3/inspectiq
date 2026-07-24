@@ -21,6 +21,7 @@ InspectIQ was tightened through review passes focused on walkthrough reliability
 | Operations lacked a demonstrable failure path | Added guarded Admin simulation and recovery for image-analysis jobs in local mode. | It demonstrates retry and recovery without injecting production AWS failures. |
 | Persistence looked transitional | Moved deployed Postgres hot paths toward row-level upsert/delete and conditional versions. | The hosted slice is credible; higher concurrency still calls for DB-first aggregate repositories. |
 | Dense screens could regress | Added Playwright screenshots for the main operational views and mobile capture. | Visual behavior is verified instead of inferred from CSS. |
+| CR and recon comparisons were ambiguous for newly added vehicles | Backfilled recon intake incrementally, labeled incomplete scores as preliminary, and surfaced confirmed-damage ranges beside clean `$0` outcomes. | Operators can compare vehicles without implying that a CR score alone proves repair scope or that incomplete evidence is a final report. |
 | Architecture could look over-scaffolded | Kept the AWS diagram to services actually used and documented deferred choices separately. | Services such as OpenSearch, Kinesis, Step Functions, and Rekognition are not included for resume value alone. |
 
 Related documents:

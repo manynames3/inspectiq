@@ -381,6 +381,11 @@ export type ReconOperationsRecord = {
   consignor: ConsignorAccount;
   saleAssignment: SaleAssignment;
   conditionGrade: ConditionGrade | null;
+  conditionGradePreview: {
+    value: number;
+    status: "APPROVED" | "PRELIMINARY";
+    evidenceBlockers: string[];
+  } | null;
   conditionReport: FinalReport | null;
   damageItems: DamageItem[];
   photos: VehiclePhoto[];

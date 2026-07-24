@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import type { ServiceType } from "@inspectiq/shared";
 import { api } from "../api.js";
 import { useActor } from "../App.js";
-import { authorizationSourceLabel } from "../reconViewModel.js";
+import { authorizationSourceLabel, reconQueueSummary } from "../reconViewModel.js";
 import type { ReconAuthorization, ReconOperationsRecord, WorkOrder } from "../types.js";
 
 const serviceTypes: ServiceType[] = ["DETAIL", "MECHANICAL", "BODY", "TIRE", "GLASS", "THIRD_PARTY"];
@@ -77,6 +77,8 @@ export function ReconDecisionPage() {
   const canUpdateWork = can("work_order:update");
   const canQc = can("quality_control:decide");
   const canAssess = can("sale_readiness:assess");
+  const reconSummary = reconQueueSummary(record);
+  const gradeSummary = record.conditionGradePreview;
 
   function decide(authorization: ReconAuthorization, decision: "APPROVE" | "DECLINE" | "REQUEST_REVISION") {
     const reason = decision === "APPROVE"
@@ -131,8 +133,12 @@ export function ReconDecisionPage() {
 
       <div className="operations-status-grid">
         <article><span>Sale deadline</span><strong>{new Date(record.saleAssignment.saleDateTime).toLocaleString()}</strong><small>{record.saleAssignment.lane} · Run {record.saleAssignment.runNumber}</small></article>
-        <article><span>Condition report</span><strong>{record.conditionReport?.finalizedAt ? "Published" : "Not published"}</strong><small>{record.conditionGrade?.approvedGrade != null ? `${record.conditionGrade.approvedGrade.toFixed(1)} / 5.0 before recon` : "Grade approval pending"}</small></article>
-        <article><span>Authorization</span><strong>{record.reconStatus.replaceAll("_", " ")}</strong><small>{money(record.totals.pendingCost)} awaiting decision</small></article>
+        <article>
+          <span>Condition report</span>
+          <strong>{gradeSummary?.status === "PRELIMINARY" ? "Preliminary" : record.conditionReport?.finalizedAt ? "Published" : "Not published"}</strong>
+          <small>{gradeSummary ? `${gradeSummary.value.toFixed(1)} / 5.0 ${gradeSummary.status === "PRELIMINARY" ? "· evidence incomplete" : "approved"}` : "Grade approval pending"}</small>
+        </article>
+        <article><span>Recon scope</span><strong>{reconSummary.label}</strong><small>{reconSummary.amount} · {reconSummary.detail}</small></article>
         <article><span>Projected grade</span><strong>{record.conditionGrade ? `${record.conditionGrade.estimatedGradeAfterRecon.toFixed(1)} / 5.0` : "Pending"}</strong><small>Authorized items only</small></article>
         <article><span>Sale readiness</span><strong>{record.readiness.saleReady ? "Ready" : "Blocked"}</strong><small>{record.readiness.blockers.length} blocking condition{record.readiness.blockers.length === 1 ? "" : "s"}</small></article>
       </div>
@@ -159,7 +165,15 @@ export function ReconDecisionPage() {
             <span>{money(record.totals.recommendedCost)} recommended</span>
           </div>
           <div className="recon-item-list">
-            {record.recommendations.length === 0 ? <p className="empty-dock-state">No recon recommendations have been prepared.</p> : record.recommendations.map((recommendation) => {
+            {record.recommendations.length === 0 ? (
+              <p className="empty-dock-state">
+                {record.damageItems.length > 0
+                  ? `${reconSummary.amount} confirmed-damage range. A recon coordinator must inspect and scope the work before authorization.`
+                  : record.conditionReport?.finalizedAt
+                    ? "The published CR has no confirmed repair findings. No condition-driven recon is indicated."
+                    : "Publish the CR before preparing recon recommendations."}
+              </p>
+            ) : record.recommendations.map((recommendation) => {
               const authorization = authorizationFor(record, recommendation.id);
               return (
                 <article className="recon-item" key={recommendation.id}>

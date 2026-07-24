@@ -295,6 +295,7 @@ type ReferenceInspectionInput = {
   inspectorName: string;
   sampleKeys: string[];
   reportState?: ReferenceReportState;
+  referenceGrade?: number;
 };
 
 type ReferenceGrade = {
@@ -528,7 +529,7 @@ function createReferenceReport(store: MemoryStore, input: ReferenceInspectionInp
 
   const damageItems = store.listDamage(inspectionId);
   const isHumanReview = input.reportState === "draft_human_review";
-  const suggestedGrade = isHumanReview ? 4.1 : 4.7;
+  const suggestedGrade = input.referenceGrade ?? (isHumanReview ? 4.1 : 4.7);
   const grade = store.saveGrade(inspectionId, {
     suggestedGrade,
     conditionGradeBeforeRecon: suggestedGrade,
@@ -647,7 +648,8 @@ export function seedStore(store: MemoryStore): void {
       sellerSource: "Dealer listing intake",
       inspectorName: "Maria Lee",
       sampleKeys: sampleBundles["nissan-rogue-sv-set"],
-      reportState: "finalized"
+      reportState: "finalized",
+      referenceGrade: 4.1
     },
     {
       vin: "4S4BTAFC8P3204430",
@@ -771,8 +773,58 @@ function ensureSeedUser(
   return store.users.get(input.id ?? "") ?? store.addUser(input);
 }
 
+function reconcileMissingReconIntakes(store: MemoryStore): boolean {
+  const missing = [...store.inspections.values()]
+    .filter((inspection) => !store.recon.intakeForInspection(inspection.id));
+  if (missing.length === 0) return false;
+
+  const account = [...store.consignorAccounts.values()]
+    .find((candidate) => candidate.name === "Southeast Dealer Group");
+  if (!account) return false;
+
+  const inspector = ensureSeedUser(store, {
+    id: "inspector-john-smith",
+    name: "John Smith",
+    role: "inspector"
+  });
+  const admin = ensureSeedUser(store, {
+    id: "operations-admin",
+    name: "Operations Admin",
+    role: "admin"
+  });
+  const adminActor: Actor = { id: admin.id, name: admin.name, role: admin.role };
+  const seedClock = Date.parse(process.env.INSPECTIQ_FIXED_NOW ?? new Date().toISOString());
+  const existingCount = store.vehicleIntakes.size;
+
+  missing.forEach((inspection, offset) => {
+    const sequence = existingCount + offset;
+    store.recon.createVehicleIntake({
+      inspectionId: inspection.id,
+      consignorAccountId: account.id,
+      facility: "Atlanta Main",
+      yardZone: `Z${Math.floor(sequence / 3) + 1}`,
+      parkingSpace: `P-${String(sequence + 17).padStart(3, "0")}`,
+      saleDateTime: new Date(seedClock + (24 + offset * 6) * 3_600_000).toISOString(),
+      lane: `Lane ${sequence % 3 + 1}`,
+      runNumber: String(120 + sequence),
+      saleEventId: `ATL-${new Date(seedClock).toISOString().slice(0, 10)}`,
+      inspectionType: "VISUAL_CONDITION_REPORT"
+    }, adminActor);
+    store.recon.assignInspection(
+      inspection.id,
+      inspection.assignedToUserId ?? inspector.id,
+      new Date(seedClock + (2 + offset) * 3_600_000).toISOString(),
+      adminActor
+    );
+    store.recon.transitionInspection(inspection.id, "CAPTURE_IN_PROGRESS", adminActor);
+  });
+
+  return true;
+}
+
 export function reconcileReconOperations(store: MemoryStore): boolean {
-  if (store.inspections.size === 0 || store.vehicleIntakes.size > 0) return false;
+  if (store.inspections.size === 0) return false;
+  if (store.vehicleIntakes.size > 0) return reconcileMissingReconIntakes(store);
 
   const inspector = ensureSeedUser(store, { id: "inspector-john-smith", name: "John Smith", role: "inspector" });
   const maria = ensureSeedUser(store, { id: "inspector-maria-lee", name: "Maria Lee", role: "inspector" });
@@ -796,7 +848,6 @@ export function reconcileReconOperations(store: MemoryStore): boolean {
   const admin = ensureSeedUser(store, { id: "operations-admin", name: "Operations Admin", role: "admin" });
   const reviewerActor: Actor = { id: reviewer.id, name: reviewer.name, role: reviewer.role };
   const reconActor: Actor = { id: reconCoordinator.id, name: reconCoordinator.name, role: reconCoordinator.role };
-  const consignorActor: Actor = { id: consignorApprover.id, name: consignorApprover.name, role: consignorApprover.role };
   const adminActor: Actor = { id: admin.id, name: admin.name, role: admin.role };
   const inspectorActors: Record<string, Actor> = {
     "John Smith": { id: inspector.id, name: inspector.name, role: inspector.role },
@@ -905,40 +956,10 @@ export function reconcileReconOperations(store: MemoryStore): boolean {
       estimatedDurationHours: 1.5,
       expectedGradeLift: 0.1,
       supportingPhotoIds: [],
-      notes: "Standard retail-ready detail."
-    }, reconActor),
-    store.recon.createRecommendation(ford.id, {
-      damageItemId: null,
-      serviceType: "DETAIL",
-      recommendedAction: "Complete the consignor-requested premium interior extraction and odor treatment.",
-      estimatedCost: 425,
-      estimatedDurationHours: 3,
-      expectedGradeLift: 0.1,
-      supportingPhotoIds: [],
-      notes: "Optional presentation package requested by the consignor; no damage claim is implied."
-    }, reconActor),
-    store.recon.createRecommendation(ford.id, {
-      damageItemId: null,
-      serviceType: "MECHANICAL",
-      recommendedAction: "Perform the managed-program pre-sale diagnostic scan and battery health test.",
-      estimatedCost: 525,
-      estimatedDurationHours: 1.5,
-      expectedGradeLift: 0,
-      supportingPhotoIds: [],
-      notes: "Program-requested verification service; no mechanical defect is asserted."
+      notes: "CR 4.7: presentation-only scope under the consignor's sale-prep policy; no repair finding is asserted."
     }, reconActor)
   ];
   store.recon.submitEstimate(ford.id, fordRecommendations.map((item) => item.id), reconActor);
-  const premiumDetailAuthorization = store.recon.authorizationsForInspection(ford.id)
-    .find((item) => item.recommendationId === fordRecommendations[1].id);
-  if (premiumDetailAuthorization) {
-    store.recon.decideAuthorization(premiumDetailAuthorization.id, {
-      decision: "APPROVE",
-      decisionReason: "Approved to improve sale presentation before the scheduled run.",
-      authorizedAmount: 425,
-      expectedVersion: premiumDetailAuthorization.version
-    }, consignorActor);
-  }
   const firstWorkOrder = store.recon.workOrdersForInspection(ford.id)[0];
   if (firstWorkOrder) {
     store.recon.updateWorkOrder(firstWorkOrder.id, {
@@ -960,16 +981,6 @@ export function reconcileReconOperations(store: MemoryStore): boolean {
       expectedVersion: firstWorkOrder.version
     }, reviewerActor);
   }
-  const fordPendingAuthorization = store.recon.authorizationsForInspection(ford.id)
-    .find((authorization) => authorization.decision === "PENDING");
-  if (fordPendingAuthorization) {
-    store.recon.decideAuthorization(fordPendingAuthorization.id, {
-      decision: "DECLINE",
-      decisionReason: "Optional diagnostic service is not required for this sale.",
-      expectedVersion: fordPendingAuthorization.version
-    }, consignorActor);
-  }
-
   const nissanRecommendations = [
     store.recon.createRecommendation(nissan.id, {
       damageItemId: null,
@@ -979,37 +990,17 @@ export function reconcileReconOperations(store: MemoryStore): boolean {
       estimatedDurationHours: 1.5,
       expectedGradeLift: 0.1,
       supportingPhotoIds: [],
-      notes: "Illustrative presentation service; it does not assert a condition defect."
+      notes: "CR 4.1: standard sale-presentation scope under the consignor's 4.0-4.4 policy band."
     }, reconActor),
     store.recon.createRecommendation(nissan.id, {
       damageItemId: null,
-      serviceType: "TIRE",
-      recommendedAction: "Perform the consignor-requested tread measurement and approved tire service before the sale run.",
+      serviceType: "MECHANICAL",
+      recommendedAction: "Complete the high-mileage pre-sale condition verification before the sale run.",
       estimatedCost: 275,
       estimatedDurationHours: 1.5,
       expectedGradeLift: 0,
       supportingPhotoIds: [],
-      notes: "Program-requested service scope; no tire defect is inferred from listing photographs."
-    }, reconActor),
-    store.recon.createRecommendation(nissan.id, {
-      damageItemId: null,
-      serviceType: "GLASS",
-      recommendedAction: "Complete the account-requested windshield and glass preparation service.",
-      estimatedCost: 240,
-      estimatedDurationHours: 1,
-      expectedGradeLift: 0,
-      supportingPhotoIds: [],
-      notes: "Illustrative shop-flow scenario; it does not claim cracked or damaged glass."
-    }, reconActor),
-    store.recon.createRecommendation(nissan.id, {
-      damageItemId: null,
-      serviceType: "BODY",
-      recommendedAction: "Prepare an optional cosmetic body-reconditioning allowance for consignor review.",
-      estimatedCost: 850,
-      estimatedDurationHours: 6,
-      expectedGradeLift: 0.2,
-      supportingPhotoIds: [],
-      notes: "Illustrative policy-routing scenario requested by the consignor. Facility scope confirmation is required; no unverified damage is asserted."
+      notes: "CR 4.1 and 91,168 miles trigger verification only; no mechanical defect is asserted."
     }, reconActor)
   ];
   store.recon.submitEstimate(nissan.id, nissanRecommendations.map((recommendation) => recommendation.id), reconActor);
@@ -1037,44 +1028,22 @@ export function reconcileReconOperations(store: MemoryStore): boolean {
     }, reviewerActor);
   }
 
-  const nissanTireOrder = nissanOrders.find((order) => order.serviceDepartment === "TIRE");
-  if (nissanTireOrder) {
-    store.recon.updateWorkOrder(nissanTireOrder.id, {
+  const nissanMechanicalOrder = nissanOrders.find((order) => order.serviceDepartment === "MECHANICAL");
+  if (nissanMechanicalOrder) {
+    store.recon.updateWorkOrder(nissanMechanicalOrder.id, {
       action: "ASSIGN_TECHNICIAN",
       assignedTechnician: technician.id,
-      expectedVersion: nissanTireOrder.version
+      expectedVersion: nissanMechanicalOrder.version
     }, reconActor);
-    store.recon.updateWorkOrder(nissanTireOrder.id, {
+    store.recon.updateWorkOrder(nissanMechanicalOrder.id, {
       action: "START",
-      expectedVersion: nissanTireOrder.version
+      expectedVersion: nissanMechanicalOrder.version
     }, reconActor);
-    store.recon.updateWorkOrder(nissanTireOrder.id, {
+    store.recon.updateWorkOrder(nissanMechanicalOrder.id, {
       action: "REVISE_ESTIMATE",
       currentEstimatedCost: 425,
-      expectedVersion: nissanTireOrder.version
+      expectedVersion: nissanMechanicalOrder.version
     }, reconActor);
-  }
-
-  const nissanGlassOrder = nissanOrders.find((order) => order.serviceDepartment === "GLASS");
-  if (nissanGlassOrder) {
-    store.recon.updateWorkOrder(nissanGlassOrder.id, {
-      action: "ASSIGN_TECHNICIAN",
-      assignedTechnician: technician.id,
-      expectedVersion: nissanGlassOrder.version
-    }, reconActor);
-    store.recon.updateWorkOrder(nissanGlassOrder.id, {
-      action: "START",
-      expectedVersion: nissanGlassOrder.version
-    }, reconActor);
-    store.recon.updateWorkOrder(nissanGlassOrder.id, {
-      action: "SEND_TO_QC",
-      expectedVersion: nissanGlassOrder.version
-    }, reconActor);
-    store.recon.recordQualityControl(nissanGlassOrder.id, {
-      decision: "FAIL",
-      notes: "Glass preparation did not meet the authorized task scope; return to the technician.",
-      expectedVersion: nissanGlassOrder.version
-    }, reviewerActor);
   }
 
   return true;

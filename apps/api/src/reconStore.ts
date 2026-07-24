@@ -37,6 +37,7 @@ import {
   inspectionWorkflowTransitions,
   workOrderTransitions
 } from "./stateMachine.js";
+import { gradeConditionLocally } from "./gradingClient.js";
 
 type ConsignorInput = z.infer<typeof CreateConsignorAccountSchema>;
 type PolicyInput = z.infer<typeof CreateReconAuthorizationPolicySchema>;
@@ -736,6 +737,19 @@ export class ReconStore {
     if (!saleAssignment) throw conflict("Sale assignment is missing.");
     const policy = this.policyForAccount(consignor.id);
     const recommendations = this.recommendationsForInspection(inspectionId);
+    const conditionGrade = this.host.latestGrade(inspectionId);
+    const damageItems = this.host.listDamage(inspectionId);
+    const provisionalGrade = conditionGrade?.approvedGrade == null && damageItems.length > 0
+      ? gradeConditionLocally({
+        vehicle: { year: inspection.year, mileage: inspection.mileage },
+        requiredPhotoCompletion: inspection.completenessPercentage / 100,
+        damageItems: damageItems.map((item) => ({
+          location: item.location,
+          damageType: item.damageType,
+          severity: item.severity
+        }))
+      })
+      : null;
     const authorizations = this.authorizationsForInspection(inspectionId);
     const workOrders = this.workOrdersForInspection(inspectionId).map((workOrder) => ({
       ...workOrder,
@@ -776,9 +790,22 @@ export class ReconStore {
       intake,
       consignor,
       saleAssignment,
-      conditionGrade: this.host.latestGrade(inspectionId),
+      conditionGrade,
+      conditionGradePreview: conditionGrade?.approvedGrade != null
+        ? {
+          value: conditionGrade.approvedGrade,
+          status: "APPROVED",
+          evidenceBlockers: conditionGrade.evidenceBlockers
+        }
+        : provisionalGrade
+          ? {
+            value: provisionalGrade.suggestedGrade,
+            status: "PRELIMINARY",
+            evidenceBlockers: provisionalGrade.evidenceBlockers
+          }
+          : null,
       conditionReport: this.host.latestFinalReport(inspectionId),
-      damageItems: this.host.listDamage(inspectionId),
+      damageItems,
       photos: this.host.listPhotos(inspectionId),
       policy,
       recommendations,

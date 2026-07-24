@@ -1361,6 +1361,27 @@ textarea:disabled {
   white-space: nowrap;
 }
 
+.recon-summary-estimate_required {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.recon-summary-no_recon {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.recon-summary-pending {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.recon-queue-amount {
+  display: block;
+  margin-top: 5px;
+  font-size: 13px;
+}
+
 .owner-chip,
 .sla-chip {
   display: inline-flex;

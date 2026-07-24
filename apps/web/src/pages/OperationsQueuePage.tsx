@@ -14,12 +14,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { useActor } from "../App.js";
-import { filterOperations, operationsMetrics } from "../reconViewModel.js";
+import { filterOperations, operationsMetrics, reconQueueSummary } from "../reconViewModel.js";
 import type { ReconOperationsRecord } from "../types.js";
-
-function money(value: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
-}
 
 function saleTime(value: string): string {
   return new Date(value).toLocaleString([], {
@@ -81,7 +77,7 @@ export function OperationsQueuePage() {
       <div className="page-heading">
         <div>
           <h1>Recon Operations</h1>
-          <p>Vehicles prioritized by sale deadline, authorization risk, and incomplete work.</p>
+          <p>Compare CR condition, confirmed repair exposure, authorization, and work progress before sale.</p>
         </div>
         <button className="secondary-button" onClick={() => void load()}>
           <RefreshCw size={16} /> Refresh
@@ -217,7 +213,10 @@ export function OperationsQueuePage() {
               </tr>
             </thead>
             <tbody>
-              {visible.map((record) => (
+              {visible.map((record) => {
+                const recon = reconQueueSummary(record);
+                const grade = record.conditionGradePreview;
+                return (
                 <tr key={record.inspection.id}>
                   <td>
                     <span className={`urgency-badge urgency-${record.urgency.urgencyClassification.toLowerCase()}`}>
@@ -238,12 +237,17 @@ export function OperationsQueuePage() {
                     <small>{record.saleAssignment.lane} · Run {record.saleAssignment.runNumber}</small>
                   </td>
                   <td>
-                    <strong>{record.conditionReport?.finalizedAt ? "Published" : "Not published"}</strong>
-                    <small>{record.conditionGrade?.approvedGrade != null ? `${record.conditionGrade.approvedGrade.toFixed(1)} / 5.0 approved` : "Grade pending"}</small>
+                    <strong>{grade?.status === "PRELIMINARY" ? "Preliminary CR" : record.conditionReport?.finalizedAt ? "Published CR" : "CR pending"}</strong>
+                    <small>
+                      {grade
+                        ? `${grade.value.toFixed(1)} / 5.0 ${grade.status === "PRELIMINARY" ? "· incomplete evidence" : "approved"}`
+                        : "Grade pending"}
+                    </small>
                   </td>
                   <td>
-                    <span className={`queue-status recon-${record.reconStatus.toLowerCase()}`}>{record.reconStatus.replaceAll("_", " ")}</span>
-                    <small>{money(record.totals.recommendedCost)} recommended · {money(record.totals.pendingCost)} pending</small>
+                    <span className={`queue-status recon-summary-${recon.status.toLowerCase()}`}>{recon.label}</span>
+                    <strong className="recon-queue-amount">{recon.amount}</strong>
+                    <small>{recon.detail}</small>
                   </td>
                   <td>
                     <strong>{record.workOrders.length} order{record.workOrders.length === 1 ? "" : "s"}</strong>
@@ -262,7 +266,8 @@ export function OperationsQueuePage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

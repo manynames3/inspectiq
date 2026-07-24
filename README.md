@@ -91,7 +91,7 @@ API Gateway -> Node.js Lambda -> Neon Postgres
 - **DynamoDB** holds idempotency records, operational timelines, and model-usage reservations. It is not a second business database.
 - **CloudWatch and X-Ray** cover logs, metrics, traces, alarms, and the operations dashboard.
 
-Condition grade and operational urgency are separate: grade describes the vehicle; urgency prioritizes facility work. Recon recommendations, authorization decisions, and work orders are separate records because the facility recommends work while the consignor retains economic control. See the [inspection-to-recon workflow](docs/inspection-recon-workflow.md) and [authorization policy](docs/recon-authorization-policy.md).
+Condition grade and operational urgency are separate: grade describes the vehicle; urgency prioritizes facility work. The CR score provides comparison context, while recon cost comes from confirmed findings and coordinator-scoped work rather than a score-to-dollar lookup. Recon recommendations, authorization decisions, and work orders remain separate because the facility recommends work while the consignor retains economic control. See the [inspection-to-recon workflow](docs/inspection-recon-workflow.md) and [authorization policy](docs/recon-authorization-policy.md).
 
 Why other AWS services were deferred is documented in [ADR 0009](docs/adr/0009-aws-orchestration-and-vision-services.md).
 

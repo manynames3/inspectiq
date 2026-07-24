@@ -4,7 +4,7 @@ function clampGrade(value: number): number {
   return Math.round(Math.max(0, Math.min(5, value)) * 10) / 10;
 }
 
-function localGrade(input: GradingInput): GradingOutput {
+export function gradeConditionLocally(input: GradingInput): GradingOutput {
   const deductions = input.damageItems.map((item) => {
     const amount = item.severity === "severe"
       ? 0.9
@@ -53,5 +53,5 @@ export async function gradeCondition(input: GradingInput): Promise<GradingOutput
       // The in-process rules preserve workflow continuity if the optional service is unavailable.
     }
   }
-  return localGrade(input);
+  return gradeConditionLocally(input);
 }

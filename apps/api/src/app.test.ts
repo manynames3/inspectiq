@@ -269,7 +269,7 @@ describe("InspectIQ API", () => {
     expect(store.listDamage(inspectionId)).toHaveLength(2);
   });
 
-  it("enforces consignor scope and completes overrun and failed-QC recovery through the API", async () => {
+  it("enforces consignor scope and completes estimate-overrun recovery through the API", async () => {
     const queue = await request(api)
       .get("/api/operations/recon")
       .set(reconCoordinatorHeaders)
@@ -288,85 +288,52 @@ describe("InspectIQ API", () => {
       .get(`/api/operations/recon/${nissan.inspection.id}`)
       .set(consignorApproverHeaders)
       .expect(200);
-    const tireOrder = scoped.body.data.workOrders.find((order: { serviceDepartment: string }) =>
-      order.serviceDepartment === "TIRE"
+    const mechanicalOrder = scoped.body.data.workOrders.find((order: { serviceDepartment: string }) =>
+      order.serviceDepartment === "MECHANICAL"
     );
-    const glassOrder = scoped.body.data.workOrders.find((order: { serviceDepartment: string }) =>
-      order.serviceDepartment === "GLASS"
-    );
-    const tireTask = tireOrder.tasks[0];
-    const tireAuthorization = scoped.body.data.authorizations.find((authorization: { recommendationId: string }) =>
-      authorization.recommendationId === tireTask.recommendationId
+    const mechanicalTask = mechanicalOrder.tasks[0];
+    const mechanicalAuthorization = scoped.body.data.authorizations.find((authorization: { recommendationId: string }) =>
+      authorization.recommendationId === mechanicalTask.recommendationId
     );
 
     await request(api)
-      .post(`/api/recon/authorizations/${tireAuthorization.id}/decision`)
+      .post(`/api/recon/authorizations/${mechanicalAuthorization.id}/decision`)
       .set(consignorApproverHeaders)
       .send({
         decision: "APPROVE",
-        decisionReason: "Approved the revised tire-service estimate before the sale deadline.",
-        authorizedAmount: tireOrder.currentEstimatedCost,
-        expectedVersion: tireAuthorization.version
+        decisionReason: "Approved the revised verification estimate before the sale deadline.",
+        authorizedAmount: mechanicalOrder.currentEstimatedCost,
+        expectedVersion: mechanicalAuthorization.version
       })
       .expect(200);
 
-    const tireAfterApproval = await request(api)
+    const operationAfterApproval = await request(api)
       .get(`/api/operations/recon/${nissan.inspection.id}`)
       .set(reconCoordinatorHeaders)
       .expect(200);
-    const approvedTireOrder = tireAfterApproval.body.data.workOrders.find((order: { id: string }) => order.id === tireOrder.id);
+    const approvedMechanicalOrder = operationAfterApproval.body.data.workOrders.find(
+      (order: { id: string }) => order.id === mechanicalOrder.id
+    );
 
     const started = await request(api)
-      .patch(`/api/work-orders/${tireOrder.id}`)
+      .patch(`/api/work-orders/${mechanicalOrder.id}`)
       .set(reconCoordinatorHeaders)
-      .send({ action: "START", expectedVersion: approvedTireOrder.version })
+      .send({ action: "START", expectedVersion: approvedMechanicalOrder.version })
       .expect(200);
     const sentToQc = await request(api)
-      .patch(`/api/work-orders/${tireOrder.id}`)
+      .patch(`/api/work-orders/${mechanicalOrder.id}`)
       .set(reconCoordinatorHeaders)
       .send({ action: "SEND_TO_QC", expectedVersion: started.body.data.version })
       .expect(200);
     await request(api)
-      .post(`/api/work-orders/${tireOrder.id}/quality-control`)
+      .post(`/api/work-orders/${mechanicalOrder.id}/quality-control`)
       .set(reconCoordinatorHeaders)
       .send({
         decision: "PASS",
-        notes: "Reauthorized tire-service scope verified.",
+        notes: "Reauthorized condition-verification scope completed.",
         expectedVersion: sentToQc.body.data.version
       })
       .expect(201);
-
-    const glassSentToQc = await request(api)
-      .patch(`/api/work-orders/${glassOrder.id}`)
-      .set(reconCoordinatorHeaders)
-      .send({ action: "SEND_TO_QC", expectedVersion: glassOrder.version })
-      .expect(200);
-    await request(api)
-      .post(`/api/work-orders/${glassOrder.id}/quality-control`)
-      .set(reconCoordinatorHeaders)
-      .send({
-        decision: "PASS",
-        notes: "Corrected glass-preparation scope verified.",
-        expectedVersion: glassSentToQc.body.data.version
-      })
-      .expect(201);
-
-    const beforeFinalDecision = await request(api)
-      .get(`/api/operations/recon/${nissan.inspection.id}`)
-      .set(consignorApproverHeaders)
-      .expect(200);
-    const pendingBody = beforeFinalDecision.body.data.authorizations.find((authorization: { decision: string }) =>
-      authorization.decision === "PENDING"
-    );
-    await request(api)
-      .post(`/api/recon/authorizations/${pendingBody.id}/decision`)
-      .set(consignorApproverHeaders)
-      .send({
-        decision: "DECLINE",
-        decisionReason: "Optional cosmetic allowance is not required for this sale.",
-        expectedVersion: pendingBody.version
-      })
-      .expect(200);
 
     const readiness = await request(api)
       .post(`/api/inspections/${nissan.inspection.id}/sale-readiness`)

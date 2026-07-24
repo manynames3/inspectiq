@@ -1,4 +1,4 @@
-import type { AuthorizationSource } from "@inspectiq/shared";
+import { estimateTotalRepairRange, type AuthorizationSource } from "@inspectiq/shared";
 import type { ReconOperationsRecord } from "./types.js";
 
 export type OperationsFilters = {
@@ -28,6 +28,54 @@ export function authorizationSourceLabel(source: AuthorizationSource | null): st
   if (source === "CONSIGNOR_USER") return "Consignor user · manual";
   if (source === "ADMINISTRATIVE_OVERRIDE") return "Administrative override";
   return "Decision pending";
+}
+
+export type ReconQueueSummary = {
+  status: "RECOMMENDED" | "ESTIMATE_REQUIRED" | "NO_RECON" | "PENDING";
+  label: string;
+  amount: string;
+  detail: string;
+};
+
+export function reconQueueSummary(record: ReconOperationsRecord): ReconQueueSummary {
+  if (record.totals.recommendedCost > 0) {
+    return {
+      status: "RECOMMENDED",
+      label: record.reconStatus.replaceAll("_", " "),
+      amount: new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 0
+      }).format(record.totals.recommendedCost),
+      detail: `${record.recommendations.length} scoped item${record.recommendations.length === 1 ? "" : "s"}`
+    };
+  }
+
+  const confirmedDamageRange = estimateTotalRepairRange(record.damageItems);
+  if (confirmedDamageRange) {
+    return {
+      status: "ESTIMATE_REQUIRED",
+      label: "Estimate required",
+      amount: confirmedDamageRange.label,
+      detail: `${record.damageItems.length} confirmed damage item${record.damageItems.length === 1 ? "" : "s"}`
+    };
+  }
+
+  if (record.conditionReport?.finalizedAt) {
+    return {
+      status: "NO_RECON",
+      label: "No recon indicated",
+      amount: "$0",
+      detail: "No confirmed repair findings"
+    };
+  }
+
+  return {
+    status: "PENDING",
+    label: "CR pending",
+    amount: "Pending",
+    detail: "Complete condition review first"
+  };
 }
 
 export function operationsMetrics(records: ReconOperationsRecord[]): OperationsMetrics {

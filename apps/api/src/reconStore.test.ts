@@ -45,6 +45,43 @@ describe("inspection-to-recon operations", () => {
     }).toEqual(operationalCounts);
   });
 
+  it("backfills a newly added damaged vehicle and exposes only a preliminary CR until evidence is complete", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const inspection = store.createInspection({
+      vin: "1FMCU0G6XNUB32593",
+      year: 2022,
+      make: "Ford",
+      model: "Escape",
+      trim: "SE",
+      mileage: 72_901,
+      exteriorColor: "White",
+      sellerSource: "Marketplace intake",
+      inspectorName: "Marketplace Inspector"
+    }, reconActor);
+    store.addDamage({
+      inspectionId: inspection.id,
+      location: "Rear liftgate and bumper",
+      damageType: "dent",
+      severity: "severe",
+      notes: "Reviewer-confirmed collision damage.",
+      source: "vision_suggestion"
+    }, reconActor);
+
+    expect(reconcileReconOperations(store)).toBe(true);
+    const record = store.recon.operationsRecord(inspection.id, reconActor);
+
+    expect(record.intake.inspectionWorkflowStatus).toBe("CAPTURE_IN_PROGRESS");
+    expect(record.conditionGrade).toBeNull();
+    expect(record.conditionGradePreview).toEqual({
+      value: 4.1,
+      status: "PRELIMINARY",
+      evidenceBlockers: ["Required inspection photographs are incomplete"]
+    });
+    expect(record.damageItems).toHaveLength(1);
+    expect(reconcileReconOperations(store)).toBe(false);
+  });
+
   it("does not invent published reports or recon estimates while backfilling older data", () => {
     const store = new MemoryStore();
     seedStore(store);
@@ -71,19 +108,20 @@ describe("inspection-to-recon operations", () => {
     const ford = records.find((record) => record.inspection.vin === "1FMCU9H6XNUB81389");
     expect(ford).toBeDefined();
     expect(ford?.intake.inspectionWorkflowStatus).toBe("CR_PUBLISHED");
-    expect(ford?.recommendations).toHaveLength(3);
+    expect(ford?.conditionGrade?.approvedGrade).toBe(4.7);
+    expect(ford?.recommendations).toHaveLength(1);
     expect(ford?.recommendations.every((recommendation) => recommendation.damageItemId === null)).toBe(true);
-    expect(ford?.recommendations.some((recommendation) => recommendation.status === "DECLINED")).toBe(true);
+    expect(ford?.totals.recommendedCost).toBe(175);
     expect(ford?.workOrders.every((workOrder) => workOrder.status === "COMPLETED")).toBe(true);
     expect(ford?.readiness.saleReady).toBe(true);
 
     const nissan = records.find((record) => record.inspection.vin === "KNMAT2MV6KP514068");
-    expect(nissan?.recommendations).toHaveLength(4);
+    expect(nissan?.conditionGrade?.approvedGrade).toBe(4.1);
+    expect(nissan?.recommendations).toHaveLength(2);
     expect(nissan?.recommendations.every((recommendation) => recommendation.damageItemId === null)).toBe(true);
-    expect(nissan?.recommendations.some((recommendation) => recommendation.status === "AUTHORIZATION_PENDING")).toBe(true);
+    expect(nissan?.totals.recommendedCost).toBe(450);
     expect(nissan?.recommendations.some((recommendation) => recommendation.status === "REAUTHORIZATION_REQUIRED")).toBe(true);
     expect(nissan?.workOrders.some((workOrder) => workOrder.status === "BLOCKED")).toBe(true);
-    expect(nissan?.workOrders.some((workOrder) => workOrder.qualityControl?.status === "FAILED")).toBe(true);
     expect(nissan?.urgency.urgencyClassification).toBe("HIGH");
 
     const workOrderCount = store.recon.workOrders.size;
@@ -108,61 +146,36 @@ describe("inspection-to-recon operations", () => {
     expect(nissan).toBeDefined();
     if (!nissan) return;
 
-    const tireOrder = store.recon.getWorkOrder(
-      nissan.workOrders.find((workOrder) => workOrder.serviceDepartment === "TIRE")!.id
+    const mechanicalOrder = store.recon.getWorkOrder(
+      nissan.workOrders.find((workOrder) => workOrder.serviceDepartment === "MECHANICAL")!.id
     );
-    expect(tireOrder.status).toBe("BLOCKED");
-    expect(tireOrder.blockedReason).toContain("exceeds authorized amount");
-    const tireTask = store.recon.tasksForWorkOrder(tireOrder.id)[0];
-    const tireAuthorization = store.recon.latestAuthorizationForRecommendation(tireTask.recommendationId);
-    expect(tireAuthorization?.decision).toBe("PENDING");
-    if (!tireAuthorization) return;
-    store.recon.decideAuthorization(tireAuthorization.id, {
+    expect(mechanicalOrder.status).toBe("BLOCKED");
+    expect(mechanicalOrder.blockedReason).toContain("exceeds authorized amount");
+    const mechanicalTask = store.recon.tasksForWorkOrder(mechanicalOrder.id)[0];
+    const mechanicalAuthorization = store.recon.latestAuthorizationForRecommendation(mechanicalTask.recommendationId);
+    expect(mechanicalAuthorization?.decision).toBe("PENDING");
+    if (!mechanicalAuthorization) return;
+    store.recon.decideAuthorization(mechanicalAuthorization.id, {
       decision: "APPROVE",
-      decisionReason: "Approved the revised tire-service estimate before the sale deadline.",
-      authorizedAmount: tireOrder.currentEstimatedCost,
-      expectedVersion: tireAuthorization.version
+      decisionReason: "Approved the revised verification estimate before the sale deadline.",
+      authorizedAmount: mechanicalOrder.currentEstimatedCost,
+      expectedVersion: mechanicalAuthorization.version
     }, consignorActor);
 
-    store.recon.updateWorkOrder(tireOrder.id, {
+    store.recon.updateWorkOrder(mechanicalOrder.id, {
       action: "START",
-      expectedVersion: tireOrder.version
+      expectedVersion: mechanicalOrder.version
     }, reconActor);
-    store.recon.updateWorkOrder(tireOrder.id, {
+    store.recon.updateWorkOrder(mechanicalOrder.id, {
       action: "SEND_TO_QC",
-      expectedVersion: tireOrder.version
+      expectedVersion: mechanicalOrder.version
     }, reconActor);
-    store.recon.recordQualityControl(tireOrder.id, {
+    store.recon.recordQualityControl(mechanicalOrder.id, {
       decision: "PASS",
-      notes: "Reauthorized tire-service scope verified.",
-      expectedVersion: tireOrder.version
+      notes: "Reauthorized verification scope completed.",
+      expectedVersion: mechanicalOrder.version
     }, reconActor);
-    expect(tireOrder.status).toBe("COMPLETED");
-
-    const glassOrder = store.recon.getWorkOrder(
-      nissan.workOrders.find((workOrder) => workOrder.serviceDepartment === "GLASS")!.id
-    );
-    expect(store.recon.latestQualityControlForWorkOrder(glassOrder.id)?.status).toBe("FAILED");
-    store.recon.updateWorkOrder(glassOrder.id, {
-      action: "SEND_TO_QC",
-      expectedVersion: glassOrder.version
-    }, reconActor);
-    store.recon.recordQualityControl(glassOrder.id, {
-      decision: "PASS",
-      notes: "Corrected glass-preparation scope verified.",
-      expectedVersion: glassOrder.version
-    }, reconActor);
-
-    const pendingBody = store.recon.authorizationsForInspection(nissan.inspection.id)
-      .find((authorization) => authorization.decision === "PENDING");
-    expect(pendingBody).toBeDefined();
-    if (pendingBody) {
-      store.recon.decideAuthorization(pendingBody.id, {
-        decision: "DECLINE",
-        decisionReason: "Optional cosmetic allowance is not required for this sale.",
-        expectedVersion: pendingBody.version
-      }, consignorActor);
-    }
+    expect(mechanicalOrder.status).toBe("COMPLETED");
 
     const readiness = store.recon.assessReadiness(nissan.inspection.id, reconActor);
     expect(readiness.saleReady).toBe(true);
