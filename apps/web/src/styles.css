@@ -3299,11 +3299,13 @@ td small {
 }
 
 .grade-strip > div {
+  flex: 1 1 55%;
   min-width: 0;
 }
 
 .grade-strip small {
-  flex: 0 0 auto;
+  flex: 0 1 45%;
+  max-width: 45%;
   color: var(--muted);
   font-size: 11px;
   text-align: right;
@@ -4651,6 +4653,7 @@ pre {
   }
 
   .grade-strip small {
+    max-width: none;
     text-align: left;
   }
 
