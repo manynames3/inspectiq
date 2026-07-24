@@ -129,6 +129,7 @@ export const damageItems = pgTable("damage_items", {
   notes: text("notes").notNull(),
   source: text("source").notNull(),
   confirmedBy: text("confirmed_by").references(() => users.id),
+  idempotencyKey: text("idempotency_key"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 });
@@ -145,6 +146,7 @@ export const conditionGrades = pgTable("condition_grades", {
   evidenceBlockersJson: jsonb("evidence_blockers_json").notNull(),
   explanationJson: jsonb("explanation_json").notNull(),
   gradingVersion: text("grading_version").notNull(),
+  idempotencyKey: text("idempotency_key"),
   version: integer("version").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true })

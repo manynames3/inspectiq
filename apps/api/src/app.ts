@@ -1,5 +1,6 @@
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
+import { createHash } from "node:crypto";
 import { pinoHttp } from "pino-http";
 import {
   AdministrativeAuthorizationSchema,
@@ -43,7 +44,15 @@ import { createPresignedDownload, createPresignedUpload, s3ObjectUrl } from "./a
 import { sendImageAnalysisMessage } from "./awsQueue.js";
 import { runImageAnalysisJob } from "./imageAnalysisRunner.js";
 import { domainEventDlqHealth, flushPendingDomainEvents, replayDomainEventDlq } from "./awsEvents.js";
-import { getMonthlyBedrockUsage, getOperationalProjectionHealth, listRecentOperationalEvents, reserveBedrockUsage } from "./operationsStore.js";
+import {
+  claimInspectionOperation,
+  completeInspectionOperation,
+  failInspectionOperation,
+  getMonthlyBedrockUsage,
+  getOperationalProjectionHealth,
+  listRecentOperationalEvents,
+  reserveBedrockUsage
+} from "./operationsStore.js";
 import { platformHealthPayload } from "./platformHealth.js";
 import { authenticateRequest, authMode } from "./auth.js";
 import { canAccessInspection, isEvaluationActor, requireAction, requireInspectionAccess } from "./rbac.js";
@@ -77,6 +86,20 @@ function sendData<T>(res: Response, data: T, status = 200): void {
 
 async function persistMutation(options: AppOptions): Promise<void> {
   await options.afterMutation?.();
+}
+
+function inspectionOperationKey(
+  inspectionId: string,
+  operation: string,
+  clientKey: string | null,
+  state?: unknown
+): string | null {
+  if (!clientKey && state === undefined) return null;
+  const digest = createHash("sha256")
+    .update(JSON.stringify({ clientKey, state: state ?? null }))
+    .digest("hex")
+    .slice(0, 32);
+  return `${inspectionId}:${operation}:${digest}`;
 }
 
 function referenceEvidenceEnabled(): boolean {
@@ -234,16 +257,57 @@ async function draftInspectionReport(store: MemoryStore, inspection: Inspection,
   const grade = store.latestGrade(inspection.id);
   if (!grade) throw conflict("Calculate the condition grade before requesting a report draft.");
   if (grade.approvedGrade == null) throw conflict("A reviewer must approve the InspectIQ Reference Grade before requesting a report draft.");
+  const operationKey = inspectionOperationKey(inspection.id, "report", idempotencyKey, {
+    gradeId: grade.id,
+    gradeVersion: grade.version
+  })!;
+  const existingJob = store.reportJobByIdempotencyKey(inspection.id, operationKey);
+  if (existingJob) {
+    if (existingJob.status === "failed") return { result: existingJob, claimedOperationKey: null };
+    return {
+      result: {
+        job: existingJob,
+        draft: store.reportDraftForJob(existingJob.id),
+        finalReport: store.latestFinalReport(inspection.id)
+      },
+      claimedOperationKey: null
+    };
+  }
   if (inspection.status !== "GRADED" && inspection.status !== "REPORT_FAILED" && inspection.status !== "HUMAN_REVIEW_REQUIRED") {
     throw conflict(`Cannot request AI report from status ${inspection.status}.`);
   }
-  const provider = getReportProvider();
-  if (provider.name.toLowerCase().includes("bedrock")) {
-    await reserveBedrockUsage("reportDrafts", idempotencyKey ?? `report:${inspection.id}:${crypto.randomUUID()}`);
+  const claim = await claimInspectionOperation(inspection.id, "report", operationKey);
+  if (claim.status === "in_progress") {
+    throw conflict("This report request is already processing.", {
+      inspectionId: inspection.id,
+      operation: "report"
+    });
   }
-  const job = store.createReportJob(inspection.id, idempotencyKey, actor);
-  store.markJobRunning(job.id);
+  if (claim.status === "completed") {
+    const completedJob = claim.resultId ? store.reportJobs.get(claim.resultId) : null;
+    if (!completedJob) {
+      throw conflict("This report request completed in another worker. Refresh the inspection to load the result.", {
+        inspectionId: inspection.id,
+        operation: "report"
+      });
+    }
+    return {
+      result: {
+        job: completedJob,
+        draft: store.reportDraftForJob(completedJob.id),
+        finalReport: store.latestFinalReport(inspection.id)
+      },
+      claimedOperationKey: null
+    };
+  }
+
+  const provider = getReportProvider();
+  const job = store.createReportJob(inspection.id, operationKey, actor);
   try {
+    if (provider.name.toLowerCase().includes("bedrock")) {
+      await reserveBedrockUsage("reportDrafts", operationKey);
+    }
+    store.markJobRunning(job.id);
     const damageItems = store.listDamage(inspection.id);
     const missingEvidence = store.missingRequiredEvidence(inspection.id);
     const result = await provider.generate({
@@ -268,12 +332,51 @@ async function draftInspectionReport(store: MemoryStore, inspection: Inspection,
       validationStatus: "valid"
     }, reportBodyFromDraft(result.validated), actor);
     return {
-      job,
-      draft,
-      finalReport: store.latestFinalReport(inspection.id)
+      result: {
+        job,
+        draft,
+        finalReport: store.latestFinalReport(inspection.id)
+      },
+      claimedOperationKey: operationKey
     };
   } catch (error) {
-    return store.failReportJob(job.id, error instanceof Error ? error.message : "Unknown report provider failure.", actor);
+    return {
+      result: store.failReportJob(job.id, error instanceof Error ? error.message : "Unknown report provider failure.", actor),
+      claimedOperationKey: operationKey
+    };
+  }
+}
+
+async function settleReportOperation(
+  inspectionId: string,
+  outcome: Awaited<ReturnType<typeof draftInspectionReport>>
+): Promise<void> {
+  if (!outcome.claimedOperationKey) return;
+  try {
+    if ("status" in outcome.result && outcome.result.status === "failed") {
+      await failInspectionOperation(
+        inspectionId,
+        "report",
+        outcome.claimedOperationKey,
+        outcome.result.errorMessage ?? "Report generation failed."
+      );
+      return;
+    }
+    await completeInspectionOperation(
+      inspectionId,
+      "report",
+      outcome.claimedOperationKey,
+      "job" in outcome.result ? outcome.result.job.id : outcome.result.id
+    );
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: "error",
+      event: "inspectiq.report_idempotency_settlement_failed",
+      inspectionId,
+      operationKey: outcome.claimedOperationKey,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: error instanceof Error ? error.message : String(error)
+    }));
   }
 }
 
@@ -839,6 +942,18 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "damage:create");
     inspectionForRequest(appStore, req.params.id, actor, "add damage to this inspection");
+    const idempotencyKey = inspectionOperationKey(
+      req.params.id,
+      "damage",
+      req.header("idempotency-key") ?? input.idempotencyKey ?? null
+    );
+    const existing = idempotencyKey
+      ? appStore.damageByIdempotencyKey(req.params.id, idempotencyKey)
+      : null;
+    if (existing) {
+      sendData(res, existing);
+      return;
+    }
     const damage = appStore.addDamage({
       inspectionId: req.params.id,
       photoId: input.photoId ?? null,
@@ -846,7 +961,8 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       damageType: input.damageType,
       severity: input.severity,
       notes: input.notes,
-      source: input.source
+      source: input.source,
+      idempotencyKey
     }, actor);
     await persistMutation(options);
     sendData(res, damage, 201);
@@ -879,7 +995,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
   }));
 
   app.post("/api/inspections/:id/grade", asyncRoute(async (req, res) => {
-    GradeRequestSchema.parse(req.body ?? {});
+    const input = GradeRequestSchema.parse(req.body ?? {});
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "grade:calculate");
     const inspection = inspectionForRequest(appStore, req.params.id, actor, "grade this inspection");
@@ -890,22 +1006,35 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     if (inspection.status !== "READY_FOR_GRADING" && inspection.status !== "GRADED") {
       throw conflict(`Inspection must be READY_FOR_GRADING before grading. Current status: ${inspection.status}.`);
     }
-    const output = await gradeCondition({
+    const gradingInput = {
       vehicle: { year: inspection.year, mileage: inspection.mileage },
       requiredPhotoCompletion: inspection.completenessPercentage / 100,
       damageItems: appStore.listDamage(inspection.id).map((item) => ({
+        id: item.id,
         location: item.location,
         damageType: item.damageType,
         severity: item.severity
       }))
-    });
+    };
+    const idempotencyKey = inspectionOperationKey(
+      inspection.id,
+      "grade",
+      req.header("idempotency-key") ?? input.idempotencyKey ?? null,
+      gradingInput
+    )!;
+    const existing = appStore.gradeByIdempotencyKey(inspection.id, idempotencyKey);
+    if (existing) {
+      sendData(res, existing);
+      return;
+    }
+    const output = await gradeCondition(gradingInput);
     const saved = appStore.saveGrade(inspection.id, {
       suggestedGrade: output.suggestedGrade,
       conditionGradeBeforeRecon: output.conditionGradeBeforeRecon,
       evidenceBlockers: output.evidenceBlockers,
       explanationJson: output.explanation,
       gradingVersion: output.gradingVersion
-    }, actor);
+    }, actor, idempotencyKey);
     await persistMutation(options);
     sendData(res, saved);
   }));
@@ -929,9 +1058,10 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "report:draft");
     const inspection = inspectionForRequest(appStore, req.params.id, actor, "draft a report for this inspection");
-    const result = await draftInspectionReport(appStore, inspection, actor, req.header("idempotency-key") ?? req.body?.idempotencyKey ?? null);
+    const outcome = await draftInspectionReport(appStore, inspection, actor, req.header("idempotency-key") ?? req.body?.idempotencyKey ?? null);
     await persistMutation(options);
-    sendData(res, result, "status" in result && result.status === "failed" ? 502 : 200);
+    await settleReportOperation(inspection.id, outcome);
+    sendData(res, outcome.result, "status" in outcome.result && outcome.result.status === "failed" ? 502 : 200);
   }));
 
   app.get("/api/inspections/:id/ai-report", asyncRoute((req, res) => {
@@ -951,9 +1081,15 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     if (!job) throw validation("Unknown AI report job.");
     if (job.status !== "failed") throw conflict("Only failed report jobs can be retried.", { status: job.status });
     const inspection = inspectionForRequest(appStore, job.inspectionId, actor, "retry this report job");
-    const result = await draftInspectionReport(appStore, inspection, actor, `retry:${job.id}:${Date.now()}`);
+    const outcome = await draftInspectionReport(
+      appStore,
+      inspection,
+      actor,
+      req.header("idempotency-key") ?? req.body?.idempotencyKey ?? `retry:${job.id}`
+    );
     await persistMutation(options);
-    sendData(res, result, "status" in result && result.status === "failed" ? 502 : 200);
+    await settleReportOperation(inspection.id, outcome);
+    sendData(res, outcome.result, "status" in outcome.result && outcome.result.status === "failed" ? 502 : 200);
   }));
 
   app.get("/api/reports/:id/export", asyncRoute((req, res) => {

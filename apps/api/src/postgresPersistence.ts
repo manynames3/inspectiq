@@ -457,6 +457,7 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         notes: record.notes,
         source: record.source,
         confirmedBy: record.confirmed_by,
+        idempotencyKey: record.idempotency_key,
         createdAt: iso(record.created_at),
         updatedAt: iso(record.updated_at)
       } satisfies DamageItem);
@@ -490,6 +491,7 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         evidenceBlockers: record.evidence_blockers_json ?? [],
         explanationJson: record.explanation_json,
         gradingVersion: record.grading_version,
+        idempotencyKey: record.idempotency_key,
         version: record.version ?? 1,
         createdAt: iso(record.created_at),
         reviewedAt: record.reviewed_at ? iso(record.reviewed_at) : null
@@ -928,7 +930,7 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
     },
     {
       table: "damage_items",
-      columns: ["id", "inspection_id", "photo_id", "location", "damage_type", "severity", "notes", "source", "confirmed_by", "created_at", "updated_at"],
+      columns: ["id", "inspection_id", "photo_id", "location", "damage_type", "severity", "notes", "source", "confirmed_by", "idempotency_key", "created_at", "updated_at"],
       rows: [...store.damageItems.values()].map((record) => [
         record.id,
         record.inspectionId,
@@ -939,6 +941,7 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
         record.notes,
         record.source,
         record.confirmedBy,
+        record.idempotencyKey,
         record.createdAt,
         record.updatedAt
       ])
@@ -959,7 +962,7 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
     },
     {
       table: "condition_grades",
-      columns: ["id", "inspection_id", "suggested_grade", "approved_grade", "condition_grade_before_recon", "estimated_grade_after_recon", "reviewed_by", "override_reason", "evidence_blockers_json", "explanation_json", "grading_version", "version", "created_at", "reviewed_at"],
+      columns: ["id", "inspection_id", "suggested_grade", "approved_grade", "condition_grade_before_recon", "estimated_grade_after_recon", "reviewed_by", "override_reason", "evidence_blockers_json", "explanation_json", "grading_version", "idempotency_key", "version", "created_at", "reviewed_at"],
       rows: [...store.conditionGrades.values()].map((record) => [
         record.id,
         record.inspectionId,
@@ -972,6 +975,7 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
         record.evidenceBlockers,
         record.explanationJson,
         record.gradingVersion,
+        record.idempotencyKey,
         record.version,
         record.createdAt,
         record.reviewedAt

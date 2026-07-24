@@ -1085,8 +1085,13 @@ export class MemoryStore {
     notes: string;
     source: "manual" | "vision_suggestion";
     confirmedBy?: string | null;
+    idempotencyKey?: string | null;
   }, actor: Actor, writeAudit = true): DamageItem {
     this.assertMutableInspection(input.inspectionId, "add damage");
+    if (input.idempotencyKey) {
+      const existing = this.damageByIdempotencyKey(input.inspectionId, input.idempotencyKey);
+      if (existing) return existing;
+    }
     const item: DamageItem = {
       id: id(),
       inspectionId: input.inspectionId,
@@ -1097,6 +1102,7 @@ export class MemoryStore {
       notes: input.notes,
       source: input.source,
       confirmedBy: input.confirmedBy ?? actor.id,
+      idempotencyKey: input.idempotencyKey ?? null,
       createdAt: now(),
       updatedAt: now()
     };
@@ -1137,6 +1143,12 @@ export class MemoryStore {
   listDamage(inspectionId: string): DamageItem[] {
     this.getInspection(inspectionId);
     return [...this.damageItems.values()].filter((item) => item.inspectionId === inspectionId);
+  }
+
+  damageByIdempotencyKey(inspectionId: string, idempotencyKey: string): DamageItem | null {
+    return [...this.damageItems.values()].find((item) =>
+      item.inspectionId === inspectionId && item.idempotencyKey === idempotencyKey
+    ) ?? null;
   }
 
   upsertIdentityVerification(input: {
@@ -1194,7 +1206,11 @@ export class MemoryStore {
     evidenceBlockers: string[];
     explanationJson: unknown;
     gradingVersion: string;
-  }, actor: Actor): ConditionGrade {
+  }, actor: Actor, idempotencyKey: string | null = null): ConditionGrade {
+    if (idempotencyKey) {
+      const existing = this.gradeByIdempotencyKey(inspectionId, idempotencyKey);
+      if (existing) return existing;
+    }
     const saved: ConditionGrade = {
       id: id(),
       inspectionId,
@@ -1202,6 +1218,7 @@ export class MemoryStore {
       estimatedGradeAfterRecon: grade.conditionGradeBeforeRecon,
       reviewedBy: null,
       overrideReason: null,
+      idempotencyKey,
       version: 1,
       createdAt: now(),
       reviewedAt: null,
@@ -1255,14 +1272,21 @@ export class MemoryStore {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
   }
 
+  gradeByIdempotencyKey(inspectionId: string, idempotencyKey: string): ConditionGrade | null {
+    return [...this.conditionGrades.values()].find((grade) =>
+      grade.inspectionId === inspectionId && grade.idempotencyKey === idempotencyKey
+    ) ?? null;
+  }
+
   createReportJob(inspectionId: string, idempotencyKey: string | null, actor: Actor): AiReportJob {
-    const active = [...this.reportJobs.values()].find((job) =>
-      job.inspectionId === inspectionId &&
-      job.status !== "failed" &&
-      job.status !== "completed" &&
-      (idempotencyKey ? job.idempotencyKey === idempotencyKey : true)
-    );
-    if (active) return active;
+    const existing = idempotencyKey
+      ? this.reportJobByIdempotencyKey(inspectionId, idempotencyKey)
+      : [...this.reportJobs.values()].find((job) =>
+          job.inspectionId === inspectionId &&
+          job.status !== "failed" &&
+          job.status !== "completed"
+        ) ?? null;
+    if (existing) return existing;
     const timestamp = now();
     const job: AiReportJob = {
       id: id(),
@@ -1365,6 +1389,16 @@ export class MemoryStore {
     return [...this.reportJobs.values()]
       .filter((job) => job.inspectionId === inspectionId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
+  }
+
+  reportJobByIdempotencyKey(inspectionId: string, idempotencyKey: string): AiReportJob | null {
+    return [...this.reportJobs.values()].find((job) =>
+      job.inspectionId === inspectionId && job.idempotencyKey === idempotencyKey
+    ) ?? null;
+  }
+
+  reportDraftForJob(jobId: string): AiReportDraft | null {
+    return [...this.reportDrafts.values()].find((draft) => draft.jobId === jobId) ?? null;
   }
 
   latestReportDraft(inspectionId: string): AiReportDraft | null {

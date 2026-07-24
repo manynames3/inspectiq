@@ -137,6 +137,7 @@ export type DamageItem = {
   notes: string;
   source: "manual" | "vision_suggestion";
   confirmedBy: string | null;
+  idempotencyKey: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -164,6 +165,7 @@ export type ConditionGrade = {
   evidenceBlockers: string[];
   explanationJson: unknown;
   gradingVersion: string;
+  idempotencyKey: string | null;
   version: number;
   createdAt: string;
   reviewedAt: string | null;

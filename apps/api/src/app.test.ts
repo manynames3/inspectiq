@@ -442,16 +442,26 @@ describe("InspectIQ API", () => {
       await request(api).post(`/api/vision-suggestions/${suggestion.id}/accept`).set(reviewerHeaders).send({}).expect(200);
     }
 
-    await request(api)
+    const damagePayload = {
+      location: "left rear wheel",
+      damageType: "wheel_damage",
+      severity: "minor",
+      notes: "Manual reviewer note from integration test.",
+      idempotencyKey: "damage-e2e"
+    };
+    const damage = await request(api)
       .post(`/api/inspections/${inspectionId}/damage`)
       .set(reviewerHeaders)
-      .send({
-        location: "left rear wheel",
-        damageType: "wheel_damage",
-        severity: "minor",
-        notes: "Manual reviewer note from integration test."
-      })
+      .set("idempotency-key", damagePayload.idempotencyKey)
+      .send(damagePayload)
       .expect(201);
+    const duplicateDamage = await request(api)
+      .post(`/api/inspections/${inspectionId}/damage`)
+      .set(reviewerHeaders)
+      .set("idempotency-key", damagePayload.idempotencyKey)
+      .send(damagePayload)
+      .expect(200);
+    expect(duplicateDamage.body.data.id).toBe(damage.body.data.id);
 
     const grade = await request(api)
       .post(`/api/inspections/${inspectionId}/grade`)
@@ -873,6 +883,12 @@ describe("InspectIQ API", () => {
       .expect(200);
     expect(graded.body.data.suggestedGrade).toBeGreaterThan(0);
     expect(graded.body.data.approvedGrade).toBeNull();
+    const duplicateGrade = await request(api)
+      .post(`/api/inspections/${inspectionId}/grade`)
+      .set(reviewerHeaders)
+      .send({ idempotencyKey: "grade-e2e" })
+      .expect(200);
+    expect(duplicateGrade.body.data.id).toBe(graded.body.data.id);
 
     await request(api)
       .post(`/api/inspections/${inspectionId}/condition-grade/approve`)
@@ -895,6 +911,15 @@ describe("InspectIQ API", () => {
       expect.objectContaining({ key: "ANNOUNCEMENTS_AND_DISCLOSURES" })
     ]));
     expect(report.body.data.finalReport.id).toBeTruthy();
+    const duplicateReport = await request(api)
+      .post(`/api/inspections/${inspectionId}/ai-report`)
+      .set(reviewerHeaders)
+      .set("idempotency-key", "report-e2e")
+      .send({})
+      .expect(200);
+    expect(duplicateReport.body.data.job.id).toBe(report.body.data.job.id);
+    expect(duplicateReport.body.data.draft.id).toBe(report.body.data.draft.id);
+    expect(duplicateReport.body.data.finalReport.id).toBe(report.body.data.finalReport.id);
 
     const approved = await request(api)
       .post(`/api/reports/${report.body.data.finalReport.id}/approve`)

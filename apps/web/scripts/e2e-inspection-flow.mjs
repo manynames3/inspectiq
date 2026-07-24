@@ -119,7 +119,7 @@ try {
   await waitForBodyText(page, "Grade ready");
 
   await page.getByRole("button", { name: /calculate grade/i }).click();
-  await waitForBodyText(page, "Reference grade based on required evidence and reviewer-confirmed condition findings");
+  await waitForBodyText(page, "Condition grade based on required evidence and reviewer-confirmed findings");
   await page.getByRole("button", { name: /^approve \d\.\d$/i }).click();
   await waitForBodyText(page, "Reviewer approved");
   await waitForBodyText(page, "Ready for report");

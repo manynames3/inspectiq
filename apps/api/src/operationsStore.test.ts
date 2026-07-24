@@ -10,7 +10,12 @@ vi.mock("@aws-sdk/client-dynamodb", async (importOriginal) => {
   };
 });
 
-import { reserveBedrockUsage } from "./operationsStore.js";
+import {
+  claimInspectionOperation,
+  completeInspectionOperation,
+  failInspectionOperation,
+  reserveBedrockUsage
+} from "./operationsStore.js";
 
 function key(command: unknown): string {
   const input = (command as { input?: { Key?: { pk?: { S?: string } } } }).input;
@@ -88,5 +93,39 @@ describe("reserveBedrockUsage", () => {
       imageAnalyses: 3
     });
     expect(transactionAttempts).toBe(3);
+  });
+});
+
+describe("inspection operation idempotency", () => {
+  it("claims once, reports in-flight retries, and replays the completed result", async () => {
+    delete process.env.OPERATIONS_TABLE_NAME;
+    const inspectionId = "inspection-idempotency-test";
+    const operationKey = "inspection-idempotency-test:report:abc123";
+
+    await expect(claimInspectionOperation(inspectionId, "report", operationKey)).resolves.toEqual({
+      status: "claimed"
+    });
+    await expect(claimInspectionOperation(inspectionId, "report", operationKey)).resolves.toEqual({
+      status: "in_progress"
+    });
+
+    await completeInspectionOperation(inspectionId, "report", operationKey, "report-job-1");
+    await expect(claimInspectionOperation(inspectionId, "report", operationKey)).resolves.toEqual({
+      status: "completed",
+      resultId: "report-job-1"
+    });
+  });
+
+  it("allows a failed operation to be claimed again", async () => {
+    delete process.env.OPERATIONS_TABLE_NAME;
+    const inspectionId = "inspection-failed-idempotency-test";
+    const operationKey = "inspection-failed-idempotency-test:report:def456";
+
+    await claimInspectionOperation(inspectionId, "report", operationKey);
+    await failInspectionOperation(inspectionId, "report", operationKey, "Provider timeout");
+
+    await expect(claimInspectionOperation(inspectionId, "report", operationKey)).resolves.toEqual({
+      status: "claimed"
+    });
   });
 });

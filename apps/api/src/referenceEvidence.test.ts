@@ -244,6 +244,7 @@ describe("reference evidence reconciliation", () => {
       notes: "Reviewer confirmed a light scratch on the driver-side front door from uploaded side evidence.",
       source: "vision_suggestion",
       confirmedBy: "review-lead",
+      idempotencyKey: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -280,6 +281,7 @@ describe("reference evidence reconciliation", () => {
       notes: "Reviewer confirmed rear bumper deformation visible in the rear evidence image.",
       source: "vision_suggestion",
       confirmedBy: reviewer.id,
+      idempotencyKey: null,
       createdAt: timestamp,
       updatedAt: timestamp
     });

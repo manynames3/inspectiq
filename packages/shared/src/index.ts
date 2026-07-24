@@ -437,10 +437,13 @@ export const CreateDamageItemSchema = z.object({
   damageType: DamageTypeSchema,
   severity: DamageSeveritySchema,
   notes: z.string().trim().max(800).default(""),
-  source: z.enum(["manual", "vision_suggestion"]).default("manual")
+  source: z.enum(["manual", "vision_suggestion"]).default("manual"),
+  idempotencyKey: z.string().trim().min(1).max(120).optional()
 });
 
-export const PatchDamageItemSchema = CreateDamageItemSchema.partial();
+export const PatchDamageItemSchema = CreateDamageItemSchema
+  .omit({ idempotencyKey: true })
+  .partial();
 
 export const GradeRequestSchema = z.object({
   idempotencyKey: z.string().trim().max(120).optional()

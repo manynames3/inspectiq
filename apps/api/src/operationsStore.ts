@@ -3,6 +3,7 @@ import {
   GetItemCommand,
   QueryCommand,
   TransactWriteItemsCommand,
+  UpdateItemCommand,
   type AttributeValue
 } from "@aws-sdk/client-dynamodb";
 import { costGuardReached } from "./errors.js";
@@ -17,8 +18,15 @@ type MonthlyUsage = {
 
 const localReservations = new Set<string>();
 const localUsage = new Map<string, MonthlyUsage>();
+const localOperationClaims = new Map<string, { status: "processing" | "completed" | "failed"; resultId: string | null }>();
 let client: DynamoDBClient | null = null;
 const maxTransactionConflictAttempts = 10;
+const operationLeaseSeconds = 5 * 60;
+
+export type InspectionOperationClaim =
+  | { status: "claimed" }
+  | { status: "in_progress" }
+  | { status: "completed"; resultId: string | null };
 
 function monthKey(): string {
   return new Date().toISOString().slice(0, 7);
@@ -42,6 +50,124 @@ function monthlyLimit(kind: BedrockUsageKind): number {
 
 function numberValue(value: AttributeValue | undefined): number {
   return value && "N" in value ? Number(value.N ?? 0) : 0;
+}
+
+function stringValue(value: AttributeValue | undefined): string | null {
+  return value && "S" in value ? value.S ?? null : null;
+}
+
+function operationKeys(inspectionId: string, operation: string, idempotencyKey: string) {
+  return {
+    pk: `IDEMPOTENCY#${inspectionId}`,
+    sk: `${operation}#${idempotencyKey}`
+  };
+}
+
+export async function claimInspectionOperation(
+  inspectionId: string,
+  operation: string,
+  idempotencyKey: string
+): Promise<InspectionOperationClaim> {
+  const table = tableName();
+  const keys = operationKeys(inspectionId, operation, idempotencyKey);
+  const localKey = `${keys.pk}:${keys.sk}`;
+  if (!table) {
+    const existing = localOperationClaims.get(localKey);
+    if (existing?.status === "completed") return { status: "completed", resultId: existing.resultId };
+    if (existing?.status === "processing") return { status: "in_progress" };
+    localOperationClaims.set(localKey, { status: "processing", resultId: null });
+    return { status: "claimed" };
+  }
+
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  try {
+    await dynamo().send(new UpdateItemCommand({
+      TableName: table,
+      Key: { pk: { S: keys.pk }, sk: { S: keys.sk } },
+      UpdateExpression: "SET #status = :processing, inspectionId = :inspectionId, operationName = :operation, leaseExpiresAt = :lease, expiresAt = :expires, updatedAt = :updatedAt REMOVE resultId, errorMessage",
+      ConditionExpression: "attribute_not_exists(pk) OR #status = :failed OR leaseExpiresAt < :now",
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: {
+        ":processing": { S: "processing" },
+        ":failed": { S: "failed" },
+        ":inspectionId": { S: inspectionId },
+        ":operation": { S: operation },
+        ":lease": { N: String(nowEpoch + operationLeaseSeconds) },
+        ":expires": { N: String(nowEpoch + 7 * 24 * 60 * 60) },
+        ":now": { N: String(nowEpoch) },
+        ":updatedAt": { S: new Date().toISOString() }
+      }
+    }));
+    return { status: "claimed" };
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== "ConditionalCheckFailedException") throw error;
+    const existing = await dynamo().send(new GetItemCommand({
+      TableName: table,
+      Key: { pk: { S: keys.pk }, sk: { S: keys.sk } },
+      ConsistentRead: true
+    }));
+    const status = stringValue(existing.Item?.status);
+    if (status === "completed") {
+      return { status: "completed", resultId: stringValue(existing.Item?.resultId) };
+    }
+    return { status: "in_progress" };
+  }
+}
+
+export async function completeInspectionOperation(
+  inspectionId: string,
+  operation: string,
+  idempotencyKey: string,
+  resultId: string
+): Promise<void> {
+  const table = tableName();
+  const keys = operationKeys(inspectionId, operation, idempotencyKey);
+  const localKey = `${keys.pk}:${keys.sk}`;
+  if (!table) {
+    localOperationClaims.set(localKey, { status: "completed", resultId });
+    return;
+  }
+  await dynamo().send(new UpdateItemCommand({
+    TableName: table,
+    Key: { pk: { S: keys.pk }, sk: { S: keys.sk } },
+    UpdateExpression: "SET #status = :completed, resultId = :resultId, expiresAt = :expires, updatedAt = :updatedAt REMOVE leaseExpiresAt, errorMessage",
+    ConditionExpression: "#status = :processing",
+    ExpressionAttributeNames: { "#status": "status" },
+    ExpressionAttributeValues: {
+      ":processing": { S: "processing" },
+      ":completed": { S: "completed" },
+      ":resultId": { S: resultId },
+      ":expires": { N: String(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60) },
+      ":updatedAt": { S: new Date().toISOString() }
+    }
+  }));
+}
+
+export async function failInspectionOperation(
+  inspectionId: string,
+  operation: string,
+  idempotencyKey: string,
+  errorMessage: string
+): Promise<void> {
+  const table = tableName();
+  const keys = operationKeys(inspectionId, operation, idempotencyKey);
+  const localKey = `${keys.pk}:${keys.sk}`;
+  if (!table) {
+    localOperationClaims.set(localKey, { status: "failed", resultId: null });
+    return;
+  }
+  await dynamo().send(new UpdateItemCommand({
+    TableName: table,
+    Key: { pk: { S: keys.pk }, sk: { S: keys.sk } },
+    UpdateExpression: "SET #status = :failed, errorMessage = :errorMessage, expiresAt = :expires, updatedAt = :updatedAt REMOVE leaseExpiresAt, resultId",
+    ExpressionAttributeNames: { "#status": "status" },
+    ExpressionAttributeValues: {
+      ":failed": { S: "failed" },
+      ":errorMessage": { S: errorMessage.slice(0, 500) },
+      ":expires": { N: String(Math.floor(Date.now() / 1000) + 24 * 60 * 60) },
+      ":updatedAt": { S: new Date().toISOString() }
+    }
+  }));
 }
 
 function isTransactionConflict(error: unknown): boolean {

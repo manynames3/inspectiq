@@ -621,6 +621,7 @@ export function InspectionDetailPage() {
     severity: "minor",
     notes: "Manual inspector note."
   });
+  const [damageOperationId, setDamageOperationId] = useState(() => crypto.randomUUID());
   const [evaluationDamageItems, setEvaluationDamageItems] = useState<DamageItem[]>([]);
   const [reportBody, setReportBody] = useState("");
   const [reportComment, setReportComment] = useState("");
@@ -698,6 +699,7 @@ export function InspectionDetailPage() {
     setVehicleReference(null);
     setVehicleReferenceError(null);
     setVehicleReferenceOpen(searchParams.get("reference") === "nhtsa");
+    setDamageOperationId(crypto.randomUUID());
   }, [id, searchParams]);
 
   useEffect(() => {
@@ -1472,7 +1474,14 @@ export function InspectionDetailPage() {
                           addEvaluationDamagePreview();
                           return;
                         }
-                        void runAction("damage", () => api(`/api/inspections/${id}/damage`, { method: "POST", body: JSON.stringify(damageForm) }, actor));
+                        void runAction("damage", async () => {
+                          await api(`/api/inspections/${id}/damage`, {
+                            method: "POST",
+                            headers: { "idempotency-key": damageOperationId },
+                            body: JSON.stringify({ ...damageForm, idempotencyKey: damageOperationId })
+                          }, actor);
+                          setDamageOperationId(crypto.randomUUID());
+                        });
                       }}
                     >
                       <Pencil size={16} /> Add
@@ -1498,7 +1507,21 @@ export function InspectionDetailPage() {
               {reportDockTab === "draft" ? (
                 <div className="dock-body report-dock-body">
                   <div className="report-actions dock-actions">
-                    <button className="secondary-button" disabled={draftReportDisabled} title={draftReportDisabledReason || undefined} onClick={() => void runAction("report", () => api(`/api/inspections/${id}/ai-report`, { method: "POST", body: JSON.stringify({ idempotencyKey: `report-${id}` }) }, actor))}>
+                    <button className="secondary-button" disabled={draftReportDisabled} title={draftReportDisabledReason || undefined} onClick={() => void runAction("report", () => {
+                      if (bundle.inspection.status === "REPORT_FAILED" && bundle.aiReportJob) {
+                        const retryKey = `report-retry-${bundle.aiReportJob.id}`;
+                        return api(`/api/ai-report-jobs/${bundle.aiReportJob.id}/retry`, {
+                          method: "POST",
+                          headers: { "idempotency-key": retryKey },
+                          body: JSON.stringify({ idempotencyKey: retryKey })
+                        }, actor);
+                      }
+                      return api(`/api/inspections/${id}/ai-report`, {
+                        method: "POST",
+                        headers: { "idempotency-key": `report-${id}-${bundle.conditionGrade?.id ?? "pending"}` },
+                        body: JSON.stringify({ idempotencyKey: `report-${id}-${bundle.conditionGrade?.id ?? "pending"}` })
+                      }, actor);
+                    })}>
                       <Bot size={16} /> {draftReportButtonLabel}
                     </button>
                   </div>
