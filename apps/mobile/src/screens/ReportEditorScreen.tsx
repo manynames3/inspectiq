@@ -42,7 +42,12 @@ export function ReportEditorScreen({ route }: Props) {
     setBusy(true);
     setError(null);
     try {
-      await request(path, { method: path === `/api/reports/${report?.id}` ? "PATCH" : "POST", body: JSON.stringify(payload) });
+      const payloadKey = typeof payload.idempotencyKey === "string" ? payload.idempotencyKey : undefined;
+      await request(path, {
+        method: path === `/api/reports/${report?.id}` ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
+        idempotencyKey: payloadKey
+      });
       await refresh();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Report action failed.");

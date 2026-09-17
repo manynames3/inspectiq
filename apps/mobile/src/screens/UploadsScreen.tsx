@@ -8,7 +8,7 @@ import { useWorkspace } from "../workspace/WorkspaceContext";
 
 export function UploadsScreen() {
   const { canMutate } = useAuth();
-  const { pendingUploads, syncNow, refresh, online, lastSync } = useWorkspace();
+  const { pendingUploads, syncNow, refresh, online, syncing, lastSync, error } = useWorkspace();
   const remove = async (operationId: string) => {
     await removeUploadOperation(operationId, true);
     await refresh();
@@ -17,8 +17,9 @@ export function UploadsScreen() {
     <Screen refresh={() => void refresh()}>
       <PageHeading title="Upload queue" subtitle={`${pendingUploads.length} local operation${pendingUploads.length === 1 ? "" : "s"}`} />
       {!online ? <Notice tone="offline" title="Uploads paused" message="Capture work is safe on this device and will resume after reconnection." /> : null}
+      {error ? <Notice tone="bad" title="Sync needs attention" message={error} /> : null}
       {lastSync ? <Notice tone="info" title="Last sync" message={`${lastSync.uploaded} uploaded · ${lastSync.failed} retrying · ${lastSync.blocked} need attention`} /> : null}
-      <ActionButton label="Sync now" icon={<CloudUpload size={18} color="white" />} disabled={!online || !canMutate || pendingUploads.length === 0} onPress={() => void syncNow()} />
+      <ActionButton label={syncing ? "Syncing captures…" : "Sync now"} icon={<CloudUpload size={18} color="white" />} disabled={syncing || !online || !canMutate || pendingUploads.length === 0} onPress={() => void syncNow()} />
       <View style={styles.list}>
         {pendingUploads.map((operation) => (
           <Card key={operation.id}>

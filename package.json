@@ -42,9 +42,13 @@
     "pngjs": "^7.0.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "react-native": "0.86.3",
     "typescript": "^5.9.2"
   },
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "react-native": "0.86.3"
   }
 }
