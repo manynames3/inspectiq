@@ -163,6 +163,7 @@ External marketplace evidence is source-attributed and stored privately for work
 
 ## Documentation
 
+- [Condition-report QC product contract and real-car validation protocol](docs/condition-qc-product.md)
 - [Implementation boundary](docs/implementation-boundary.md)
 - [Inspection-to-recon workflow](docs/inspection-recon-workflow.md)
 - [Recon authorization policy](docs/recon-authorization-policy.md)

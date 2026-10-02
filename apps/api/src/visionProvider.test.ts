@@ -176,7 +176,7 @@ describe("localVisionProvider", () => {
     expect(normalized.humanReviewRequired).toBe(true);
   });
 
-  it("filters marginal damage candidates below the production precision gate", () => {
+  it("retains marginal damage candidates with an explicit low-certainty warning", () => {
     const normalized = normalizeVisionOutput({
       photoAngle: "rear",
       confidence: 0.9,
@@ -208,7 +208,9 @@ describe("localVisionProvider", () => {
       humanReviewRequired: true
     }, "rear");
 
-    expect(normalized.detectedDamageCandidates).toEqual([]);
+    expect(normalized.detectedDamageCandidates).toHaveLength(1);
+    expect(normalized.detectedDamageCandidates[0].explanation).toContain("Low certainty");
+    expect(normalized.detectedDamageCandidates[0].requiresHumanConfirmation).toBe(true);
   });
 
   it("does not invent damage from a clean Honda Accord listing photo", async () => {
@@ -222,6 +224,17 @@ describe("localVisionProvider", () => {
     expect(result.validated.confidence).toBe(0.94);
     expect(result.validated.humanReviewRequired).toBe(false);
     expect(result.validated.detectedDamageCandidates).toEqual([]);
+  });
+
+  it("keeps multiple visible defects instead of silently selecting one", async () => {
+    const fixture = await localVisionProvider.analyze({ filename: "front.jpg", storageKey: "/test/front.jpg", declaredAngle: "front" });
+    const candidate = { location: "bumper", damageType: "dent" as const, severityEstimate: "moderate" as const, confidence: 0.95, explanation: "Visible dent.", repairEstimateUsd: { min: 0, max: 0, rationale: "Review" }, requiresHumanConfirmation: true };
+    fixture.validated.detectedDamageCandidates = [candidate, { ...candidate, location: "hood", confidence: 0.81 }];
+    const normalized = normalizeVisionOutput(fixture.validated, "front");
+    expect(normalized.detectedDamageCandidates).toHaveLength(2);
+    expect(normalized.detectedDamageCandidates[1].explanation).toContain("Low certainty");
+    expect(normalizeVisionOutput(fixture.validated, "vin_plate").detectedDamageCandidates).toHaveLength(2);
+    expect(buildBedrockVisionPrompt({ filename: "front.jpg", declaredAngle: "front" })).not.toContain("at most one detectedDamageCandidates");
   });
 
   it("keeps the source-documented damage challenge fixture for evaluator coverage", async () => {

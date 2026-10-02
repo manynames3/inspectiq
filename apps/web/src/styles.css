@@ -5583,3 +5583,24 @@ pre {
     grid-template-columns: 1fr;
   }
 }
+.condition-qc-panel { margin-top: 20px; padding: 20px; background: var(--surface, #fff); border: 1px solid #ccd5df; border-radius: 12px; display: grid; gap: 12px; }
+.condition-qc-panel p { margin: 0; line-height: 1.5; }
+.condition-qc-panel small { display: block; color: #526177; line-height: 1.5; }
+.condition-qc-identity, .condition-qc-issues, .condition-qc-note, .condition-qc-decision { display: grid; gap: 12px; }
+.condition-qc-identity { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.condition-qc-issues article { border-left: 3px solid #be7b12; padding: 12px; background: #fffaf0; display: grid; gap: 8px; overflow-wrap: anywhere; }
+.condition-qc-issues article.qc-resolved { border-color: #237d69; background: #f2faf7; }
+.condition-qc-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-start; }
+.condition-qc-panel label { display: grid; gap: 6px; }
+.condition-qc-panel textarea, .condition-qc-panel select { width: 100%; padding: 10px; border: 1px solid #c4ccd6; border-radius: 6px; font: inherit; }
+.condition-qc-panel textarea { min-height: 70px; resize: vertical; }
+.condition-qc-error { color: #a32424; }
+.evidence-open-button { padding: 0; width: 100%; border: 0; background: transparent; cursor: zoom-in; display: block; }
+.condition-evidence-viewer { width: min(1100px, 94vw); max-height: 94vh; padding: 16px; border: 1px solid #8998ab; border-radius: 12px; }
+.condition-evidence-viewer::backdrop { background: #0b1624d9; }
+.condition-evidence-viewer > img { display: block; width: 100%; max-height: 76vh; object-fit: contain; margin: 12px 0; }
+.condition-qc-dialog { width: min(1000px, 94vw); max-height: 92vh; padding: 16px; border: 1px solid #8998ab; border-radius: 12px; }
+.condition-qc-dialog::backdrop { background: #0b1624d9; }
+.condition-qc-dialog .condition-qc-panel { border: 0; padding: 8px; margin-top: 12px; }
+.condition-qc-dialog-toolbar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: white; padding: 8px 0; border-bottom: 1px solid #ccd5df; }
+.condition-evidence-viewer strong, .condition-qc-dialog-toolbar strong { overflow-wrap: anywhere; }

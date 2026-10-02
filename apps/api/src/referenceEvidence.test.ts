@@ -503,7 +503,7 @@ describe("reference evidence reconciliation", () => {
       confidence: 0.7,
       explanation: "Reviewer previously confirmed a separate glare concern."
     });
-    store.rejectSuggestion(reviewedFinding.id, reviewer);
+    store.rejectSuggestion(reviewedFinding.id, reviewer, undefined, "Reviewer inspected the photo and confirmed the warning does not apply.");
 
     store.saveAnalysis(front, {
       provider: "bedrockVisionProvider",

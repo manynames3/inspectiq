@@ -6,6 +6,7 @@ import { canRole, requiredPhotoAngles, type RequiredPhotoAngle } from "@inspecti
 import { useAuth } from "../auth/AuthContext";
 import { EvidenceImage } from "../components/EvidenceImage";
 import { EvidencePhotoViewer } from "../components/EvidencePhotoViewer";
+import { ConditionQcPanel } from "../components/ConditionQcPanel";
 import { ActionButton, Card, Notice, PageHeading, Screen, Section, StatusPill } from "../components/Primitives";
 import type { RootStackParamList } from "../navigation/types";
 import { colors } from "../theme";
@@ -121,13 +122,17 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
         {canMutate && online && canRole(session.actor.role, "photo:analyze") && bundle.photos.length > 0 ? (
           <ActionButton label={busy ? "Submitting…" : "Analyze photos"} tone="secondary" disabled={busy} icon={<Play size={17} color={colors.ink} />} onPress={() => void runAction(`/api/inspections/${inspection.id}/photos/analyze`, {}, `mobile-analysis:${inspection.id}`)} />
         ) : null}
-        {canMutate && online && canRole(session.actor.role, "grade:calculate") && inspection.status === "READY_FOR_GRADING" ? (
+        {canMutate && online && canRole(session.actor.role, "grade:calculate") && ["READY_FOR_GRADING", "GRADED", "HUMAN_REVIEW_REQUIRED", "AI_DRAFTED", "REPORT_FAILED"].includes(inspection.status) ? (
           <ActionButton label="Calculate grade" tone="secondary" icon={<Sparkles size={17} color={colors.ink} />} onPress={() => void runAction(`/api/inspections/${inspection.id}/grade`, {}, `mobile-grade:${inspection.id}`)} />
         ) : null}
         {canRole(session.actor.role, "report:edit") || bundle.finalReport ? (
           <ActionButton label="Open condition report" tone="secondary" icon={<FileText size={17} color={colors.ink} />} onPress={() => navigation.navigate("ReportEditor", { inspectionId: inspection.id })} />
         ) : null}
       </View>
+      <ConditionQcPanel key={inspection.id} bundle={bundle} onPhoto={(id) => {
+        const index = bundle.photos.findIndex((p) => p.id === id);
+        if (index >= 0) setSelectedPhotoIndex(index);
+      }} onFinding={() => navigation.navigate("Main", { screen: "Review" })} />
       {selectedPhoto ? (
         <EvidencePhotoViewer
           photo={selectedPhoto}

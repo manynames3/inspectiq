@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   DamageCandidateSchema,
   ImageQualitySchema,
@@ -38,6 +39,9 @@ import { conflict, notFound, versionConflict } from "./errors.js";
 import { currentCorrelationId } from "./requestContext.js";
 import { assertTransition, canTransition } from "./stateMachine.js";
 import { ReconStore } from "./reconStore.js";
+import { assessConditionQc, inspectorObservations } from "./conditionQc.js";
+import { visualConditionSections } from "./reportProvider.js";
+import type { InspectorObservationSchema, ConditionQcReviewSchema } from "@inspectiq/shared";
 
 type CreateInspectionInput = z.infer<typeof CreateInspectionSchema>;
 type SuggestionAssignmentRole = Extract<UserRole, "inspector" | "reviewer">;
@@ -1004,10 +1008,11 @@ export class MemoryStore {
     return suggestion;
   }
 
-  rejectSuggestion(idValue: string, actor: Actor, expectedVersion?: number): VisionSuggestion {
+  rejectSuggestion(idValue: string, actor: Actor, expectedVersion?: number, reason?: string): VisionSuggestion {
     const suggestion = this.getSuggestion(idValue);
     this.assertExpectedVersion("Suggestion", expectedVersion, suggestion.version);
     this.assertMutableInspection(suggestion.inspectionId, "reject suggestions");
+    if (suggestion.suggestionType === "quality_warning" && (!reason || reason.trim().length < 10)) throw conflict("A reason of at least 10 characters is required to override an image-quality judgment.");
     if (suggestion.status === "accepted") throw conflict("Accepted suggestions cannot be rejected.");
     suggestion.status = "rejected";
     suggestion.reviewedBy = actor.id;
@@ -1016,7 +1021,8 @@ export class MemoryStore {
     suggestion.version += 1;
     this.addAudit(suggestion.inspectionId, actor, "suggestion.rejected", {
       suggestionId: suggestion.id,
-      suggestionType: suggestion.suggestionType
+      suggestionType: suggestion.suggestionType,
+      reason: reason?.trim() ?? null
     });
     this.emitDomainEvent("suggestion.reviewed", suggestion.inspectionId, actor, {
       suggestionId: suggestion.id,
@@ -1088,6 +1094,7 @@ export class MemoryStore {
     idempotencyKey?: string | null;
   }, actor: Actor, writeAudit = true): DamageItem {
     this.assertMutableInspection(input.inspectionId, "add damage");
+    if (input.photoId && this.getPhoto(input.photoId).inspectionId !== input.inspectionId) throw conflict("Evidence must belong to this inspection.");
     if (input.idempotencyKey) {
       const existing = this.damageByIdempotencyKey(input.inspectionId, input.idempotencyKey);
       if (existing) return existing;
@@ -1120,9 +1127,10 @@ export class MemoryStore {
   patchDamage(idValue: string, patch: Partial<DamageItem>, actor: Actor): DamageItem {
     const item = this.getDamage(idValue);
     this.assertMutableInspection(item.inspectionId, "edit damage");
+    if (patch.photoId && this.getPhoto(patch.photoId).inspectionId !== item.inspectionId) throw conflict("Evidence must belong to this inspection.");
     const before = { ...item };
     Object.assign(item, {
-      photoId: patch.photoId ?? item.photoId,
+      photoId: patch.photoId === undefined ? item.photoId : patch.photoId,
       location: patch.location ?? item.location,
       damageType: patch.damageType ?? item.damageType,
       severity: patch.severity ?? item.severity,
@@ -1145,6 +1153,46 @@ export class MemoryStore {
     return [...this.damageItems.values()].filter((item) => item.inspectionId === inspectionId);
   }
 
+  conditionQc(inspectionId: string) {
+    const damageItems = this.listDamage(inspectionId);
+    const assessment = assessConditionQc({
+      inspection: this.getInspection(inspectionId), photos: this.listPhotos(inspectionId),
+      suggestions: this.listSuggestions(inspectionId), damageItems,
+      identityVerifications: this.listIdentityVerifications(inspectionId), auditEvents: this.auditForInspection(inspectionId)
+    });
+    return { ...assessment, draftSections: visualConditionSections({ missingEvidence: this.missingRequiredEvidence(inspectionId), damageItems, conditionQc: assessment }) };
+  }
+
+  recordInspectorObservation(inspectionId: string, input: z.infer<typeof InspectorObservationSchema>, actor: Actor) {
+    this.assertMutableInspection(inspectionId, "record inspector observations");
+    if (input.photoId && this.getPhoto(input.photoId).inspectionId !== inspectionId) throw conflict("Evidence must belong to this inspection.");
+    const observations = inspectorObservations(this.auditForInspection(inspectionId));
+    const existing = observations.find((o) => o.operationId === input.operationId);
+    if (existing) return existing;
+    this.addAudit(inspectionId, actor, "inspector.observation_recorded", input);
+    return inspectorObservations(this.auditForInspection(inspectionId)).find((o) => o.operationId === input.operationId)!;
+  }
+
+  reviewConditionQc(inspectionId: string, input: z.infer<typeof ConditionQcReviewSchema>, actor: Actor) {
+    this.assertMutableInspection(inspectionId, "review condition-report exceptions");
+    const issue = this.conditionQc(inspectionId).issues.find((i) => i.id === input.issueId);
+    if (!issue || issue.fingerprint !== input.fingerprint) throw conflict("Evidence changed. Refresh the exception before reviewing it.");
+    if (issue.objective) throw conflict("Resolve the missing or incomplete evidence; objective requirements cannot be overridden.");
+    if (issue.suggestionId) throw conflict("Review this finding through the suggestion decision workflow.");
+    if (issue.status !== "open") return this.conditionQc(inspectionId);
+    this.addAudit(inspectionId, actor, "condition_qc.reviewed", input);
+    return this.conditionQc(inspectionId);
+  }
+
+  private assertCurrentReportEvidence(report: FinalReport) {
+    const input = this.latestReportDraft(report.inspectionId)?.inputSummaryJson as { sourceFingerprint?: string; gradeId?: string; gradeVersion?: number } | undefined;
+    if (!input?.sourceFingerprint || input.sourceFingerprint !== this.conditionQc(report.inspectionId).sourceFingerprint) {
+      throw conflict("Inspection evidence changed after this report was generated. Generate a new draft before approval or publication.");
+    }
+    const grade = this.latestGrade(report.inspectionId);
+    if (!this.isGradeCurrent(report.inspectionId) || input.gradeId !== grade?.id || (input.gradeVersion !== undefined && input.gradeVersion !== grade?.version)) throw conflict("The reference grade changed or is stale. Recalculate/approve it and generate a fresh report.");
+  }
+
   damageByIdempotencyKey(inspectionId: string, idempotencyKey: string): DamageItem | null {
     return [...this.damageItems.values()].find((item) =>
       item.inspectionId === inspectionId && item.idempotencyKey === idempotencyKey
@@ -1160,7 +1208,7 @@ export class MemoryStore {
     verifiedBy: string;
   }, actor: Actor): IdentityVerification {
     this.assertMutableInspection(input.inspectionId, "verify identity evidence");
-    this.getPhoto(input.photoId);
+    if (this.getPhoto(input.photoId).inspectionId !== input.inspectionId) throw conflict("Identity evidence must belong to this inspection.");
     const existing = [...this.identityVerifications.values()].find((record) =>
       record.inspectionId === input.inspectionId && record.field === input.field
     );
@@ -1207,6 +1255,7 @@ export class MemoryStore {
     explanationJson: unknown;
     gradingVersion: string;
   }, actor: Actor, idempotencyKey: string | null = null): ConditionGrade {
+    this.assertMutableInspection(inspectionId, "calculate a reference grade");
     if (idempotencyKey) {
       const existing = this.gradeByIdempotencyKey(inspectionId, idempotencyKey);
       if (existing) return existing;
@@ -1224,6 +1273,7 @@ export class MemoryStore {
       reviewedAt: null,
       ...grade
     };
+    saved.explanationJson = { ...(typeof saved.explanationJson === "object" && saved.explanationJson ? saved.explanationJson : {}), gradeEvidenceFingerprint: this.gradeEvidenceFingerprint(inspectionId) };
     this.conditionGrades.set(saved.id, saved);
     this.addAudit(inspectionId, actor, "condition.grade_generated", {
       gradeId: saved.id,
@@ -1235,8 +1285,10 @@ export class MemoryStore {
   }
 
   approveGrade(inspectionId: string, approvedGrade: number, overrideReason: string | null, actor: Actor): ConditionGrade {
+    this.assertMutableInspection(inspectionId, "approve a reference grade");
     const grade = this.latestGrade(inspectionId);
     if (!grade) throw conflict("Calculate an InspectIQ Reference Grade before approval.");
+    if (!this.isGradeCurrent(inspectionId)) throw conflict("Grading facts changed. Recalculate the reference grade before approval.");
     if (grade.evidenceBlockers.length > 0) {
       throw conflict("Resolve required evidence blockers before approving the reference grade.", {
         evidenceBlockers: grade.evidenceBlockers
@@ -1268,8 +1320,30 @@ export class MemoryStore {
 
   latestGrade(inspectionId: string): ConditionGrade | null {
     return [...this.conditionGrades.values()]
+      .reverse()
       .filter((grade) => grade.inspectionId === inspectionId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
+  }
+
+  gradingInput(inspectionId: string) {
+    const inspection = this.getInspection(inspectionId);
+    return {
+      vehicle: { year: inspection.year, mileage: inspection.mileage },
+      requiredPhotoCompletion: inspection.completenessPercentage / 100,
+      damageItems: this.listDamage(inspectionId).sort((a, b) => a.id.localeCompare(b.id)).map((item) => ({
+        id: item.id, location: item.location, damageType: item.damageType, severity: item.severity
+      }))
+    };
+  }
+
+  private gradeEvidenceFingerprint(inspectionId: string) {
+    return createHash("sha256").update(JSON.stringify(this.gradingInput(inspectionId))).digest("hex");
+  }
+
+  isGradeCurrent(inspectionId: string) {
+    const grade = this.latestGrade(inspectionId);
+    const explanation = grade?.explanationJson as { gradeEvidenceFingerprint?: string } | undefined;
+    return !!grade && explanation?.gradeEvidenceFingerprint === this.gradeEvidenceFingerprint(inspectionId);
   }
 
   gradeByIdempotencyKey(inspectionId: string, idempotencyKey: string): ConditionGrade | null {
@@ -1279,6 +1353,7 @@ export class MemoryStore {
   }
 
   createReportJob(inspectionId: string, idempotencyKey: string | null, actor: Actor): AiReportJob {
+    this.assertMutableInspection(inspectionId, "draft a condition report");
     const existing = idempotencyKey
       ? this.reportJobByIdempotencyKey(inspectionId, idempotencyKey)
       : [...this.reportJobs.values()].find((job) =>
@@ -1316,6 +1391,7 @@ export class MemoryStore {
   completeReportJob(jobId: string, draft: Omit<AiReportDraft, "id" | "createdAt">, reportBody: string, actor: Actor): AiReportDraft {
     const job = this.reportJobs.get(jobId);
     if (!job) throw notFound("AI report job");
+    this.assertMutableInspection(job.inspectionId, "complete a report draft");
     const savedDraft: AiReportDraft = {
       id: id(),
       createdAt: now(),
@@ -1387,6 +1463,7 @@ export class MemoryStore {
 
   latestReportJob(inspectionId: string): AiReportJob | null {
     return [...this.reportJobs.values()]
+      .reverse()
       .filter((job) => job.inspectionId === inspectionId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
   }
@@ -1403,6 +1480,7 @@ export class MemoryStore {
 
   latestReportDraft(inspectionId: string): AiReportDraft | null {
     return [...this.reportDrafts.values()]
+      .reverse()
       .filter((draft) => draft.inspectionId === inspectionId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
   }
@@ -1448,6 +1526,7 @@ export class MemoryStore {
     const inspection = this.getInspection(report.inspectionId);
     const grade = this.latestGrade(inspection.id);
     const damage = this.listDamage(inspection.id);
+    const conditionQc = this.conditionQc(inspection.id);
     const totalEstimate = damage.length > 0
       ? damage.map((item) => estimateDamageRepairCost(item.damageType, item.severity))
       : [];
@@ -1464,7 +1543,9 @@ export class MemoryStore {
     const body = [
       `Condition Report: ${inspection.year} ${inspection.make} ${inspection.model} ${inspection.trim}`.trim(),
       `VIN: ${inspection.vin}`,
+      `VIN verification: ${conditionQc.identity.vin.status.replaceAll("_", " ")}`,
       `Odometer: ${inspection.mileage.toLocaleString()} mi`,
+      `Mileage verification: ${conditionQc.identity.odometer.status.replaceAll("_", " ")}`,
       `Exterior: ${inspection.exteriorColor}`,
       `Source: ${inspection.sellerSource}`,
       "",
@@ -1475,6 +1556,7 @@ export class MemoryStore {
       ...damageLines,
       "",
       "Reviewer Disclosure",
+      ...conditionQc.issues.map((issue) => `- Evidence limitation: ${issue.title}. ${issue.detail}${issue.decision ? ` Review rationale: ${issue.decision.reason}` : ""}`),
       report.reportBody,
       "",
       `Report Version: ${report.version}`,
@@ -1493,6 +1575,8 @@ export class MemoryStore {
     report.reportBody = reportBody;
     report.version += 1;
     report.approvalStatus = "in_review";
+    report.approvedBy = null;
+    report.approvedAt = null;
     if (options.reviewerComment !== undefined) report.reviewerComment = options.reviewerComment;
     this.recordReportVersion(report, actor, "edited");
     this.addAudit(report.inspectionId, actor, "report.edited", { reportId, version: report.version });
@@ -1503,6 +1587,7 @@ export class MemoryStore {
     const report = this.getFinalReport(reportId);
     this.assertExpectedVersion("Report", expectedVersion, report.version);
     if (report.finalizedAt) throw conflict("Finalized reports cannot be approved again.");
+    this.assertCurrentReportEvidence(report);
     report.version += 1;
     report.approvalStatus = "approved";
     report.reviewerComment = reviewerComment ?? report.reviewerComment;
@@ -1522,6 +1607,9 @@ export class MemoryStore {
     this.assertExpectedVersion("Report", expectedVersion, report.version);
     const inspection = this.getInspection(report.inspectionId);
     if (report.finalizedAt) return report;
+    this.assertCurrentReportEvidence(report);
+    const qc = this.conditionQc(inspection.id);
+    if (!qc.publicationReady) throw conflict("Resolve condition-report QC exceptions before publication.", { issues: qc.issues.filter((i) => i.status === "open") });
     if (report.approvalStatus !== "approved") {
       throw conflict("Approve the reviewed report before finalization.", {
         approvalStatus: report.approvalStatus,
@@ -1761,7 +1849,8 @@ export class MemoryStore {
       finalReport: this.latestFinalReport(inspectionId),
       auditEvents: this.auditForInspection(inspectionId),
       readinessIssues: this.readinessIssues(inspectionId),
-      buyerVisibleReady: this.buyerVisibleReady(inspectionId)
+      buyerVisibleReady: this.buyerVisibleReady(inspectionId),
+      conditionQc: this.conditionQc(inspectionId)
     };
   }
 
@@ -1804,6 +1893,9 @@ export class MemoryStore {
     const photos = this.listPhotos(inspectionId);
     const damageItems = this.listDamage(inspectionId);
     const issues: ReadinessIssue[] = [];
+    for (const issue of this.conditionQc(inspectionId).issues.filter((item) => item.status === "open")) {
+      issues.push({ type: "condition_qc_exception", severity: "blocker", label: issue.title, detail: issue.detail, action: issue.action });
+    }
     for (const angle of this.missingRequiredEvidence(inspectionId)) {
       issues.push({
         type: "missing_required_angle",
@@ -1864,12 +1956,12 @@ export class MemoryStore {
         action: "Complete the human review queue."
       });
     }
-    if (this.latestGrade(inspectionId)?.approvedGrade == null) {
+    if (this.latestGrade(inspectionId)?.approvedGrade == null || !this.isGradeCurrent(inspectionId)) {
       issues.push({
         type: "condition_grade_missing",
         severity: "blocker",
-        label: "InspectIQ Reference Grade not approved",
-        detail: "A reviewer must approve or override the suggested 0.0-5.0 grade.",
+        label: this.latestGrade(inspectionId)?.approvedGrade != null ? "InspectIQ Reference Grade is stale" : "InspectIQ Reference Grade not approved",
+        detail: "Recalculate after changed grading facts, then approve or override the suggested 0.0-5.0 grade.",
         action: "Calculate and approve the reference grade after evidence review."
       });
     }

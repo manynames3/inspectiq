@@ -254,7 +254,9 @@ export function SuggestionsPage() {
         });
         return;
       }
-      await api(`/api/vision-suggestions/${id}/${action}`, { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) }, actor);
+      const reason = action === "reject" && suggestion.suggestionType === "quality_warning" ? window.prompt("Explain why this photo is usable despite the quality warning (at least 10 characters).") : undefined;
+      if (reason === null) return;
+      await api(`/api/vision-suggestions/${id}/${action}`, { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version, reason }) }, actor);
       await load();
     } catch (err) {
       if (err instanceof ApiClientError && err.code === "VERSION_CONFLICT") {

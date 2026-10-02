@@ -6,6 +6,9 @@ import { api, ApiClientError, apiUrl, assetUrl, requestHeaders } from "../api.js
 import { useActor } from "../App.js";
 import { isEvaluationSession, storedLocalSession } from "../auth.js";
 import { StatusPill } from "../components/StatusPill.js";
+import { ConditionQcPanel } from "../components/ConditionQcPanel.js";
+import { ConditionQcDialog } from "../components/ConditionQcDialog.js";
+import { EvidenceViewer } from "../components/EvidenceViewer.js";
 import { conditionGradeView, formatConditionGrade } from "../conditionGrade.js";
 import { loadEvaluationDamage, saveEvaluationDamage } from "../evaluationDamage.js";
 import { applyEvaluationReview, clearEvaluationReview, recordEvaluationReview } from "../evaluationReview.js";
@@ -617,12 +620,15 @@ export function InspectionDetailPage() {
   const [queueCollapsed, setQueueCollapsed] = useState(false);
   const [reviewRailCollapsed, setReviewRailCollapsed] = useState(false);
   const [damageForm, setDamageForm] = useState({
+    photoId: "",
     location: "front bumper",
     damageType: "scratch",
     severity: "minor",
     notes: "Manual inspector note."
   });
   const [damageOperationId, setDamageOperationId] = useState(() => crypto.randomUUID());
+  const [expandedPhotoId, setExpandedPhotoId] = useState<string | null>(null);
+  const [qcOpen, setQcOpen] = useState(false);
   const [evaluationDamageItems, setEvaluationDamageItems] = useState<DamageItem[]>([]);
   const [reportBody, setReportBody] = useState("");
   const [reportComment, setReportComment] = useState("");
@@ -691,12 +697,16 @@ export function InspectionDetailPage() {
     edit?: { suggestedValue: unknown; explanation?: string }
   ) {
     if (!actor.id.startsWith("evaluation-")) {
+      const reason = status === "rejected" && suggestion.suggestionType === "quality_warning"
+        ? window.prompt("Explain why this photo is usable despite the quality warning (at least 10 characters).")
+        : undefined;
+      if (reason === null) return;
       const path = status === "edited"
         ? `/api/vision-suggestions/${suggestion.id}`
         : `/api/vision-suggestions/${suggestion.id}/${status === "accepted" ? "accept" : "reject"}`;
       const options = status === "edited"
         ? { method: "PATCH", body: JSON.stringify({ ...edit, expectedVersion: suggestion.version }) }
-        : { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) };
+        : { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version, reason }) };
       return runAction(status, () => api(path, options, actor));
     }
 
@@ -923,7 +933,7 @@ export function InspectionDetailPage() {
     const previewItem: DamageItem = {
       id: `evaluation-damage-${typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now()}`,
       inspectionId: id,
-      photoId: null,
+      photoId: damageForm.photoId || null,
       location,
       damageType: damageForm.damageType,
       severity: damageForm.severity,
@@ -1136,6 +1146,7 @@ export function InspectionDetailPage() {
               <p>VIN {bundle.inspection.vin} · {bundle.inspection.mileage.toLocaleString()} mi · {bundle.inspection.exteriorColor} · {bundle.inspection.trim || "Base"} · Updated {new Date(bundle.inspection.updatedAt).toLocaleString()}</p>
             </div>
             <div className="heading-actions">
+              {bundle.conditionQc ? <button type="button" className="secondary-button" onClick={() => setQcOpen(true)}>Report QC · {bundle.conditionQc.openCount} open</button> : null}
               <button className={`secondary-button dense-toggle ${queueCollapsed ? "active" : ""}`} onClick={() => setQueueCollapsed((current) => !current)}>{queueCollapsed ? "Show queue" : "Hide queue"}</button>
               <button className={`secondary-button dense-toggle ${reviewRailCollapsed ? "active" : ""}`} onClick={() => setReviewRailCollapsed((current) => !current)}>{reviewRailCollapsed ? "Show review" : "Hide review"}</button>
               <button
@@ -1347,7 +1358,7 @@ export function InspectionDetailPage() {
                       const quality = photoQualityView(photo, qualitySuggestionsByPhotoId.get(photo.id), job?.status, analysis);
                       return (
                         <article className={`photo-tile quality-${quality.status}`} key={photo.id}>
-                          <ProtectedPhotoImage photo={photo} />
+                          <button type="button" className="evidence-open-button" aria-label={`Enlarge ${photo.originalFilename}`} onClick={() => setExpandedPhotoId(photo.id)}><ProtectedPhotoImage photo={photo} /></button>
                           <div title={`${photo.originalFilename} · ${quality.detail}`}>
                             <strong>{photoDisplayName(photo)}</strong>
                             <span className={`photo-confidence-badge ${!referenceEvidence && confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={referenceEvidence ? "Required checklist view" : `Required-angle match confidence ${confidenceLabel}`}>
@@ -1423,6 +1434,8 @@ export function InspectionDetailPage() {
                 </button> : null}
               </div>
             </section>
+            {qcOpen && bundle.conditionQc ? <ConditionQcDialog onClose={() => setQcOpen(false)}><ConditionQcPanel key={id} assessment={bundle.conditionQc} inspectionId={id} actor={actor} photos={bundle.photos} canRecord={can("damage:create")} canReview={can("report:approve")} locked={isEvaluationWorkspace || isFinalizedInspection} onChanged={load} onPhoto={setExpandedPhotoId} onFinding={() => { setQcOpen(false); setReviewRailCollapsed(false); requestAnimationFrame(() => document.querySelector<HTMLElement>(".review-column")?.focus()); }} /></ConditionQcDialog> : null}
+            {expandedPhotoId && bundle.photos.some((p) => p.id === expandedPhotoId) ? <EvidenceViewer photos={bundle.photos} selectedId={expandedPhotoId} onSelect={setExpandedPhotoId} onClose={() => setExpandedPhotoId(null)} renderPhoto={(photo) => <ProtectedPhotoImage key={photo.id} photo={photo} />} /> : null}
           </div>
         </main>
 
@@ -1498,6 +1511,10 @@ export function InspectionDetailPage() {
                     )) : <p className="empty-dock-state">No confirmed damage items.</p>}
                   </div>
                   <div className="damage-form">
+                    <select aria-label="Damage evidence photo" disabled={damageDisabled} value={damageForm.photoId} onChange={(event) => setDamageForm((current) => ({ ...current, photoId: event.target.value }))}>
+                      <option value="">Inspector observation — no photo</option>
+                      {bundle.photos.filter((p) => p.uploadStatus === "uploaded").map((p) => <option key={p.id} value={p.id}>{p.originalFilename}</option>)}
+                    </select>
                     <input aria-label="Damaged area" disabled={damageDisabled} value={damageForm.location} onChange={(event) => setDamageForm((current) => ({ ...current, location: event.target.value }))} />
                     <select aria-label="Damage type" disabled={damageDisabled} value={damageForm.damageType} onChange={(event) => setDamageForm((current) => ({ ...current, damageType: event.target.value }))}>
                       {["scratch", "dent", "crack", "paint_damage", "glass_damage", "wheel_damage", "interior_wear", "unknown"].map((value) => <option key={value}>{value}</option>)}
@@ -1518,7 +1535,7 @@ export function InspectionDetailPage() {
                           await api(`/api/inspections/${id}/damage`, {
                             method: "POST",
                             headers: { "idempotency-key": damageOperationId },
-                            body: JSON.stringify({ ...damageForm, idempotencyKey: damageOperationId })
+                            body: JSON.stringify({ ...damageForm, photoId: damageForm.photoId || null, idempotencyKey: damageOperationId })
                           }, actor);
                           setDamageOperationId(crypto.randomUUID());
                         });
@@ -1578,7 +1595,7 @@ export function InspectionDetailPage() {
                       <span>{gradeView?.reviewState === "approved" ? "Reviewer-approved condition grade." : gradeView ? "Suggested grade requires reviewer approval." : bundle.conditionGrade ? "Recalculate this incompatible grade record." : "Condition grade appears after grading."}</span>
                     </div>
                     {bundle.aiReportDraft ? (
-                      <small>Draft confidence {Math.round(bundle.aiReportDraft.confidence * 100)}% · human review {bundle.aiReportDraft.humanReviewRequired ? "required" : "optional"}</small>
+                      <small>Human approval required · model score is not a calibrated accuracy percentage.</small>
                     ) : null}
                   </div>
                   {editReportDisabled ? (
@@ -1773,6 +1790,7 @@ export function InspectionDetailPage() {
               onAccept={() => reviewSuggestion(suggestion, "accepted")}
               onReject={() => reviewSuggestion(suggestion, "rejected")}
               onEdit={(value) => reviewSuggestion(suggestion, "edited", value)}
+              onPhoto={() => setExpandedPhotoId(suggestion.photoId)}
             />
           ))}
         </aside>
@@ -1781,7 +1799,7 @@ export function InspectionDetailPage() {
   );
 }
 
-function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onReject, onEdit }: {
+function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onReject, onEdit, onPhoto }: {
   suggestion: VisionSuggestion;
   photo?: VehiclePhoto;
   analysis?: PhotoAnalysisResult;
@@ -1789,6 +1807,7 @@ function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onRej
   onAccept: () => Promise<unknown>;
   onReject: () => Promise<unknown>;
   onEdit: (value: { suggestedValue: unknown; explanation?: string }) => Promise<unknown>;
+  onPhoto: () => void;
 }) {
   const confidencePercent = Math.round(suggestion.confidence * 100);
   const referenceEvidence = Boolean(photo && isReferenceEvidence(photo, analysis));
@@ -1802,7 +1821,7 @@ function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onRej
       </div>
       {photo ? (
         <div className="suggestion-photo">
-          <ProtectedPhotoImage photo={photo} />
+          <button type="button" className="evidence-open-button" aria-label={`Enlarge ${photo.originalFilename}`} onClick={onPhoto}><ProtectedPhotoImage photo={photo} /></button>
         </div>
       ) : null}
       {photo ? <span className="suggestion-source-line">{photoSourceLabel(photo)} · {photo.originalFilename}</span> : null}

@@ -23,6 +23,12 @@ export function ReportEditorScreen({ route }: Props) {
   const [busy, setBusy] = useState(false);
   const [versions, setVersions] = useState<ReportVersion[]>([]);
   const [comparison, setComparison] = useState<ReportVersion | null>(null);
+  const [gradeValue, setGradeValue] = useState("");
+  const [gradeReason, setGradeReason] = useState("");
+  useEffect(() => {
+    setGradeValue(bundle?.conditionGrade ? String(bundle.conditionGrade.suggestedGrade) : "");
+    setGradeReason("");
+  }, [bundle?.conditionGrade?.id, bundle?.conditionGrade?.version]);
   useEffect(() => {
     setBody(report?.reportBody ?? "");
     setComment(report?.reviewerComment ?? "");
@@ -79,6 +85,11 @@ export function ReportEditorScreen({ route }: Props) {
         </View>
         {report ? <Text style={styles.version}>Version {report.version}{report.approvedBy ? ` · approved by ${report.approvedBy}` : ""}</Text> : null}
       </Card>
+      {!report?.finalizedAt && bundle.conditionGrade && bundle.conditionGrade.approvedGrade == null && canRole(session.actor.role, "grade:approve") ? <Card>
+        <Field label="Reviewed grade (0–5)" keyboardType="decimal-pad" value={gradeValue} onChangeText={setGradeValue} />
+        <Field label="Grade override reason" value={gradeReason} onChangeText={setGradeReason} placeholder="Required when changing the suggested grade" />
+        <ActionButton label="Approve reviewed reference grade" disabled={busy || !online || !canMutate || bundle.conditionGrade.evidenceBlockers.length > 0 || !gradeValue.trim() || !Number.isFinite(Number(gradeValue)) || Number(gradeValue) < 0 || Number(gradeValue) > 5 || (Math.abs(Number(gradeValue) - bundle.conditionGrade.suggestedGrade) >= 0.05 && !gradeReason.trim())} onPress={() => void action(`/api/inspections/${bundle.inspection.id}/condition-grade/approve`, { approvedGrade: Number(gradeValue), overrideReason: gradeReason || undefined })} />
+      </Card> : null}
       {!report ? (
         <ActionButton label={busy ? "Drafting…" : "Generate report draft"} disabled={busy || !online || !canMutate || !canRole(session.actor.role, "report:draft") || bundle.conditionGrade?.approvedGrade == null} onPress={() => void action(`/api/inspections/${bundle.inspection.id}/ai-report`, { idempotencyKey: `mobile-report:${bundle.inspection.id}:${bundle.conditionGrade?.id}` })} />
       ) : (
@@ -86,6 +97,7 @@ export function ReportEditorScreen({ route }: Props) {
           <Field label="Buyer-facing report" value={body} onChangeText={setBody} multiline editable={!report.finalizedAt && canMutate} />
           <Field label="Reviewer comment" value={comment} onChangeText={setComment} multiline editable={!report.finalizedAt && canMutate} />
           <Notice tone="info" title="Buyer report boundary" message="Model provider, raw confidence payloads, prompt internals, and developer terminology are excluded from the finalized report." />
+          {!report.finalizedAt && canRole(session.actor.role, "report:draft") ? <ActionButton label="Regenerate from current evidence" tone="secondary" disabled={busy || !online || !canMutate || bundle.conditionGrade?.approvedGrade == null} onPress={() => void action(`/api/inspections/${bundle.inspection.id}/ai-report`, { idempotencyKey: `mobile-report:${bundle.inspection.id}:${bundle.conditionGrade?.id}` })} /> : null}
           {versions.length > 0 ? (
             <Card>
               <Text style={styles.historyTitle}>Version history</Text>

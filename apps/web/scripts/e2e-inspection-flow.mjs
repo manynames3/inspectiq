@@ -118,6 +118,34 @@ try {
   await acceptVisibleSuggestions(page);
   await waitForBodyText(page, "Grade ready");
 
+  await page.getByRole("button", { name: /^Enlarge / }).first().click();
+  await page.getByRole("dialog", { name: "Enlarged evidence photo" }).waitFor();
+  if (process.env.E2E_VIEWER_SCREENSHOT_PATH) await page.screenshot({ path: process.env.E2E_VIEWER_SCREENSHOT_PATH });
+  await page.getByRole("button", { name: "Next photo", exact: true }).click();
+  await page.getByRole("button", { name: "Previous photo", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog", { name: "Enlarged evidence photo" }).waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: /^Report QC/ }).click();
+  for (let index = 0; index < 30; index += 1) {
+    const decision = page.locator(".condition-qc-decision").first();
+    const remaining = await page.locator(".condition-qc-decision").count();
+    if (remaining === 0) break;
+    await decision.locator("textarea").fill("Local workflow proof: explicitly disclose reference identity limitations; not actual vehicle verification.");
+    await Promise.all([
+      page.waitForResponse((response) => response.url().endsWith("/condition-qc/review") && response.request().method() === "POST"),
+      decision.getByRole("button", { name: "Acknowledge limitation" }).click()
+    ]);
+    await page.waitForFunction((previousCount) => document.querySelectorAll(".condition-qc-decision").length < previousCount, remaining);
+    await page.waitForLoadState("networkidle");
+  }
+  if (await page.locator(".condition-qc-decision").count() > 0) fail("QC limitation review did not finish.");
+  await page.getByText("Automatic preliminary condition report", { exact: true }).click();
+  if (process.env.E2E_QC_SCREENSHOT_PATH) {
+    await page.locator(".condition-qc-panel").scrollIntoViewIfNeeded();
+    await page.screenshot({ path: process.env.E2E_QC_SCREENSHOT_PATH });
+  }
+  await page.getByRole("button", { name: "Close QC workspace" }).click();
+
   await page.getByRole("button", { name: /calculate grade/i }).click();
   await waitForBodyText(page, "Condition grade based on required evidence and reviewer-confirmed findings");
   await page.getByRole("button", { name: /^approve \d\.\d$/i }).click();
@@ -159,6 +187,9 @@ try {
     flow: "create_attach_analyze_review_grade_draft_approve_finalize",
     url: page.url()
   }));
+} catch (error) {
+  if (process.env.E2E_FAILURE_SCREENSHOT_PATH) await page.screenshot({ path: process.env.E2E_FAILURE_SCREENSHOT_PATH });
+  throw error;
 } finally {
   await context.close();
   await browser.close();

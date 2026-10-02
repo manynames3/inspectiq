@@ -89,22 +89,15 @@ function damageConfidenceThreshold(): number {
 }
 
 export function normalizeVisionOutput(output: VisionOutput, declaredAngle?: VisionOutput["photoAngle"] | null): VisionOutput {
-  const evidenceAngle = output.photoAngle === "odometer"
-    || output.photoAngle === "vin_plate"
-    || declaredAngle === "odometer"
-    || declaredAngle === "vin_plate";
-  const credibleDamage = (evidenceAngle ? [] : output.detectedDamageCandidates
-    .filter((candidate) =>
-      candidate.confidence >= damageConfidenceThreshold()
-      && candidate.damageType !== "unknown"
-      && candidate.severityEstimate !== "unknown"
-    )
+  const credibleDamage = [...output.detectedDamageCandidates]
     .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, 1))
     .map((candidate) => {
       const estimate = estimateDamageRepairCost(candidate.damageType, candidate.severityEstimate);
       return {
         ...candidate,
+        requiresHumanConfirmation: true,
+        explanation: candidate.confidence < damageConfidenceThreshold() || candidate.damageType === "unknown" || candidate.severityEstimate === "unknown"
+          ? `Low certainty — reviewer confirmation required. ${candidate.explanation}`.slice(0, 500) : candidate.explanation,
         repairEstimateUsd: {
           min: estimate.min,
           max: estimate.max,
@@ -128,8 +121,11 @@ export function normalizeVisionOutput(output: VisionOutput, declaredAngle?: Visi
   let qualityWarnings = output.imageQuality.retakeRequired
     || output.imageQuality.grade === "retake"
     || output.imageQuality.grade === "review"
-    ? uniqueNonEmpty(output.qualityWarnings).slice(0, 1)
+    ? uniqueNonEmpty(output.qualityWarnings)
     : [];
+  if (imageQuality.retakeRequired || imageQuality.grade === "retake") {
+    qualityWarnings = uniqueNonEmpty([...qualityWarnings, "Unable to assess reliably: capture a clear, well-lit replacement image."]);
+  }
   const sideAngles = new Set<VisionOutput["photoAngle"]>(["driver_side", "passenger_side"]);
   const declaredSide = declaredAngle && sideAngles.has(declaredAngle) ? declaredAngle : null;
   const orientation = output.vehicleOrientation;
@@ -494,7 +490,9 @@ export function buildBedrockVisionPrompt(input: {
       "Use 0-1 confidence values. If unsure, use unknown angle, lower confidence, and humanReviewRequired true.",
       "Never invent VIN or odometer values unless legible. Mark retakeRequired true for blur, poor framing, low light, occlusion, or non-vehicle images.",
       "For odometer or VIN-plate capture slots, do not return damage candidates; extract the text only if legible or request retake.",
-      "Keep reviewer work bounded: return at most one qualityWarnings item and at most one detectedDamageCandidates item. Omit damage candidates below 0.85 confidence.",
+      "Return every distinct visible damage candidate, not only the highest-confidence one. Include uncertain candidates with an explicit low-certainty explanation and requiresHumanConfirmation=true; never silently discard them.",
+      "Prioritize obvious dents, substantial scratches/scuffs, broken glass or lights, and missing/damaged exterior parts. Use crack or unknown for damaged lights/parts when the taxonomy does not fit, with a precise location and explanation. Do not infer hidden mechanical damage.",
+      "Report image limitations and request targeted recapture for inadequate lighting, blur, occlusion or framing. No detected candidates does not establish damage-free condition.",
       "The structured angle, quality grade, retake flag, warnings, and notes must agree. Do not describe an image as three-quarter in notes while marking a direct required view as pass.",
       "Each note, warning, location, and rationale must be concise; keep each string under 120 characters."
     ].join("\n");
@@ -502,7 +500,7 @@ export function buildBedrockVisionPrompt(input: {
 
 export const bedrockVisionProvider: VisionProvider = {
   name: "bedrockVisionProvider",
-  promptVersion: "photo-analysis-v4",
+  promptVersion: "photo-analysis-v5-recall-review",
   async analyze(input) {
     const startedAt = Date.now();
     const image = await loadImageInput(input);

@@ -582,9 +582,19 @@ function createReferenceReport(store: MemoryStore, input: ReferenceInspectionInp
   }, actor);
   store.approveGrade(inspectionId, suggestedGrade, null, actor);
 
+  if (input.reportState === "finalized") {
+    for (const issue of store.conditionQc(inspectionId).issues.filter((item) => item.status === "open" && !item.objective && !item.suggestionId)) {
+      store.reviewConditionQc(inspectionId, {
+        issueId: issue.id, fingerprint: issue.fingerprint, decision: "reviewed",
+        reason: "Reference demonstration only: identity/condition limitations remain disclosed; this is not independent vehicle verification."
+      }, actor);
+    }
+  }
+  const conditionQc = store.conditionQc(inspectionId);
   const job = store.createReportJob(inspectionId, `reference-report-${input.vin}`, actor);
   store.markJobRunning(job.id);
   const output = referenceReportOutput(input, grade, damageItems, isHumanReview);
+  output.conditionReportSections = visualConditionSections({ missingEvidence: store.missingRequiredEvidence(inspectionId), damageItems, conditionQc });
   store.completeReportJob(job.id, {
     inspectionId,
     jobId: job.id,
@@ -592,8 +602,10 @@ function createReferenceReport(store: MemoryStore, input: ReferenceInspectionInp
     promptVersion: "reference-report-v1",
     inputSummaryJson: {
       gradeId: grade.id,
+      gradeVersion: grade.version,
       damageItemCount: damageItems.length,
-      missingEvidence: store.missingRequiredEvidence(inspectionId)
+      missingEvidence: store.missingRequiredEvidence(inspectionId),
+      sourceFingerprint: conditionQc.sourceFingerprint
     },
     outputJson: output,
     confidence: output.confidence,

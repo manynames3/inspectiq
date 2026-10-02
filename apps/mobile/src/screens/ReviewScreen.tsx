@@ -3,10 +3,12 @@ import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { Check, Pencil, RotateCcw, UserCheck, X } from "lucide-react-native";
 import { useAuth } from "../auth/AuthContext";
 import { Field } from "../components/Fields";
+import { EvidenceImage } from "../components/EvidenceImage";
+import { EvidencePhotoViewer } from "../components/EvidencePhotoViewer";
 import { ActionButton, Card, EmptyState, Notice, PageHeading, Screen, StatusPill } from "../components/Primitives";
 import { colors } from "../theme";
 import { suggestionUsesReferenceMapping } from "../provenance";
-import type { InspectionBundle, VisionSuggestion } from "../types";
+import type { InspectionBundle, VehiclePhoto, VisionSuggestion } from "../types";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 
 type QueueItem = { bundle: InspectionBundle; suggestion: VisionSuggestion };
@@ -41,6 +43,8 @@ export function ReviewScreen() {
   const [editText, setEditText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [qualityReasons, setQualityReasons] = useState<Record<string, string>>({});
+  const [evidence, setEvidence] = useState<{ photos: VehiclePhoto[]; index: number } | null>(null);
   const items = useMemo<QueueItem[]>(() => bundles.flatMap((bundle) => bundle.suggestions
     .filter((suggestion) => suggestion.status === "pending")
     .map((suggestion) => ({ bundle, suggestion })))
@@ -52,7 +56,7 @@ export function ReviewScreen() {
     try {
       await request(`/api/vision-suggestions/${suggestion.id}/${action}`, {
         method: "POST",
-        body: JSON.stringify({ expectedVersion: suggestion.version })
+        body: JSON.stringify({ expectedVersion: suggestion.version, reason: action === "reject" && suggestion.suggestionType === "quality_warning" ? qualityReasons[suggestion.id] : undefined })
       });
       await refresh();
     } catch (mutationError) {
@@ -150,6 +154,7 @@ export function ReviewScreen() {
           const canDecide = canMutate && online && (session?.actor.role === "reviewer" || session?.actor.role === "admin");
           return (
             <Card key={suggestion.id}>
+              {bundle.photos.find((p) => p.id === suggestion.photoId) ? <EvidenceImage photo={bundle.photos.find((p) => p.id === suggestion.photoId)!} onPress={() => setEvidence({ photos: bundle.photos, index: bundle.photos.findIndex((p) => p.id === suggestion.photoId) })} /> : null}
               <View style={styles.header}>
                 <Pressable onPress={() => setSelected((current) => {
                   const next = new Set(current);
@@ -168,8 +173,9 @@ export function ReviewScreen() {
                 <Text style={styles.findingLabel}>{findingLabel(suggestion.suggestionType)}</Text>
                 <Text style={styles.evidence}>{evidenceText(suggestion, referenceMapping)}</Text>
                 <Text style={styles.explanation}>{suggestion.explanation}</Text>
-                <Text style={styles.confidence}>{referenceMapping ? "Required-view mapping" : `${Math.round(suggestion.confidence * 100)}% confidence`} · version {suggestion.version}</Text>
+                <Text style={styles.confidence}>{referenceMapping ? "Required-view mapping" : suggestion.confidence < 0.85 ? "Low certainty — review or recapture" : "Model finding — human confirmation required"} · version {suggestion.version}</Text>
               </View>
+              {suggestion.suggestionType === "quality_warning" && canDecide ? <Field label="Quality override rationale" value={qualityReasons[suggestion.id] ?? ""} onChangeText={(value) => setQualityReasons((r) => ({ ...r, [suggestion.id]: value }))} placeholder="Required to reject this quality warning" /> : null}
               <View style={styles.actions}>
                 <ActionButton label="Edit" tone="secondary" disabled={!canDecide} icon={<Pencil size={15} color={colors.ink} />} onPress={() => openEdit(item)} />
                 <ActionButton label="Reject" tone="danger" disabled={!canDecide || busyId === suggestion.id} icon={<X size={15} color={colors.red} />} onPress={() => void mutate(suggestion, "reject")} />
@@ -189,6 +195,7 @@ export function ReviewScreen() {
           <ActionButton label="Cancel" tone="secondary" onPress={() => setEditItem(null)} />
         </View>
       </Modal>
+      {evidence && evidence.photos[evidence.index] ? <EvidencePhotoViewer photo={evidence.photos[evidence.index]} position={evidence.index} total={evidence.photos.length} onClose={() => setEvidence(null)} onPrevious={() => setEvidence((current) => current ? { ...current, index: (current.index - 1 + current.photos.length) % current.photos.length } : null)} onNext={() => setEvidence((current) => current ? { ...current, index: (current.index + 1) % current.photos.length } : null)} /> : null}
     </Screen>
   );
 }

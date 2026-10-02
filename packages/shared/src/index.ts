@@ -54,6 +54,7 @@ export const supportedImageUploadMimeTypes = ["image/jpeg", "image/png", "image/
 export const maxImageUploadBytes = 25_000_000;
 export const maxLocalPreviewUploadBytes = 2_000_000;
 export const readinessIssueTypes = [
+  "condition_qc_exception",
   "missing_required_angle",
   "image_quality_retake",
   "image_analysis_failed",
@@ -416,6 +417,7 @@ export const UpdateSuggestionSchema = z.object({
 });
 
 export const SuggestionDecisionSchema = z.object({
+  reason: z.string().trim().min(10).max(1000).optional(),
   expectedVersion: z.coerce.number().int().min(1).optional()
 }).default({});
 
@@ -526,7 +528,7 @@ export const ConditionReportSectionSchema = z.object({
   ]),
   title: z.string().trim().min(1).max(120),
   status: z.enum(["VERIFIED", "OBSERVED", "NOT_OBSERVED", "NOT_APPLICABLE", "REQUIRES_REVIEW"]),
-  observations: z.array(z.string().trim().min(1).max(500)).max(20)
+  observations: z.array(z.string().trim().min(1).max(2000)).max(200)
 }).strict();
 
 export type ConditionReportSection = z.infer<typeof ConditionReportSectionSchema>;
@@ -546,7 +548,7 @@ export const AiReportOutputSchema = z.object({
 export type AiReportOutput = z.infer<typeof AiReportOutputSchema>;
 
 export const PatchReportSchema = z.object({
-  reportBody: z.string().trim().min(1).max(8000),
+  reportBody: z.string().trim().min(1).max(100000),
   reviewerComment: z.string().trim().max(2000).optional(),
   expectedVersion: z.coerce.number().int().min(1).optional()
 });
@@ -615,3 +617,4 @@ export type ApiEnvelope<T> = {
 export function formatAngle(angle: string): string {
   return angle.replaceAll("_", " ");
 }
+export * from "./conditionQc.js";

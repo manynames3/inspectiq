@@ -20,6 +20,8 @@ import {
   PatchInspectionSchema,
   PatchReportSchema,
   ReportApprovalSchema,
+  InspectorObservationSchema,
+  ConditionQcReviewSchema,
   SamplePhotoSchema,
   UpdateSuggestionSchema,
   SuggestionAssignmentSchema,
@@ -257,9 +259,12 @@ async function draftInspectionReport(store: MemoryStore, inspection: Inspection,
   const grade = store.latestGrade(inspection.id);
   if (!grade) throw conflict("Calculate the condition grade before requesting a report draft.");
   if (grade.approvedGrade == null) throw conflict("A reviewer must approve the InspectIQ Reference Grade before requesting a report draft.");
+  if (!store.isGradeCurrent(inspection.id)) throw conflict("Grading facts changed. Recalculate and approve the reference grade before drafting.");
+  const conditionQc = store.conditionQc(inspection.id);
   const operationKey = inspectionOperationKey(inspection.id, "report", idempotencyKey, {
     gradeId: grade.id,
-    gradeVersion: grade.version
+    gradeVersion: grade.version,
+    sourceFingerprint: conditionQc.sourceFingerprint
   })!;
   const existingJob = store.reportJobByIdempotencyKey(inspection.id, operationKey);
   if (existingJob) {
@@ -273,7 +278,7 @@ async function draftInspectionReport(store: MemoryStore, inspection: Inspection,
       claimedOperationKey: null
     };
   }
-  if (inspection.status !== "GRADED" && inspection.status !== "REPORT_FAILED" && inspection.status !== "HUMAN_REVIEW_REQUIRED") {
+  if (inspection.status !== "GRADED" && inspection.status !== "REPORT_FAILED" && inspection.status !== "HUMAN_REVIEW_REQUIRED" && inspection.status !== "AI_DRAFTED") {
     throw conflict(`Cannot request AI report from status ${inspection.status}.`);
   }
   const claim = await claimInspectionOperation(inspection.id, "report", operationKey);
@@ -314,7 +319,8 @@ async function draftInspectionReport(store: MemoryStore, inspection: Inspection,
       inspection,
       grade,
       missingEvidence,
-      damageItems
+      damageItems,
+      conditionQc
     });
     const draft = store.completeReportJob(job.id, {
       inspectionId: inspection.id,
@@ -323,8 +329,10 @@ async function draftInspectionReport(store: MemoryStore, inspection: Inspection,
       promptVersion: provider.promptVersion,
       inputSummaryJson: {
         gradeId: grade.id,
+        gradeVersion: grade.version,
         damageItemCount: damageItems.length,
-        missingEvidence
+        missingEvidence,
+        sourceFingerprint: conditionQc.sourceFingerprint
       },
       outputJson: result.validated,
       confidence: result.validated.confidence,
@@ -875,7 +883,7 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const actor = actorFromRequest(req, appStore);
     requireAction(actor, "suggestion:review");
     suggestionForRequest(appStore, req.params.id, actor, "reject this review finding");
-    const suggestion = appStore.rejectSuggestion(req.params.id, actor, input.expectedVersion);
+    const suggestion = appStore.rejectSuggestion(req.params.id, actor, input.expectedVersion, input.reason);
     await persistMutation(options);
     sendData(res, suggestion);
   }));
@@ -961,11 +969,37 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
       damageType: input.damageType,
       severity: input.severity,
       notes: input.notes,
-      source: input.source,
+      source: "manual",
       idempotencyKey
     }, actor);
     await persistMutation(options);
     sendData(res, damage, 201);
+  }));
+
+  app.post("/api/inspections/:id/observations", asyncRoute(async (req, res) => {
+    const input = InspectorObservationSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "damage:create");
+    inspectionForRequest(appStore, req.params.id, actor, "record inspector observations");
+    const observation = appStore.recordInspectorObservation(req.params.id, input, actor);
+    await persistMutation(options);
+    sendData(res, observation, 201);
+  }));
+
+  app.get("/api/inspections/:id/condition-qc", asyncRoute((req, res) => {
+    const actor = actorFromRequest(req, appStore);
+    inspectionForRequest(appStore, req.params.id, actor, "view condition-report quality control");
+    sendData(res, appStore.conditionQc(req.params.id));
+  }));
+
+  app.post("/api/inspections/:id/condition-qc/review", asyncRoute(async (req, res) => {
+    const input = ConditionQcReviewSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "report:approve");
+    inspectionForRequest(appStore, req.params.id, actor, "review condition-report exceptions");
+    const assessment = appStore.reviewConditionQc(req.params.id, input, actor);
+    await persistMutation(options);
+    sendData(res, assessment);
   }));
 
   app.get("/api/inspections/:id/vehicle-reference", asyncRoute(async (req, res) => {
@@ -1003,19 +1037,10 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     if (missing.length > 0) {
       throw conflict("Cannot grade before required photo evidence is confirmed.", { missingEvidence: missing });
     }
-    if (inspection.status !== "READY_FOR_GRADING" && inspection.status !== "GRADED") {
+    if (!["READY_FOR_GRADING", "GRADED", "HUMAN_REVIEW_REQUIRED", "AI_DRAFTED", "REPORT_FAILED"].includes(inspection.status)) {
       throw conflict(`Inspection must be READY_FOR_GRADING before grading. Current status: ${inspection.status}.`);
     }
-    const gradingInput = {
-      vehicle: { year: inspection.year, mileage: inspection.mileage },
-      requiredPhotoCompletion: inspection.completenessPercentage / 100,
-      damageItems: appStore.listDamage(inspection.id).map((item) => ({
-        id: item.id,
-        location: item.location,
-        damageType: item.damageType,
-        severity: item.severity
-      }))
-    };
+    const gradingInput = appStore.gradingInput(inspection.id);
     const idempotencyKey = inspectionOperationKey(
       inspection.id,
       "grade",

@@ -195,6 +195,7 @@ export type AuditEvent = {
 };
 
 export type InspectionBundle = {
+  conditionQc?: import("@inspectiq/shared").ConditionQcAssessment;
   inspection: Inspection;
   photos: VehiclePhoto[];
   photoAnalysisResults?: PhotoAnalysisResult[];

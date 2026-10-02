@@ -10,6 +10,7 @@ import type {
   SuggestionStatus,
   UserRole
 } from "@inspectiq/shared";
+import type { ConditionQcAssessment } from "@inspectiq/shared";
 
 export type Actor = {
   id: string;
@@ -248,6 +249,7 @@ export type AuditEvent = {
 };
 
 export type InspectionBundle = {
+  conditionQc?: ConditionQcAssessment;
   inspection: Inspection;
   photos: VehiclePhoto[];
   photoAnalysisResults: PhotoAnalysisResult[];

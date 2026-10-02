@@ -462,6 +462,7 @@ describe("InspectIQ API", () => {
       .send(damagePayload)
       .expect(200);
     expect(duplicateDamage.body.data.id).toBe(damage.body.data.id);
+    await acknowledgeQcLimitations(inspectionId);
 
     const grade = await request(api)
       .post(`/api/inspections/${inspectionId}/grade`)
@@ -500,11 +501,50 @@ describe("InspectIQ API", () => {
     return { inspectionId, photos, suggestions, report: report.body.data };
   }
 
+  async function acknowledgeQcLimitations(inspectionId: string) {
+    const assessment = await request(api).get(`/api/inspections/${inspectionId}/condition-qc`).set(reviewerHeaders).expect(200);
+    for (const issue of assessment.body.data.issues.filter((item: { status: string }) => item.status === "open")) {
+      expect(issue.objective).toBe(false);
+      expect(issue.suggestionId).toBeUndefined();
+      await request(api).post(`/api/inspections/${inspectionId}/condition-qc/review`).set(reviewerHeaders)
+        .send({ issueId: issue.id, fingerprint: issue.fingerprint, decision: "reviewed", reason: "Integration fixture: explicitly disclose unverified identity and unlinked inspector observations." }).expect(200);
+    }
+  }
+
   it("validates inspection creation", async () => {
     const response = await request(api).post("/api/inspections").send({ vin: "x" });
     expect(response.status).toBe(400);
     expect(response.body.error.code).toBe("VALIDATION_FAILED");
     expect(response.body.requestId).toBeTruthy();
+  });
+
+  it("restricts QC mutation by role and exposes an automatic notes-only draft", async () => {
+    const created = await createInspection();
+    const inspectionId = created.body.data.id;
+    const input = { area: "glass", outcome: "damage_observed", notes: "Visible crack on windshield; close-up still needed.", operationId: "e0fdb5ac-7c13-4c22-8d86-997304b3f763" };
+    await request(api).post(`/api/inspections/${inspectionId}/observations`).set(inspectorHeaders).send(input).expect(201);
+    const qc = await request(api).get(`/api/inspections/${inspectionId}/condition-qc`).set(inspectorHeaders).expect(200);
+    expect(qc.body.data.draftSections.find((s: { key: string }) => s.key === "WINDSHIELD_AND_GLASS").observations.join(" ")).toContain(input.notes);
+    const issue = qc.body.data.issues.find((i: { id: string }) => i.id === "identity:vin");
+    const decision = { issueId: issue.id, fingerprint: issue.fingerprint, decision: "reviewed", reason: "Explicitly disclose VIN not verified from these photos." };
+    await request(api).post(`/api/inspections/${inspectionId}/condition-qc/review`).set(inspectorHeaders).send(decision).expect(403);
+    await request(api).post(`/api/inspections/${inspectionId}/condition-qc/review`).set(reviewerHeaders).send({ ...decision, reason: "short" }).expect(400);
+    await request(api).post(`/api/inspections/${inspectionId}/condition-qc/review`).set(reviewerHeaders).send(decision).expect(200);
+    await request(api).post(`/api/evaluation/inspections/${inspectionId}/observations`).set("x-actor-role", "inspector").send(input).expect(403);
+  });
+
+  it("invalidates a generated report after new notes and regenerates under the same request key", async () => {
+    const { inspectionId, suggestions } = await createAnalyzedCompleteInspection();
+    for (const suggestion of suggestions) await request(api).post(`/api/vision-suggestions/${suggestion.id}/accept`).set(reviewerHeaders).send({}).expect(200);
+    await acknowledgeQcLimitations(inspectionId);
+    const grade = await request(api).post(`/api/inspections/${inspectionId}/grade`).set(reviewerHeaders).send({}).expect(200);
+    await request(api).post(`/api/inspections/${inspectionId}/condition-grade/approve`).set(reviewerHeaders).send({ approvedGrade: grade.body.data.suggestedGrade }).expect(200);
+    const draft = await request(api).post(`/api/inspections/${inspectionId}/ai-report`).set(reviewerHeaders).send({ idempotencyKey: "same-key-after-note" }).expect(200);
+    await request(api).post(`/api/inspections/${inspectionId}/observations`).set(reviewerHeaders).send({ area: "interior", outcome: "unable_to_assess", notes: "Rear seats obscured by covers; do not infer clean upholstery.", operationId: "e0fdb5ac-7c13-4c22-8d86-997304b3f764" }).expect(201);
+    await request(api).post(`/api/reports/${draft.body.data.finalReport.id}/approve`).set(reviewerHeaders).send({ expectedVersion: draft.body.data.finalReport.version }).expect(409);
+    const updated = await request(api).post(`/api/inspections/${inspectionId}/ai-report`).set(reviewerHeaders).send({ idempotencyKey: "same-key-after-note" }).expect(200);
+    expect(updated.body.data.draft.id).not.toBe(draft.body.data.draft.id);
+    expect(updated.body.data.finalReport.reportBody).toContain("Rear seats obscured");
   });
 
   it("enforces role-specific workflow permissions", async () => {
@@ -876,6 +916,7 @@ describe("InspectIQ API", () => {
       })
       .expect(201);
 
+    await acknowledgeQcLimitations(inspectionId);
     const graded = await request(api)
       .post(`/api/inspections/${inspectionId}/grade`)
       .set(reviewerHeaders)
@@ -1422,6 +1463,8 @@ describe("InspectIQ API", () => {
     expect(exported.text).toContain("Condition Report:");
     expect(exported.text).toContain("Confirmed Damage");
     expect(exported.text).toContain("VIN verification");
+    expect(exported.text).toContain("Evidence limitation:");
+    expect(exported.text).toContain("Review rationale:");
     expect(exported.text).toContain("Announcements and disclosures");
     expect(exported.text).not.toContain("VisionOutputSchema");
     expect(exported.text).not.toContain("validated schema");
