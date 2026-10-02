@@ -5,6 +5,8 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { canRole, requiredPhotoAngles, type RequiredPhotoAngle } from "@inspectiq/shared";
 import { useAuth } from "../auth/AuthContext";
 import { EvidenceImage } from "../components/EvidenceImage";
+import { EvidencePhotoViewer } from "../components/EvidencePhotoViewer";
+import { ConditionQcPanel } from "../components/ConditionQcPanel";
 import { ActionButton, Card, Notice, PageHeading, Screen, Section, StatusPill } from "../components/Primitives";
 import type { RootStackParamList } from "../navigation/types";
 import { colors } from "../theme";
@@ -28,11 +30,13 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
   const { bundleById, refresh, request, online, loading, pendingUploads } = useWorkspace();
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
   const bundle = bundleById(route.params.inspectionId);
   if (!session || !bundle) {
     return <Screen><Notice tone="warn" title="Inspection unavailable" message="Refresh assignments while online to cache this inspection." /></Screen>;
   }
   const { inspection } = bundle;
+  const selectedPhoto = selectedPhotoIndex == null ? null : bundle.photos[selectedPhotoIndex] ?? null;
   const pendingForInspection = pendingUploads.filter((item) => item.inspectionId === inspection.id);
   const captured = new Set(bundle.photos.map((photo) => photo.declaredAngle));
   const pendingSuggestions = bundle.suggestions.filter((item) => item.status === "pending");
@@ -43,11 +47,11 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
     { label: "Report", complete: inspection.status === "FINALIZED" }
   ];
 
-  const runAction = async (path: string, body: Record<string, unknown> = {}) => {
+  const runAction = async (path: string, body: Record<string, unknown> = {}, idempotencyKey?: string) => {
     setBusy(true);
     setActionError(null);
     try {
-      await request(path, { method: "POST", body: JSON.stringify(body) });
+      await request(path, { method: "POST", body: JSON.stringify(body), idempotencyKey });
       await refresh();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "The workflow action failed.");
@@ -103,9 +107,9 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
       ) : null}
       <Section title={`Evidence (${bundle.photos.length})`}>
         <View style={styles.photoGrid}>
-          {bundle.photos.map((photo) => (
+          {bundle.photos.map((photo, index) => (
             <Card key={photo.id} style={styles.photoCard}>
-              <EvidenceImage photo={photo} />
+              <EvidenceImage photo={photo} onPress={() => setSelectedPhotoIndex(index)} />
               <View style={styles.photoCopy}>
                 <Text style={styles.photoLabel}>{photo.declaredAngle ? labels[photo.declaredAngle] : "Unclassified"}</Text>
                 <StatusPill label={photo.analysisStatus === "completed" ? "Analyzed" : photo.qualityStatus === "fail" ? "Retake" : "Pending"} tone={photo.analysisStatus === "completed" ? "good" : photo.qualityStatus === "fail" ? "bad" : "warn"} />
@@ -116,15 +120,29 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
       </Section>
       <View style={styles.actions}>
         {canMutate && online && canRole(session.actor.role, "photo:analyze") && bundle.photos.length > 0 ? (
-          <ActionButton label={busy ? "Submitting…" : "Analyze photos"} tone="secondary" disabled={busy} icon={<Play size={17} color={colors.ink} />} onPress={() => void runAction(`/api/inspections/${inspection.id}/photos/analyze`)} />
+          <ActionButton label={busy ? "Submitting…" : "Analyze photos"} tone="secondary" disabled={busy} icon={<Play size={17} color={colors.ink} />} onPress={() => void runAction(`/api/inspections/${inspection.id}/photos/analyze`, {}, `mobile-analysis:${inspection.id}`)} />
         ) : null}
-        {canMutate && online && canRole(session.actor.role, "grade:calculate") && inspection.status === "READY_FOR_GRADING" ? (
-          <ActionButton label="Calculate grade" tone="secondary" icon={<Sparkles size={17} color={colors.ink} />} onPress={() => void runAction(`/api/inspections/${inspection.id}/grade`)} />
+        {canMutate && online && canRole(session.actor.role, "grade:calculate") && ["READY_FOR_GRADING", "GRADED", "HUMAN_REVIEW_REQUIRED", "AI_DRAFTED", "REPORT_FAILED"].includes(inspection.status) ? (
+          <ActionButton label="Calculate grade" tone="secondary" icon={<Sparkles size={17} color={colors.ink} />} onPress={() => void runAction(`/api/inspections/${inspection.id}/grade`, {}, `mobile-grade:${inspection.id}`)} />
         ) : null}
         {canRole(session.actor.role, "report:edit") || bundle.finalReport ? (
           <ActionButton label="Open condition report" tone="secondary" icon={<FileText size={17} color={colors.ink} />} onPress={() => navigation.navigate("ReportEditor", { inspectionId: inspection.id })} />
         ) : null}
       </View>
+      <ConditionQcPanel key={inspection.id} bundle={bundle} onPhoto={(id) => {
+        const index = bundle.photos.findIndex((p) => p.id === id);
+        if (index >= 0) setSelectedPhotoIndex(index);
+      }} onFinding={() => navigation.navigate("Main", { screen: "Review" })} />
+      {selectedPhoto ? (
+        <EvidencePhotoViewer
+          photo={selectedPhoto}
+          position={selectedPhotoIndex ?? 0}
+          total={bundle.photos.length}
+          onClose={() => setSelectedPhotoIndex(null)}
+          onPrevious={() => setSelectedPhotoIndex((current) => current == null || bundle.photos.length === 0 ? current : (current - 1 + bundle.photos.length) % bundle.photos.length)}
+          onNext={() => setSelectedPhotoIndex((current) => current == null || bundle.photos.length === 0 ? current : (current + 1) % bundle.photos.length)}
+        />
+      ) : null}
     </Screen>
   );
 }

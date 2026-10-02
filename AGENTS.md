@@ -38,4 +38,4 @@
 ## Deployment Notes
 - Live frontend: `https://inspectiq.pages.dev`
 - AWS API base is supplied at build time through `VITE_API_BASE_URL`.
-- The public evaluation path is read-only; workflow-changing actions require authenticated roles.
+- Public evaluation review decisions and damage previews are browser-session only; authoritative workflow changes require authenticated roles.

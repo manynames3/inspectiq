@@ -31,7 +31,11 @@ export function ReportsScreen() {
                 <View style={styles.copy}>
                   <Text style={styles.vehicle}>{bundle.inspection.year} {bundle.inspection.make} {bundle.inspection.model}</Text>
                   <Text style={styles.vin}>{bundle.inspection.vin}</Text>
-                  <Text style={styles.summary}>{bundle.conditionGrade ? `Grade ${bundle.conditionGrade.grade} · ${bundle.conditionGrade.score}/100` : "Condition grade pending"}</Text>
+                  <Text style={styles.summary}>
+                    {bundle.conditionGrade
+                      ? `InspectIQ Reference Grade ${(bundle.conditionGrade.approvedGrade ?? bundle.conditionGrade.suggestedGrade).toFixed(1)} / 5.0${bundle.conditionGrade.approvedGrade == null ? " · approval required" : ""}`
+                      : "Reference grade pending"}
+                  </Text>
                 </View>
                 <View style={styles.right}>
                   <StatusPill label={status} tone={bundle.finalReport?.finalizedAt ? "good" : bundle.finalReport ? "info" : "neutral"} />

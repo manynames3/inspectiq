@@ -3,7 +3,7 @@ import { createApp } from "./app.js";
 import { loadPostgresRows, savePostgresRows } from "./postgresPersistence.js";
 import { createPostgresPool } from "./postgresPool.js";
 import { resolveDatabaseUrl } from "./runtimeConfig.js";
-import { reconcileReferenceEvidence } from "./seedData.js";
+import { reconcileReconOperations, reconcileReferenceEvidence } from "./seedData.js";
 import { store } from "./store.js";
 import { loadStoreSnapshot, saveStoreSnapshot } from "./storeSnapshot.js";
 import { flushPendingDomainEvents } from "./awsEvents.js";
@@ -16,12 +16,11 @@ export type Runtime = {
 let runtimePromise: Promise<Runtime> | null = null;
 
 export function shouldPersistInitialStore(
-  persistenceMode: string,
+  _persistenceMode: string,
   loadedStore: boolean,
-  reconciledReferenceEvidence: boolean,
+  reconciledBootstrapData: boolean,
 ): boolean {
-  if (persistenceMode === "postgres") return !loadedStore;
-  return !loadedStore || reconciledReferenceEvidence;
+  return !loadedStore || reconciledBootstrapData;
 }
 
 export async function createRuntime(): Promise<Runtime> {
@@ -44,12 +43,15 @@ export async function createRuntime(): Promise<Runtime> {
         ? await loadStoreSnapshot(store)
         : false;
     const reconciledReferenceEvidence = reconcileReferenceEvidence(store);
+    const reconciledReconOperations = reconcileReconOperations(store);
+    const reconciledBootstrapData = reconciledReferenceEvidence || reconciledReconOperations;
 
     const app = createApp(store, {
       beforeRequest: persistPostgres && pool
         ? async () => {
           await loadPostgresRows(store, pool);
           reconcileReferenceEvidence(store);
+          reconcileReconOperations(store);
         }
         : undefined,
       afterMutation: persistPostgres && pool
@@ -66,10 +68,10 @@ export async function createRuntime(): Promise<Runtime> {
           : undefined
     });
 
-    if (persistPostgres && pool && shouldPersistInitialStore(persistenceMode, loadedStore, reconciledReferenceEvidence)) {
+    if (persistPostgres && pool && shouldPersistInitialStore(persistenceMode, loadedStore, reconciledBootstrapData)) {
       await savePostgresRows(store, pool);
     }
-    if (persistLocally && shouldPersistInitialStore(persistenceMode, loadedStore, reconciledReferenceEvidence)) {
+    if (persistLocally && shouldPersistInitialStore(persistenceMode, loadedStore, reconciledBootstrapData)) {
       await saveStoreSnapshot(store);
     }
 

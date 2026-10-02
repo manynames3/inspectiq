@@ -1,6 +1,8 @@
 import { mobileConfig } from "../config";
 import type { MobileSession } from "../types";
 
+export const MOBILE_API_TIMEOUT_MS = 20_000;
+
 export class MobileApiError extends Error {
   constructor(
     public status: number,
@@ -31,10 +33,34 @@ export async function mobileApi<T>(
   if (options.idempotencyKey) headers.set("idempotency-key", options.idempotencyKey);
   if (session.idToken) headers.set("authorization", `Bearer ${session.idToken}`);
   if (session.mode === "evaluation") headers.set("x-evaluation-mode", "true");
-  const response = await fetch(`${mobileConfig.apiBaseUrl}${apiPath(path, session)}`, {
-    ...options,
-    headers
-  });
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, MOBILE_API_TIMEOUT_MS);
+  const callerSignal = options.signal;
+  const abortFromCaller = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener("abort", abortFromCaller, { once: true });
+  }
+  let response: Response;
+  try {
+    response = await fetch(`${mobileConfig.apiBaseUrl}${apiPath(path, session)}`, {
+      ...options,
+      headers,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (timedOut && error instanceof DOMException && error.name === "AbortError") {
+      throw new MobileApiError(408, "REQUEST_TIMEOUT", "The request timed out. Check the connection and try again.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
+  }
   const body = await response.json().catch(() => null) as {
     data?: T;
     error?: { code?: string; message?: string; details?: unknown };

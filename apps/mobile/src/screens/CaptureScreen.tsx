@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { CameraView, useCameraPermissions, type CameraCapturedPicture } from "expo-camera";
 import * as Crypto from "expo-crypto";
 import { File } from "expo-file-system";
@@ -109,12 +109,13 @@ export function CaptureScreen({ route, navigation }: Props) {
   };
 
   if (!permission?.granted) {
+    const canRequestPermission = permission?.canAskAgain !== false;
     return (
       <View style={styles.permission}>
         <ShieldAlert size={34} color={colors.blue} />
         <Text style={styles.permissionTitle}>Camera access required</Text>
-        <Text style={styles.permissionCopy}>InspectIQ stores captures inside the application sandbox until upload is confirmed.</Text>
-        <ActionButton label="Allow camera" onPress={() => void requestPermission()} />
+        <Text style={styles.permissionCopy}>{canRequestPermission ? "InspectIQ stores captures inside the application sandbox until upload is confirmed." : "Camera access is blocked for InspectIQ. Enable it in Android Settings to continue capturing evidence."}</Text>
+        <ActionButton label={canRequestPermission ? "Allow camera" : "Open settings"} onPress={() => void (canRequestPermission ? requestPermission() : Linking.openSettings())} />
       </View>
     );
   }

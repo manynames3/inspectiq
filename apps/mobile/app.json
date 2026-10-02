@@ -16,7 +16,12 @@
     },
     "android": {
       "package": "com.aidenrhaa.inspectiq",
-      "permissions": ["CAMERA"],
+      "permissions": [
+        "CAMERA"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -38,7 +43,8 @@
         {
           "cameraPermission": "Allow InspectIQ to capture vehicle inspection evidence."
         }
-      ]
+      ],
+      "expo-status-bar"
     ]
   }
 }

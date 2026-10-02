@@ -8,7 +8,7 @@ create table if not exists schema_migrations (
 create table if not exists users (
   id text primary key default gen_random_uuid()::text,
   name text not null,
-  role text not null check (role in ('inspector', 'reviewer', 'admin')),
+  role text not null check (role in ('inspector', 'reviewer', 'recon_coordinator', 'consignor_approver', 'technician', 'admin')),
   created_at timestamptz not null default now()
 );
 
@@ -121,6 +121,25 @@ create table if not exists vision_suggestions (
   photo_id text not null references vehicle_photos(id) on delete cascade,
   suggestion_type text not null,
   suggested_value_json jsonb not null,
+  semantic_key text generated always as (
+    case suggestion_type
+      when 'photo_angle' then lower(btrim(coalesce(suggested_value_json ->> 'photoAngle', '')))
+      when 'quality_warning' then lower(btrim(coalesce(suggested_value_json ->> 'warning', '')))
+      when 'extracted_text' then
+        upper(regexp_replace(coalesce(suggested_value_json ->> 'vin', ''), '[^a-zA-Z0-9]', '', 'g'))
+        || ':' ||
+        coalesce((
+          nullif(regexp_replace(coalesce(suggested_value_json ->> 'odometer', ''), '[^0-9]', '', 'g'), '')::bigint
+        )::text, '')
+      when 'damage_candidate' then
+        lower(btrim(coalesce(suggested_value_json ->> 'location', '')))
+        || ':' ||
+        lower(btrim(coalesce(suggested_value_json ->> 'damageType', '')))
+        || ':' ||
+        lower(btrim(coalesce(suggested_value_json ->> 'severityEstimate', '')))
+      else suggested_value_json::text
+    end
+  ) stored,
   confidence numeric not null,
   explanation text not null,
   status text not null default 'pending' check (status in ('pending', 'accepted', 'rejected', 'edited')),
@@ -139,6 +158,26 @@ alter table vision_suggestions add column if not exists assigned_to_user_id text
 alter table vision_suggestions add column if not exists due_at timestamptz not null default now();
 alter table vision_suggestions add column if not exists resolved_at timestamptz;
 alter table vision_suggestions add column if not exists version integer not null default 1;
+alter table vision_suggestions
+  add column if not exists semantic_key text generated always as (
+    case suggestion_type
+      when 'photo_angle' then lower(btrim(coalesce(suggested_value_json ->> 'photoAngle', '')))
+      when 'quality_warning' then lower(btrim(coalesce(suggested_value_json ->> 'warning', '')))
+      when 'extracted_text' then
+        upper(regexp_replace(coalesce(suggested_value_json ->> 'vin', ''), '[^a-zA-Z0-9]', '', 'g'))
+        || ':' ||
+        coalesce((
+          nullif(regexp_replace(coalesce(suggested_value_json ->> 'odometer', ''), '[^0-9]', '', 'g'), '')::bigint
+        )::text, '')
+      when 'damage_candidate' then
+        lower(btrim(coalesce(suggested_value_json ->> 'location', '')))
+        || ':' ||
+        lower(btrim(coalesce(suggested_value_json ->> 'damageType', '')))
+        || ':' ||
+        lower(btrim(coalesce(suggested_value_json ->> 'severityEstimate', '')))
+      else suggested_value_json::text
+    end
+  ) stored;
 alter table vision_suggestions drop constraint if exists vision_suggestions_assigned_to_role_check;
 alter table vision_suggestions add constraint vision_suggestions_assigned_to_role_check check (assigned_to_role in ('inspector', 'reviewer'));
 
@@ -152,6 +191,7 @@ create table if not exists damage_items (
   notes text not null default '',
   source text not null check (source in ('manual', 'vision_suggestion')),
   confirmed_by text references users(id),
+  idempotency_key text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -171,11 +211,19 @@ create table if not exists identity_verifications (
 create table if not exists condition_grades (
   id text primary key default gen_random_uuid()::text,
   inspection_id text not null references inspections(id) on delete cascade,
-  score integer not null,
-  grade text not null check (grade in ('A', 'B', 'C', 'D', 'F')),
+  suggested_grade numeric(2, 1) not null check (suggested_grade between 0 and 5),
+  approved_grade numeric(2, 1) check (approved_grade is null or approved_grade between 0 and 5),
+  condition_grade_before_recon numeric(2, 1) not null check (condition_grade_before_recon between 0 and 5),
+  estimated_grade_after_recon numeric(2, 1) not null check (estimated_grade_after_recon between 0 and 5),
+  reviewed_by text references users(id),
+  override_reason text,
+  evidence_blockers_json jsonb not null default '[]'::jsonb,
   explanation_json jsonb not null,
   grading_version text not null,
-  created_at timestamptz not null default now()
+  idempotency_key text,
+  version integer not null default 1 check (version > 0),
+  created_at timestamptz not null default now(),
+  reviewed_at timestamptz
 );
 
 create table if not exists ai_report_jobs (
@@ -250,7 +298,7 @@ create table if not exists domain_events (
   schema_version text not null default '1.0',
   inspection_id text not null references inspections(id) on delete cascade,
   actor_id text not null,
-  actor_role text not null check (actor_role in ('inspector', 'reviewer', 'admin')),
+  actor_role text not null check (actor_role in ('inspector', 'reviewer', 'recon_coordinator', 'consignor_approver', 'technician', 'admin')),
   correlation_id text not null,
   payload_json jsonb not null,
   status text not null default 'pending' check (status in ('pending', 'delivered', 'failed')),
@@ -276,13 +324,18 @@ create index if not exists idx_suggestions_inspection_status on vision_suggestio
 create index if not exists idx_suggestions_photo_id on vision_suggestions(photo_id);
 create index if not exists idx_suggestions_assigned_due on vision_suggestions(assigned_to_role, due_at);
 create index if not exists idx_suggestions_reviewed_by on vision_suggestions(reviewed_by);
+alter table damage_items add column if not exists idempotency_key text;
+alter table condition_grades add column if not exists idempotency_key text;
+
 create index if not exists idx_damage_inspection_id on damage_items(inspection_id);
 create index if not exists idx_damage_photo_id on damage_items(photo_id);
 create index if not exists idx_damage_confirmed_by on damage_items(confirmed_by);
+create unique index if not exists idx_damage_idempotency on damage_items(inspection_id, idempotency_key) where idempotency_key is not null;
 create index if not exists idx_identity_verifications_inspection_id on identity_verifications(inspection_id);
 create index if not exists idx_identity_verifications_photo_id on identity_verifications(photo_id);
 create index if not exists idx_identity_verifications_source_suggestion on identity_verifications(source_suggestion_id);
 create index if not exists idx_condition_grades_inspection_id on condition_grades(inspection_id);
+create unique index if not exists idx_condition_grades_idempotency on condition_grades(inspection_id, idempotency_key) where idempotency_key is not null;
 create index if not exists idx_report_jobs_inspection_status on ai_report_jobs(inspection_id, status);
 create unique index if not exists idx_report_jobs_idempotency on ai_report_jobs(inspection_id, idempotency_key) where idempotency_key is not null;
 create index if not exists idx_report_drafts_inspection_id on ai_report_drafts(inspection_id);

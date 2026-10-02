@@ -37,6 +37,52 @@ Proof in app/API:
 - `report.approved`
 - `report.finalized`
 
+## Recon Coordinator
+
+Responsibilities:
+
+- create and revise recon recommendations;
+- submit estimates for policy or consignor authorization;
+- coordinate authorized work;
+- record quality control; and
+- recalculate sale readiness.
+
+Proof in app/API:
+
+- `recon.estimate_created`
+- `recon.authorization_requested`
+- `work_order.created`
+- `quality_control.passed`
+- `vehicle.sale_readiness_changed`
+
+## Consignor Approver
+
+Responsibilities:
+
+- view only represented consignor accounts;
+- approve, decline, or request revision;
+- see policy-authorized work separately from personal decisions.
+
+Proof in app/API:
+
+- object-level access returns `403` for an unrelated consignor;
+- `recon.item_authorized`
+- `recon.item_declined`
+
+## Technician
+
+Responsibilities:
+
+- update assigned and authorized work;
+- record progress, blockers, and revised estimates;
+- send completed work to quality control.
+
+Proof in app/API:
+
+- `work_order.started`
+- `work_order.blocked`
+- `recon.reauthorization_required`
+
 ## Admin
 
 Responsibilities:
@@ -63,6 +109,8 @@ npm run test:e2e
 
 The E2E test starts an Inspector session, creates an inspection, loads evidence, analyzes photos, switches to Reviewer, resolves suggestions, grades, drafts, approves the current version, finalizes, exports a buyer report, and checks audit output.
 
+API integration tests continue the published report through policy authorization, manual approval and decline, idempotent work-order creation, overrun reauthorization, failed-QC recovery, and sale readiness. They also reject unauthorized consignor access.
+
 ## Live Separate-Role Proof
 
 ```bash
@@ -75,3 +123,5 @@ npm run test:live-upload
 ```
 
 This proves the Inspector JWT handles capture/analyze and the Reviewer JWT handles review/approval/finalization. Admin operations are demonstrated separately in Platform Health because combining an Admin token with the role proof weakens the authorization evidence.
+
+Terraform defines the additional Recon Coordinator, Consignor Approver, and Technician Cognito groups. A live environment must apply that plan and assign test users before claiming a six-user live Cognito walkthrough; local role-header and API integration proof do not substitute for that deployment evidence.

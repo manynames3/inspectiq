@@ -44,6 +44,7 @@ Install Java 17 and the Android command-line SDK/NDK, then build one architectur
 
 ```bash
 cd apps/mobile
+export JAVA_HOME=/path/to/jdk-17
 ANDROID_ABI=arm64-v8a npm run build:android:apk
 ```
 

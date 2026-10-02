@@ -33,7 +33,7 @@ export function isEvaluationActor(actor: Actor): boolean {
 }
 
 export function canAccessInspection(actor: Actor, inspection: Inspection): boolean {
-  if (actor.role === "admin" || actor.role === "reviewer") return true;
+  if (actor.role === "admin" || actor.role === "reviewer" || actor.role === "recon_coordinator") return true;
   return inspection.assignedToUserId === actor.id || inspection.createdBy === actor.id || inspection.inspectorName === actor.name;
 }
 

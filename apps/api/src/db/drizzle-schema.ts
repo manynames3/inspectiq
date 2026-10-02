@@ -105,6 +105,7 @@ export const visionSuggestions = pgTable("vision_suggestions", {
   photoId: text("photo_id").notNull().references(() => vehiclePhotos.id),
   suggestionType: text("suggestion_type").notNull(),
   suggestedValueJson: jsonb("suggested_value_json").notNull(),
+  semanticKey: text("semantic_key"),
   confidence: numeric("confidence").notNull(),
   explanation: text("explanation").notNull(),
   status: text("status").notNull(),
@@ -128,6 +129,7 @@ export const damageItems = pgTable("damage_items", {
   notes: text("notes").notNull(),
   source: text("source").notNull(),
   confirmedBy: text("confirmed_by").references(() => users.id),
+  idempotencyKey: text("idempotency_key"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 });
@@ -135,11 +137,19 @@ export const damageItems = pgTable("damage_items", {
 export const conditionGrades = pgTable("condition_grades", {
   id: text("id").primaryKey(),
   inspectionId: text("inspection_id").notNull().references(() => inspections.id),
-  score: integer("score").notNull(),
-  grade: text("grade").notNull(),
+  suggestedGrade: numeric("suggested_grade", { precision: 2, scale: 1 }).notNull(),
+  approvedGrade: numeric("approved_grade", { precision: 2, scale: 1 }),
+  conditionGradeBeforeRecon: numeric("condition_grade_before_recon", { precision: 2, scale: 1 }).notNull(),
+  estimatedGradeAfterRecon: numeric("estimated_grade_after_recon", { precision: 2, scale: 1 }).notNull(),
+  reviewedBy: text("reviewed_by").references(() => users.id),
+  overrideReason: text("override_reason"),
+  evidenceBlockersJson: jsonb("evidence_blockers_json").notNull(),
   explanationJson: jsonb("explanation_json").notNull(),
   gradingVersion: text("grading_version").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  idempotencyKey: text("idempotency_key"),
+  version: integer("version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true })
 });
 
 export const aiReportJobs = pgTable("ai_report_jobs", {
@@ -216,4 +226,160 @@ export const domainEvents = pgTable("domain_events", {
   lastError: text("last_error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   deliveredAt: timestamp("delivered_at", { withTimezone: true })
+});
+
+export const consignorAccounts = pgTable("consignor_accounts", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  accountType: text("account_type").notNull(),
+  authorizedUserIdsJson: jsonb("authorized_user_ids_json").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
+export const reconAuthorizationPolicies = pgTable("recon_authorization_policies", {
+  id: text("id").primaryKey(),
+  consignorAccountId: text("consignor_account_id").notNull().references(() => consignorAccounts.id),
+  name: text("name").notNull(),
+  approvalMode: text("approval_mode").notNull(),
+  totalVehicleLimit: numeric("total_vehicle_limit", { precision: 12, scale: 2 }).notNull(),
+  serviceRulesJson: jsonb("service_rules_json").notNull(),
+  costOverrunTolerance: numeric("cost_overrun_tolerance", { precision: 12, scale: 2 }).notNull(),
+  version: integer("version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
+export const vehicleIntakes = pgTable("vehicle_intakes", {
+  id: text("id").primaryKey(),
+  inspectionId: text("inspection_id").notNull().references(() => inspections.id),
+  consignorAccountId: text("consignor_account_id").notNull().references(() => consignorAccounts.id),
+  facility: text("facility").notNull(),
+  yardZone: text("yard_zone").notNull(),
+  parkingSpace: text("parking_space").notNull(),
+  lastLocationTimestamp: timestamp("last_location_timestamp", { withTimezone: true }).notNull(),
+  inspectionType: text("inspection_type").notNull(),
+  inspectionWorkflowStatus: text("inspection_workflow_status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
+export const inspectionAssignments = pgTable("inspection_assignments", {
+  id: text("id").primaryKey(),
+  inspectionId: text("inspection_id").notNull().references(() => inspections.id),
+  assignedToUserId: text("assigned_to_user_id").notNull().references(() => users.id),
+  assignedByUserId: text("assigned_by_user_id").notNull().references(() => users.id),
+  dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+  status: text("status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
+export const saleAssignments = pgTable("sale_assignments", {
+  id: text("id").primaryKey(),
+  inspectionId: text("inspection_id").notNull().references(() => inspections.id),
+  saleDateTime: timestamp("sale_date_time", { withTimezone: true }).notNull(),
+  lane: text("lane").notNull(),
+  runNumber: text("run_number").notNull(),
+  saleEventId: text("sale_event_id"),
+  status: text("status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
+export const vehicleLocationEvents = pgTable("vehicle_location_events", {
+  id: text("id").primaryKey(),
+  inspectionId: text("inspection_id").notNull().references(() => inspections.id),
+  facility: text("facility").notNull(),
+  yardZone: text("yard_zone").notNull(),
+  parkingSpace: text("parking_space").notNull(),
+  reason: text("reason").notNull(),
+  actorId: text("actor_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+});
+
+export const reconRecommendations = pgTable("recon_recommendations", {
+  id: text("id").primaryKey(),
+  inspectionId: text("inspection_id").notNull().references(() => inspections.id),
+  damageItemId: text("damage_item_id").references(() => damageItems.id),
+  serviceType: text("service_type").notNull(),
+  recommendedAction: text("recommended_action").notNull(),
+  estimatedCost: numeric("estimated_cost", { precision: 12, scale: 2 }).notNull(),
+  estimatedDurationHours: numeric("estimated_duration_hours", { precision: 10, scale: 2 }).notNull(),
+  expectedGradeLift: numeric("expected_grade_lift", { precision: 2, scale: 1 }).notNull(),
+  estimateCreatorId: text("estimate_creator_id").notNull().references(() => users.id),
+  supportingPhotoIdsJson: jsonb("supporting_photo_ids_json").notNull(),
+  notes: text("notes").notNull(),
+  status: text("status").notNull(),
+  version: integer("version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
+export const reconAuthorizations = pgTable("recon_authorizations", {
+  id: text("id").primaryKey(),
+  inspectionId: text("inspection_id").notNull().references(() => inspections.id),
+  recommendationId: text("recommendation_id").notNull().references(() => reconRecommendations.id),
+  decision: text("decision").notNull(),
+  authorizedAmount: numeric("authorized_amount", { precision: 12, scale: 2 }).notNull(),
+  authorizationSource: text("authorization_source"),
+  consignorUserId: text("consignor_user_id").references(() => users.id),
+  policySnapshotJson: jsonb("policy_snapshot_json"),
+  decisionReason: text("decision_reason").notNull(),
+  decisionTimestamp: timestamp("decision_timestamp", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  version: integer("version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
+export const workOrders = pgTable("work_orders", {
+  id: text("id").primaryKey(),
+  workOrderNumber: text("work_order_number").notNull(),
+  inspectionId: text("inspection_id").notNull().references(() => inspections.id),
+  facility: text("facility").notNull(),
+  serviceDepartment: text("service_department").notNull(),
+  authorizedAmount: numeric("authorized_amount", { precision: 12, scale: 2 }).notNull(),
+  currentEstimatedCost: numeric("current_estimated_cost", { precision: 12, scale: 2 }).notNull(),
+  actualCost: numeric("actual_cost", { precision: 12, scale: 2 }),
+  assignedTechnician: text("assigned_technician"),
+  instructions: text("instructions").notNull(),
+  saleDeadline: timestamp("sale_deadline", { withTimezone: true }).notNull(),
+  status: text("status").notNull(),
+  blockedReason: text("blocked_reason"),
+  version: integer("version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
+export const workOrderTasks = pgTable("work_order_tasks", {
+  id: text("id").primaryKey(),
+  workOrderId: text("work_order_id").notNull().references(() => workOrders.id),
+  recommendationId: text("recommendation_id").notNull().references(() => reconRecommendations.id),
+  description: text("description").notNull(),
+  authorizedAmount: numeric("authorized_amount", { precision: 12, scale: 2 }).notNull(),
+  status: text("status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
+export const qualityControlResults = pgTable("quality_control_results", {
+  id: text("id").primaryKey(),
+  workOrderId: text("work_order_id").notNull().references(() => workOrders.id),
+  status: text("status").notNull(),
+  notes: text("notes").notNull(),
+  inspectedByUserId: text("inspected_by_user_id").notNull().references(() => users.id),
+  inspectedAt: timestamp("inspected_at", { withTimezone: true }).notNull()
+});
+
+export const saleReadinessAssessments = pgTable("sale_readiness_assessments", {
+  id: text("id").primaryKey(),
+  inspectionId: text("inspection_id").notNull().references(() => inspections.id),
+  saleReady: boolean("sale_ready").notNull(),
+  status: text("status").notNull(),
+  blockersJson: jsonb("blockers_json").notNull(),
+  assessedByUserId: text("assessed_by_user_id").notNull(),
+  assessedAt: timestamp("assessed_at", { withTimezone: true }).notNull()
 });

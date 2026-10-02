@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiUrl, requestHeaders } from "../api.js";
 import { useActor } from "../App.js";
+import { formatConditionGrade } from "../conditionGrade.js";
 import { deriveMarketplaceReadiness } from "../marketplaceReadiness.js";
 import type { Actor } from "../types.js";
 import { loadInspectionReviewRecords, type InspectionReviewRecord } from "./reviewData.js";
@@ -125,7 +126,9 @@ export function ReportsPage() {
                       <small>{inspection.vin}</small>
                     </td>
                     <td><span className={`queue-status report-${status.toLowerCase().replaceAll(" ", "-")}`}>{status}</span></td>
-                    <td>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} ${bundle.conditionGrade.score}` : "Not graded"}</td>
+                    <td>{bundle.conditionGrade
+                      ? formatConditionGrade(bundle.conditionGrade, true)
+                      : "Not graded"}</td>
                     <td>{bundle.aiReportDraft ? `${Math.round(bundle.aiReportDraft.confidence * 100)}%` : "Pending"}</td>
                     <td>{readiness.buyerVisibility}</td>
                     <td>{readiness.reconditioningEstimate}</td>

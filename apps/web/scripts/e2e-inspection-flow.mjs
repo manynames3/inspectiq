@@ -9,7 +9,7 @@ const executablePath = existsSync(chromePath) ? chromePath : undefined;
 
 function generatedReviewVin() {
   const suffix = Date.now().toString(36).toUpperCase().replace(/[IOQ]/g, "X").slice(-9);
-  return `5NMS2DAJ${suffix}`.padEnd(17, "0").slice(0, 17);
+  return `1FMCU9H6${suffix}`.padEnd(17, "0").slice(0, 17);
 }
 
 function fail(message) {
@@ -61,6 +61,11 @@ page.on("console", (message) => {
 page.on("pageerror", (error) => {
   consoleIssues.push(`pageerror: ${error.message}`);
 });
+page.on("response", (response) => {
+  if (response.status() >= 400) {
+    consoleIssues.push(`http ${response.status()}: ${response.url()}`);
+  }
+});
 
 try {
   const uniqueVin = generatedReviewVin();
@@ -78,12 +83,12 @@ try {
   await waitForBodyText(page, "New Inspection");
 
   await page.getByLabel(/^vin$/i).fill(uniqueVin);
-  await page.getByLabel(/^year$/i).fill("2024");
-  await page.getByLabel(/^make$/i).fill("Hyundai");
-  await page.getByLabel(/^model$/i).fill("Tucson");
+  await page.getByLabel(/^year$/i).fill("2022");
+  await page.getByLabel(/^make$/i).fill("Ford");
+  await page.getByLabel(/^model$/i).fill("Escape");
   await page.getByLabel(/^trim$/i).fill("SEL");
-  await page.getByLabel(/^mileage$/i).fill("14250");
-  await page.getByLabel(/exterior color/i).fill("Gray");
+  await page.getByLabel(/^mileage$/i).fill("31992");
+  await page.getByLabel(/exterior color/i).fill("Iced Blue Silver Metallic");
   await page.getByLabel(/seller source/i).fill("Wholesale offsite lane");
   await page.getByLabel(/inspector name/i).fill("E2E Inspector");
   await page.getByRole("button", { name: /create inspection/i }).click();
@@ -113,11 +118,45 @@ try {
   await acceptVisibleSuggestions(page);
   await waitForBodyText(page, "Grade ready");
 
+  await page.getByRole("button", { name: /^Enlarge / }).first().click();
+  await page.getByRole("dialog", { name: "Enlarged evidence photo" }).waitFor();
+  if (process.env.E2E_VIEWER_SCREENSHOT_PATH) await page.screenshot({ path: process.env.E2E_VIEWER_SCREENSHOT_PATH });
+  await page.getByRole("button", { name: "Next photo", exact: true }).click();
+  await page.getByRole("button", { name: "Previous photo", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog", { name: "Enlarged evidence photo" }).waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: /^Report QC/ }).click();
+  for (let index = 0; index < 30; index += 1) {
+    const decision = page.locator(".condition-qc-decision").first();
+    const remaining = await page.locator(".condition-qc-decision").count();
+    if (remaining === 0) break;
+    await decision.locator("textarea").fill("Local workflow proof: explicitly disclose reference identity limitations; not actual vehicle verification.");
+    await Promise.all([
+      page.waitForResponse((response) => response.url().endsWith("/condition-qc/review") && response.request().method() === "POST"),
+      decision.getByRole("button", { name: "Acknowledge limitation" }).click()
+    ]);
+    await page.waitForFunction((previousCount) => document.querySelectorAll(".condition-qc-decision").length < previousCount, remaining);
+    await page.waitForLoadState("networkidle");
+  }
+  if (await page.locator(".condition-qc-decision").count() > 0) fail("QC limitation review did not finish.");
+  await page.getByText("Automatic preliminary condition report", { exact: true }).click();
+  if (process.env.E2E_QC_SCREENSHOT_PATH) {
+    await page.locator(".condition-qc-panel").scrollIntoViewIfNeeded();
+    await page.screenshot({ path: process.env.E2E_QC_SCREENSHOT_PATH });
+  }
+  await page.getByRole("button", { name: "Close QC workspace" }).click();
+
   await page.getByRole("button", { name: /calculate grade/i }).click();
-  await waitForBodyText(page, "Score based on evidence completeness");
+  await waitForBodyText(page, "Condition grade based on required evidence and reviewer-confirmed findings");
+  await page.getByRole("button", { name: /^approve \d\.\d$/i }).click();
+  await waitForBodyText(page, "Reviewer approved");
   await waitForBodyText(page, "Ready for report");
   await page.getByRole("button", { name: /draft report/i }).click();
-  await waitForBodyText(page, "Draft summary");
+  await page.getByRole("textbox", { name: "Buyer-facing condition report" }).waitFor();
+  await page.waitForFunction(() => {
+    const report = document.querySelector('textarea[aria-label="Buyer-facing condition report"]');
+    return report instanceof HTMLTextAreaElement && report.value.trim().length > 0;
+  });
   await page.getByRole("button", { name: /^approve$/i }).click();
   await waitForBodyText(page, "Approved");
   await page.getByRole("button", { name: /^finalize$/i }).click();
@@ -148,6 +187,9 @@ try {
     flow: "create_attach_analyze_review_grade_draft_approve_finalize",
     url: page.url()
   }));
+} catch (error) {
+  if (process.env.E2E_FAILURE_SCREENSHOT_PATH) await page.screenshot({ path: process.env.E2E_FAILURE_SCREENSHOT_PATH });
+  throw error;
 } finally {
   await context.close();
   await browser.close();
