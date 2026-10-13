@@ -575,7 +575,7 @@ export function SuggestionsPage() {
                 <th>Owner</th>
                 <th>SLA</th>
                 <th>Status</th>
-                <th>Confidence</th>
+                <th>Review certainty</th>
                 <th>Evidence</th>
                 <th></th>
               </tr>
@@ -618,7 +618,7 @@ export function SuggestionsPage() {
                       <small>{sla.detail}</small>
                     </td>
                     <td><span className={`queue-status status-${suggestion.status}`}>{suggestion.status}</span></td>
-                    <td>{referenceMapping ? "Not scored" : `${Math.round(suggestion.confidence * 100)}%`}</td>
+                    <td>{referenceMapping ? "Required-view mapping" : suggestion.confidence < .85 ? "Low certainty · verify" : "Human confirmation required"}</td>
                     <td>
                       <div className="evidence-summary">
                         <strong>{evidence.primary}</strong>

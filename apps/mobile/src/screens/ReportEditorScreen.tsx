@@ -9,6 +9,7 @@ import type { RootStackParamList } from "../navigation/types";
 import { colors } from "../theme";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import type { ReportVersion } from "../types";
+import { BrandWordmark } from "../components/BrandWordmark";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ReportEditor">;
 
@@ -43,6 +44,8 @@ export function ReportEditorScreen({ route }: Props) {
       .catch(() => setVersions([]));
   }, [report?.id, report?.version, request]);
   if (!session || !bundle) return <Screen><Notice tone="warn" title="Report unavailable" message="Refresh the inspection while online." /></Screen>;
+  const unsavedText = Boolean(report && body !== report.reportBody);
+  const unsavedComment = Boolean(report && comment !== (report.reviewerComment ?? ""));
 
   const action = async (path: string, payload: Record<string, unknown>) => {
     setBusy(true);
@@ -85,6 +88,15 @@ export function ReportEditorScreen({ route }: Props) {
         </View>
         {report ? <Text style={styles.version}>Version {report.version}{report.approvedBy ? ` · approved by ${report.approvedBy}` : ""}</Text> : null}
       </Card>
+      {report ? <Card style={styles.document}>
+        <BrandWordmark />
+        <Text style={styles.documentState}>{body !== report.reportBody ? "UNSAVED DRAFT · NOT REVIEWED" : report.finalizedAt ? `FINALIZED · VERSION ${report.version}` : report.approvalStatus === "approved" ? "APPROVED · AWAITING RELEASE" : "DRAFT · NOT APPROVED FOR BUYER RELEASE"}</Text>
+        <Text style={styles.documentTitle}>{bundle.inspection.year} {bundle.inspection.make} {bundle.inspection.model}</Text>
+        <Text style={styles.documentIdentity}>VIN: {bundle.conditionQc?.identity.vin.status.replaceAll("_", " ") ?? "not verified"} · Mileage: {bundle.conditionQc?.identity.odometer.status.replaceAll("_", " ") ?? "not verified"}</Text>
+        <Text style={styles.documentBody}>{body}</Text>
+        {bundle.conditionQc?.issues.length ? <View style={styles.documentLimitations}><Text style={styles.documentIdentity}>Evidence limitations</Text>{bundle.conditionQc.issues.map((issue) => <Text style={styles.documentIdentity} key={issue.id}>{issue.title}. {issue.detail}{issue.decision ? ` Review rationale: ${issue.decision.reason}` : " Unresolved."}</Text>)}</View> : null}
+        <Text style={styles.documentIdentity}>{body !== report.reportBody ? "New language needs human approval." : report.approvedBy ? `Approved by ${report.approvedBy}${report.approvedAt ? ` · ${new Date(report.approvedAt).toLocaleString()}` : ""}` : "Human approval required."}</Text>
+      </Card> : null}
       {!report?.finalizedAt && bundle.conditionGrade && bundle.conditionGrade.approvedGrade == null && canRole(session.actor.role, "grade:approve") ? <Card>
         <Field label="Reviewed grade (0–5)" keyboardType="decimal-pad" value={gradeValue} onChangeText={setGradeValue} />
         <Field label="Grade override reason" value={gradeReason} onChangeText={setGradeReason} placeholder="Required when changing the suggested grade" />
@@ -94,8 +106,9 @@ export function ReportEditorScreen({ route }: Props) {
         <ActionButton label={busy ? "Drafting…" : "Generate report draft"} disabled={busy || !online || !canMutate || !canRole(session.actor.role, "report:draft") || bundle.conditionGrade?.approvedGrade == null} onPress={() => void action(`/api/inspections/${bundle.inspection.id}/ai-report`, { idempotencyKey: `mobile-report:${bundle.inspection.id}:${bundle.conditionGrade?.id}` })} />
       ) : (
         <>
-          <Field label="Buyer-facing report" value={body} onChangeText={setBody} multiline editable={!report.finalizedAt && canMutate} />
-          <Field label="Reviewer comment" value={comment} onChangeText={setComment} multiline editable={!report.finalizedAt && canMutate} />
+          <Field label="Buyer-facing report" value={body} onChangeText={setBody} multiline editable={!report.finalizedAt && canMutate && canRole(session.actor.role, "report:edit")} />
+          <Field label="Reviewer comment" value={comment} onChangeText={setComment} multiline editable={!report.finalizedAt && canMutate && canRole(session.actor.role, "report:edit")} />
+          {unsavedText || unsavedComment ? <Notice tone="warn" title="Unsaved report changes" message="Save the current version before release. New language requires human approval." /> : null}
           <Notice tone="info" title="Buyer report boundary" message="Model provider, raw confidence payloads, prompt internals, and developer terminology are excluded from the finalized report." />
           {!report.finalizedAt && canRole(session.actor.role, "report:draft") ? <ActionButton label="Regenerate from current evidence" tone="secondary" disabled={busy || !online || !canMutate || bundle.conditionGrade?.approvedGrade == null} onPress={() => void action(`/api/inspections/${bundle.inspection.id}/ai-report`, { idempotencyKey: `mobile-report:${bundle.inspection.id}:${bundle.conditionGrade?.id}` })} /> : null}
           {versions.length > 0 ? (
@@ -121,8 +134,8 @@ export function ReportEditorScreen({ route }: Props) {
             </Card>
           ) : null}
           {!report.finalizedAt && canRole(session.actor.role, "report:edit") ? <ActionButton label="Save report version" tone="secondary" disabled={busy || !online || !canMutate} onPress={() => void action(`/api/reports/${report.id}`, { reportBody: body, reviewerComment: comment, expectedVersion: report.version })} /> : null}
-          {!report.finalizedAt && canRole(session.actor.role, "report:approve") ? <ActionButton label="Approve report" disabled={busy || !online || !canMutate} onPress={() => void action(`/api/reports/${report.id}/approve`, { reviewerComment: comment, expectedVersion: report.version })} /> : null}
-          {!report.finalizedAt && canRole(session.actor.role, "report:finalize") ? <ActionButton label="Finalize buyer report" disabled={busy || !online || !canMutate || report.approvalStatus !== "approved"} onPress={() => void action(`/api/reports/${report.id}/finalize`, { expectedVersion: report.version })} /> : null}
+          {!report.finalizedAt && canRole(session.actor.role, "report:approve") ? <ActionButton label="Approve report" disabled={busy || !online || !canMutate || unsavedText} onPress={() => void action(`/api/reports/${report.id}/approve`, { reviewerComment: comment, expectedVersion: report.version })} /> : null}
+          {!report.finalizedAt && canRole(session.actor.role, "report:finalize") ? <ActionButton label="Finalize buyer report" disabled={busy || !online || !canMutate || report.approvalStatus !== "approved" || unsavedText || unsavedComment} onPress={() => void action(`/api/reports/${report.id}/finalize`, { expectedVersion: report.version })} /> : null}
         </>
       )}
     </Screen>
@@ -130,6 +143,12 @@ export function ReportEditorScreen({ route }: Props) {
 }
 
 const styles = StyleSheet.create({
+  document: { padding: 22, borderRadius: 3, gap: 16, backgroundColor: "#f9fbf8", borderLeftWidth: 3, borderLeftColor: colors.teal },
+  documentState: { color: colors.amber, fontSize: 10, letterSpacing: .7, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 16 },
+  documentTitle: { color: colors.ink, fontSize: 24, fontWeight: "600", letterSpacing: -.6 },
+  documentIdentity: { color: colors.muted, fontSize: 12, lineHeight: 19 },
+  documentBody: { color: colors.ink, fontSize: 14, lineHeight: 24 },
+  documentLimitations: { paddingTop: 14, gap: 8, borderTopWidth: 1, borderTopColor: colors.line },
   statusRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
   grade: { color: colors.ink, fontSize: 22, fontWeight: "800" },
   gradeCopy: { color: colors.muted, fontSize: 12 },

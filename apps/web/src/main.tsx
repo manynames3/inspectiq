@@ -15,6 +15,12 @@ import { ReportsPage } from "./pages/ReportsPage.js";
 import { ShopBoardPage } from "./pages/ShopBoardPage.js";
 import { SuggestionsPage } from "./pages/SuggestionsPage.js";
 import "./styles.css";
+import "./brand.css";
+import { supremeBrand } from "@inspectiq/shared";
+
+for (const [name, color] of Object.entries(supremeBrand)) {
+  document.documentElement.style.setProperty(`--brand-${name}`, color);
+}
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -209,12 +209,12 @@ const styles = StyleSheet.create({
   checkboxChecked: { backgroundColor: colors.blue, borderColor: colors.blue },
   headingCopy: { flex: 1, gap: 2 },
   vehicle: { color: colors.ink, fontSize: 14, fontWeight: "800" },
-  vin: { color: colors.muted, fontSize: 10 },
+  vin: { color: colors.muted, fontSize: 12 },
   finding: { marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.line, gap: 5 },
   findingLabel: { color: colors.ink, fontSize: 14, fontWeight: "800" },
   evidence: { color: colors.ink, fontSize: 13, lineHeight: 19 },
   explanation: { color: colors.muted, fontSize: 12, lineHeight: 18 },
-  confidence: { color: colors.teal, fontSize: 11, fontWeight: "700" },
+  confidence: { color: colors.muted, fontSize: 12, fontWeight: "600" },
   actions: { marginTop: 14, gap: 8 },
   modal: { flex: 1, padding: 20, paddingTop: 56, gap: 16, backgroundColor: colors.canvas }
 });

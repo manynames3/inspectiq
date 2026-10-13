@@ -690,7 +690,7 @@ td small {
     radial-gradient(circle at 18% 24%, rgba(37, 99, 235, 0.13), transparent 30%);
 }
 
-.auth-hero-copy span {
+.auth-hero-copy > span {
   color: #0f766e;
   font-size: 12px;
   font-weight: 900;

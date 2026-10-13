@@ -1,5 +1,5 @@
-import { Activity, Check, CircleHelp, ClipboardCheck, Clock3, FileText, LayoutDashboard, Menu, Plus, Search, ShieldCheck, Sparkles, TriangleAlert, Warehouse, Wrench } from "lucide-react";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { Activity, ClipboardCheck, Clock3, FileText, LayoutDashboard, Menu, Plus, Search, ShieldCheck, Sparkles, TriangleAlert, Warehouse, Wrench, X, ChevronDown } from "lucide-react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { canRole, rolePermissions, type RoleAction } from "@inspectiq/shared";
 import { api } from "./api.js";
@@ -20,6 +20,7 @@ import {
 } from "./auth.js";
 import type { Actor, Inspection } from "./types.js";
 import { summarizeWorkflowMetrics } from "./workflowMetrics.js";
+import { Brand } from "./components/Brand.js";
 
 type ActorContextValue = {
   actor: Actor;
@@ -50,10 +51,9 @@ const navItems: Array<{ to: string; label: string; icon: typeof LayoutDashboard;
 ];
 
 const topbarMetrics = [
-  { label: "Requests", key: "requests", tone: "requests", icon: ClipboardCheck },
+  { label: "Vehicles", key: "requests", tone: "requests", icon: ClipboardCheck },
   { label: "In Review", key: "inReview", tone: "review", icon: Clock3 },
-  { label: "Overdue", key: "overdue", tone: "overdue", icon: TriangleAlert },
-  { label: "System", key: "system", tone: "system", icon: Check }
+  { label: "Needs attention", key: "overdue", tone: "overdue", icon: TriangleAlert }
 ] as const;
 
 export function App() {
@@ -63,6 +63,28 @@ export function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [workflowMetrics, setWorkflowMetrics] = useState(() => summarizeWorkflowMetrics([]));
   const location = useLocation();
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const sidebar = useRef<HTMLElement>(null);
+  useEffect(() => { setNavigationOpen(false); }, [location.pathname]);
+  useEffect(() => {
+    if (!navigationOpen) return;
+    const trigger = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const controls = () => Array.from(sidebar.current?.querySelectorAll<HTMLElement>("a, button") ?? []);
+    controls()[0]?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setNavigationOpen(false); }
+      if (event.key !== "Tab") return;
+      const items = controls();
+      const next = event.shiftKey ? items.at(-1) : items[0];
+      if (document.activeElement === (event.shiftKey ? items[0] : items.at(-1))) { event.preventDefault(); next?.focus(); }
+    };
+    const onResize = () => { if (window.innerWidth > 900) setNavigationOpen(false); };
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", onResize);
+    return () => { document.body.style.overflow = overflow; document.removeEventListener("keydown", onKey); window.removeEventListener("resize", onResize); if (trigger?.isConnected) trigger.focus(); };
+  }, [navigationOpen]);
   const isOidcEnabled = oidcEnabled();
   const canUseEvaluationMode = evaluationModeEnabled();
   const effectiveLocalSession = !isOidcEnabled || isEvaluationSession(localSession) ? localSession : null;
@@ -213,29 +235,53 @@ export function App() {
   return (
     <ActorContext.Provider value={{ actor, setRole: changeRole, can, isEvaluationMode }}>
       {authContent ?? (
-        <div className="app-shell">
-          <aside className="sidebar">
+        <div className={`app-shell supreme-shell ${navigationOpen ? "navigation-open" : ""}`}>
+          <a className="skip-link" href="#main-workspace">Skip to workspace</a>
+          {navigationOpen ? <button className="navigation-scrim" aria-label="Close navigation" tabIndex={-1} onClick={() => setNavigationOpen(false)} /> : null}
+          <aside ref={sidebar} className="sidebar" id="main-navigation" role={navigationOpen ? "dialog" : undefined} aria-modal={navigationOpen || undefined} aria-label={navigationOpen ? "Workspace navigation" : undefined}>
+            <button className="icon-button sidebar-close" aria-label="Close navigation panel" onClick={() => setNavigationOpen(false)}><X size={18} /></button>
             <Link to="/" className="brand">
-              <strong>InspectIQ</strong>
+              <Brand />
             </Link>
             <nav className="nav-list" aria-label="Main navigation">
-              {navItems.filter((item) => !item.roles || item.roles.includes(actor.role)).map((item) => {
+              {(["Work", "Records", "Operations", "Administration"] as const).map((group) => {
+                const items = navItems.filter((item) => !item.roles || item.roles.includes(actor.role)).filter((item) => {
+                  const itemGroup = ["/operations", "/shop"].includes(item.to) ? "Operations" : ["/audit", "/platform-health"].includes(item.to) ? "Administration" : ["/damage", "/reports"].includes(item.to) ? "Records" : "Work";
+                  return itemGroup === group;
+                });
+                return items.length ? <div className="nav-group" key={group}><span className="nav-group-label">{group}</span>{items.map((item) => {
                 const Icon = item.icon;
                 return (
-                  <Link key={`${item.label}-${item.to}`} to={item.to} className={isActive(item.label, item.to) ? "active" : ""}>
+                  <Link key={`${item.label}-${item.to}`} to={item.to} aria-current={isActive(item.label, item.to) ? "page" : undefined} className={isActive(item.label, item.to) ? "active" : ""}>
                     <Icon size={17} aria-hidden="true" />
-                    <span>{item.label}</span>
+                    <span>{item.to === "/" ? "Work queue" : item.to === "/suggestions" ? "Finding review" : item.to === "/reports" ? "Reports" : item.label}</span>
                   </Link>
                 );
+                })}</div> : null;
               })}
             </nav>
+            <div className="sidebar-foot"><span className="brand-seam" />Evidence. Decisions. Accountability.<small>Vehicle condition intelligence</small></div>
           </aside>
-          <main className="workspace">
+          <main className="workspace" id="main-workspace" tabIndex={-1} inert={navigationOpen}>
             <header className="topbar">
               <div className="topbar-left">
-                <button className="icon-button" aria-label="Toggle navigation">
-                  <Menu size={18} />
+                <button className="icon-button navigation-toggle" aria-label="Toggle navigation" aria-expanded={navigationOpen} aria-controls="main-navigation" onClick={() => setNavigationOpen((open) => !open)}>
+                  {navigationOpen ? <X size={18} /> : <Menu size={18} />}
                 </button>
+                <span className="workspace-label">{isEvaluationMode ? "Evaluation workspace" : "Operations workspace"}<small>{actor.role.replaceAll("_", " ")}</small></span>
+              </div>
+              <div className="topbar-metrics" aria-label="Workflow health">
+                {topbarMetrics.map(({ label, key, tone, icon: Icon }) => (
+                  <div key={label} className={`topbar-metric metric-${tone}`}>
+                    <Icon size={14} aria-hidden="true" />
+                    <strong>{String(workflowMetrics[key])}</strong><span>{label}</span>
+                  </div>
+                ))}
+              </div>
+              <details className="account-menu" onKeyDown={(event) => { if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
+                <summary><span className="user-avatar">{userInitials}</span><span>{actor.name}</span><ChevronDown size={14} /></summary>
+                <div className="account-menu-panel">
+                <p>{sessionSummaryText}</p>
                 <label className="role-select">
                   <span>{roleSelectLabel}</span>
                   <select value={actor.role} disabled={Boolean(authSession) || !activeSession} onChange={(event) => changeRole(event.target.value as Actor["role"])}>
@@ -247,27 +293,9 @@ export function App() {
                     <option value="admin">Admin</option>
                   </select>
                 </label>
-              </div>
-              <div className="topbar-metrics" aria-label="Workflow health">
-                {topbarMetrics.map(({ label, key, tone, icon: Icon }) => (
-                  <div key={label} className={`topbar-metric metric-${tone}`}>
-                    <span className="metric-icon" aria-hidden="true">
-                      <Icon size={14} strokeWidth={2.6} />
-                    </span>
-                    <span className="metric-label">{label}</span>
-                    <strong>{String(workflowMetrics[key])}</strong>
-                  </div>
-                ))}
-              </div>
-              <div className="topbar-user">
-                <CircleHelp size={17} />
-                <span className="user-avatar">{userInitials}</span>
-                <span className="session-summary">
-                  <strong>{actor.name}</strong>
-                  <small>{sessionSummaryText}</small>
-                </span>
                 <button className="text-button" onClick={logOut}>Sign out</button>
-              </div>
+                </div>
+              </details>
             </header>
             <Outlet />
           </main>
@@ -293,7 +321,7 @@ function OidcAuthGate(props: OidcAuthGateProps) {
       <section className="auth-page">
         <div className="auth-panel auth-panel-single">
           <div className="auth-copy">
-            <span className="auth-brand">InspectIQ</span>
+            <span className="auth-brand"><Brand /></span>
             <span className="auth-kicker">Secure workspace</span>
             <h1>Signing in</h1>
             <p>Completing Cognito authorization and loading role-aware workspace access.</p>
@@ -307,7 +335,7 @@ function OidcAuthGate(props: OidcAuthGateProps) {
     <section className="auth-page">
       <div className="auth-panel">
         <div className="auth-copy">
-          <span className="auth-brand">InspectIQ</span>
+          <span className="auth-brand"><Brand /></span>
           <span className="auth-kicker">Vehicle inspection workspace</span>
           <h1>Review the system without a login.</h1>
           <p>Explore inspection queues, reports, audit history, and operations health. Reviewer decisions and manual damage entries stay isolated to your browser session.</p>
@@ -406,7 +434,8 @@ function LocalSessionGate({ onStart }: { onStart: (role: Actor["role"]) => void 
   return (
     <section className="auth-gate enterprise-auth">
       <div className="auth-hero-copy">
-        <span>InspectIQ Secure Workspace</span>
+        <div className="auth-hero-brand"><Brand /></div>
+        <span className="eyebrow">InspectIQ Secure Workspace</span>
         <h1>Vehicle inspection operations</h1>
         <p>Enter with a role-scoped enterprise session. Production deployments use OIDC/JWT claims; local sessions preserve the same RBAC and object-access behavior for review and testing.</p>
       </div>

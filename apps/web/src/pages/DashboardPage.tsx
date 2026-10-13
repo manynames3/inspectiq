@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, RefreshCw } from "lucide-react";
+import { AlertTriangle, ArrowRight, RefreshCw, CarFront, Plus, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
@@ -7,9 +7,12 @@ import { StatusPill } from "../components/StatusPill.js";
 import { formatConditionGrade } from "../conditionGrade.js";
 import type { Inspection } from "../types.js";
 import { isCaptureQueueInspection, isReviewQueueInspection } from "../workflowMetrics.js";
+import { inspectionNextStep, inspectionPriority } from "../workQueue.js";
 
 export function DashboardPage() {
-  const { actor } = useActor();
+  const { actor, can } = useActor();
+  const [search, setSearch] = useState("");
+  const [needsWorkOnly, setNeedsWorkOnly] = useState(false);
   const [inspections, setInspections] = useState<Inspection[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +35,10 @@ export function DashboardPage() {
     return true;
   });
   const showingInspectorRecent = actor.role === "inspector" && visibleInspections.length === 0 && inspections.length > 0;
-  const tableInspections = showingInspectorRecent ? inspections : visibleInspections;
+  const tableInspections = (showingInspectorRecent ? inspections : visibleInspections)
+    .filter((inspection) => !needsWorkOnly || inspection.status !== "FINALIZED")
+    .filter((inspection) => `${inspection.year} ${inspection.make} ${inspection.model} ${inspection.vin}`.toLowerCase().includes(search.toLowerCase()))
+    .slice().sort((a, b) => inspectionPriority(b) - inspectionPriority(a));
   const roleContext = actor.role === "inspector"
     ? {
       title: showingInspectorRecent ? "Capture queue clear" : "Capture queue",
@@ -54,22 +60,30 @@ export function DashboardPage() {
       };
 
   return (
-    <section className="page">
+    <section className="page work-queue-page">
       <div className="page-heading">
         <div>
-          <h1>Dashboard</h1>
-          <p>Wholesale inspection queue with evidence completeness, condition grade, and buyer-visible release status.</p>
+          <span className="eyebrow">Vehicle condition intelligence / {actor.role.replaceAll("_", " ")}</span>
+          <h1>Your work, in focus.</h1>
+          <p>Evidence to capture. Decisions to make. Vehicles to release.</p>
         </div>
-        <button className="secondary-button" onClick={() => void load()}>
+        <div className="heading-actions">{can("inspection:create") ? <Link to="/new" className="primary-button"><Plus size={17} /> New inspection</Link> : null}<button className="secondary-button" onClick={() => void load()}>
           <RefreshCw size={16} /> Refresh
-        </button>
+        </button></div>
       </div>
       {error ? <div className="error-banner">{error}</div> : null}
+      <div className="queue-ledger">
+        <div><span>In your workspace</span><strong>{inspections.length.toString().padStart(2, "0")}</strong><small>Vehicles</small></div>
+        <div><span>Evidence incomplete</span><strong>{inspections.filter((i) => i.completenessPercentage < 100).length.toString().padStart(2, "0")}</strong><small>Capture needed</small></div>
+        <div><span>Awaiting decisions</span><strong>{inspections.filter(isReviewQueueInspection).length.toString().padStart(2, "0")}</strong><small>Human review</small></div>
+        <div><span>Buyer-visible</span><strong>{inspections.filter((i) => i.buyerVisibleReady).length.toString().padStart(2, "0")}</strong><small>Released reports</small></div>
+      </div>
       <div className={`role-focus-strip role-${actor.role}`}>
         <strong>{roleContext.title}</strong>
         <span>{roleContext.detail}</span>
         <em>{roleContext.primaryMetric}</em>
       </div>
+      <div className="queue-toolbar"><div><button className={!needsWorkOnly ? "active" : ""} onClick={() => setNeedsWorkOnly(false)}>All assigned</button><button className={needsWorkOnly ? "active" : ""} onClick={() => setNeedsWorkOnly(true)}>Needs action</button></div><label className="queue-search"><Search size={16} /><input aria-label="Search vehicle or VIN" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Vehicle or VIN" /></label></div>
       <div className="table-panel">
         <table>
           <thead>
@@ -81,7 +95,7 @@ export function DashboardPage() {
               <th>Condition grade</th>
               <th>Release</th>
               <th>Updated</th>
-              <th></th>
+              <th>Next step</th>
             </tr>
           </thead>
           <tbody>
@@ -96,7 +110,7 @@ export function DashboardPage() {
             ) : tableInspections.map((inspection) => (
               <tr key={inspection.id}>
                 <td>
-                  <strong>{inspection.year} {inspection.make} {inspection.model}</strong>
+                  <span className="vehicle-name"><span className="vehicle-monogram"><CarFront size={23} /></span><strong>{inspection.year} {inspection.make} {inspection.model}</strong></span>
                   <small>{inspection.trim || "Base"} · {inspection.mileage.toLocaleString()} mi</small>
                 </td>
                 <td>
@@ -119,7 +133,7 @@ export function DashboardPage() {
                 <td>{new Date(inspection.updatedAt).toLocaleString()}</td>
                 <td>
                   <Link className="row-link" to={`/inspections/${inspection.id}`}>
-                    Open <ArrowRight size={15} />
+                    {inspectionNextStep(inspection)} <ArrowRight size={15} />
                   </Link>
                 </td>
               </tr>

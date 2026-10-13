@@ -38,7 +38,7 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
   const { inspection } = bundle;
   const selectedPhoto = selectedPhotoIndex == null ? null : bundle.photos[selectedPhotoIndex] ?? null;
   const pendingForInspection = pendingUploads.filter((item) => item.inspectionId === inspection.id);
-  const captured = new Set(bundle.photos.map((photo) => photo.declaredAngle));
+  const captured = new Set(bundle.photos.filter((photo) => photo.uploadStatus === "uploaded").map((photo) => photo.declaredAngle));
   const pendingSuggestions = bundle.suggestions.filter((item) => item.status === "pending");
   const steps = [
     { label: "Inspection", complete: inspection.completenessPercentage === 100 },
@@ -63,6 +63,11 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
   return (
     <Screen refresh={() => void refresh()} refreshing={loading}>
       <PageHeading title={`${inspection.year} ${inspection.make} ${inspection.model}`} subtitle={`${inspection.vin} · ${inspection.mileage.toLocaleString()} mi · ${inspection.trim}`} />
+      <View style={styles.captureLedger}><Text style={styles.captureLedgerText}>{bundle.photos.filter((photo) => photo.uploadStatus === "uploaded").length} uploaded · {pendingForInspection.length} queued</Text><Text style={styles.captureLedgerText}>{online ? "Online" : "Offline · capture available"}</Text></View>
+      {canMutate && canRole(session.actor.role, "photo:capture") && inspection.status !== "FINALIZED" ? (
+        <ActionButton label="Capture required photos" icon={<Camera size={18} color="white" />} onPress={() => navigation.navigate("Capture", { inspectionId: inspection.id })} />
+      ) : null}
+      {bundle.photos[0] ? <Card style={styles.focusEvidence}><EvidenceImage photo={bundle.photos[0]} onPress={() => setSelectedPhotoIndex(0)} /><Text style={styles.focusCaption}>{bundle.photos[0].declaredAngle?.replaceAll("_", " ") ?? "Vehicle evidence"} · tap to inspect and compare</Text></Card> : null}
       {!online ? <Notice tone="offline" title="Cached inspection" message={`${pendingForInspection.length} local capture operation${pendingForInspection.length === 1 ? "" : "s"} will sync after reconnection.`} /> : null}
       {actionError ? <Notice tone="bad" title="Action not completed" message={actionError} /> : null}
       {bundle.readinessIssues.length > 0 ? (
@@ -95,16 +100,13 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
                 <View key={angle} style={styles.checkRow}>
                   <View style={[styles.checkCircle, complete && styles.checkCircleComplete]}>{complete ? <Check size={13} color={colors.teal} /> : <Circle size={13} color={colors.muted} />}</View>
                   <Text style={styles.checkLabel}>{labels[angle]}</Text>
-                  <Text style={[styles.checkState, complete && styles.checkStateComplete]}>{complete ? "Captured" : "Required"}</Text>
+                  <Text style={[styles.checkState, complete && styles.checkStateComplete]}>{captured.has(angle) ? "Uploaded" : complete ? "Queued locally" : "Required"}</Text>
                 </View>
               );
             })}
           </View>
         </Card>
       </Section>
-      {canMutate && canRole(session.actor.role, "photo:capture") && inspection.status !== "FINALIZED" ? (
-        <ActionButton label="Capture required photos" icon={<Camera size={18} color="white" />} onPress={() => navigation.navigate("Capture", { inspectionId: inspection.id })} />
-      ) : null}
       <Section title={`Evidence (${bundle.photos.length})`}>
         <View style={styles.photoGrid}>
           {bundle.photos.map((photo, index) => (
@@ -148,6 +150,10 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  captureLedger: { flexDirection: "row", justifyContent: "space-between", gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.line },
+  captureLedgerText: { color: colors.muted, fontSize: 12 },
+  focusEvidence: { padding: 0, overflow: "hidden" },
+  focusCaption: { padding: 12, color: colors.muted, fontSize: 12, textTransform: "capitalize" },
   steps: { flexDirection: "row", alignItems: "flex-start" },
   stepWrap: { flex: 1, alignItems: "center", gap: 7 },
   stepLineRow: { flexDirection: "row", alignItems: "center", width: "100%" },

@@ -31,7 +31,7 @@ export function InspectionCard({ bundle, onPress }: { bundle: InspectionBundle; 
           {bundle.readinessIssues.length > 0 ? (
             <Text style={styles.blocker} numberOfLines={1}>{bundle.readinessIssues.length} release blocker{bundle.readinessIssues.length === 1 ? "" : "s"}</Text>
           ) : (
-            <Text style={styles.ready}>{bundle.buyerVisibleReady ? "Buyer-visible" : "No open readiness issue"}</Text>
+            <Text style={[styles.ready, !bundle.buyerVisibleReady && { color: colors.muted }]}>{bundle.buyerVisibleReady ? "Buyer-visible" : "No open readiness issue · release not confirmed"}</Text>
           )}
         </View>
         <ChevronRight size={20} color={colors.muted} />

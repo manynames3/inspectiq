@@ -25,9 +25,14 @@ async function waitForBodyText(page, text, timeout = 15_000) {
 }
 
 async function acceptVisibleSuggestions(page) {
-  for (let index = 0; index < 20; index += 1) {
+  for (let index = 0; index < 64; index += 1) {
     const cards = page.locator(".suggestion-card");
-    if (await cards.count() === 0) return;
+    if (await cards.count() === 0) {
+      const nextFinding = page.getByRole("button", { name: "Next finding" });
+      if (await nextFinding.count() === 0) return;
+      await nextFinding.click();
+      await cards.first().waitFor({ timeout: 5_000 });
+    }
     const acceptButton = page.locator(".suggestion-card .accept-button:not([disabled])").first();
     try {
       await acceptButton.waitFor({ timeout: 5_000 });
@@ -42,6 +47,18 @@ async function acceptVisibleSuggestions(page) {
   fail("Suggestion acceptance loop exceeded expected count.");
 }
 
+async function openDetails(page, selector) {
+  const details = page.locator(selector);
+  if (!await details.evaluate((element) => element.open)) await details.locator(":scope > summary").click();
+}
+
+async function selectRole(page, role) {
+  await openDetails(page, ".account-menu");
+  await page.locator(".role-select select").selectOption(role);
+  await page.waitForFunction((value) => document.querySelector(".role-select select")?.value === value, role);
+  await page.locator(".account-menu > summary").click();
+}
+
 const browser = await chromium.launch({
   headless: true,
   executablePath
@@ -52,6 +69,9 @@ const context = await browser.newContext({
   viewport: { width: 1440, height: 1000 }
 });
 const page = await context.newPage();
+page.setDefaultTimeout(15_000);
+page.setDefaultNavigationTimeout(30_000);
+if (process.env.INSPECTIQ_FIXED_NOW) await page.clock.setFixedTime(process.env.INSPECTIQ_FIXED_NOW);
 const consoleIssues = [];
 page.on("console", (message) => {
   if (message.type() === "error" || message.type() === "warning") {
@@ -73,11 +93,11 @@ try {
   await waitForBodyText(page, "InspectIQ Secure Workspace");
   await page.getByRole("button", { name: /start inspector session/i }).click();
   await waitForBodyText(page, "Capture queue");
-  await page.locator(".role-select select").selectOption("reviewer");
+  await selectRole(page, "reviewer");
   await waitForBodyText(page, "Review queue");
-  await page.locator(".role-select select").selectOption("admin");
+  await selectRole(page, "admin");
   await waitForBodyText(page, "Operations control");
-  await page.locator(".role-select select").selectOption("inspector");
+  await selectRole(page, "inspector");
 
   await page.goto(`${baseUrl}/new`, { waitUntil: "networkidle" });
   await waitForBodyText(page, "New Inspection");
@@ -94,13 +114,14 @@ try {
   await page.getByRole("button", { name: /create inspection/i }).click();
   await page.waitForURL(/\/inspections\/[^/]+$/, { timeout: 15_000 });
 
+  await openDetails(page, ".capture-support");
   await page.getByRole("button", { name: /load reference set/i }).click();
   await waitForBodyText(page, "Uploaded images (8)");
   await page.getByRole("button", { name: /analyze photos/i }).click();
   await page.locator(".suggestion-card").first().waitFor({ timeout: 120_000 });
   await page.locator(".field-capture-panel").waitFor({ timeout: 15_000 });
 
-  await page.locator(".role-select select").selectOption("reviewer");
+  await selectRole(page, "reviewer");
   const inspectionUrl = page.url();
   await page.goto(`${baseUrl}/suggestions`, { waitUntil: "networkidle" });
   await waitForBodyText(page, "Suggestions");
@@ -111,9 +132,10 @@ try {
   await waitForBodyText(page, "findings");
   await waitForBodyText(page, "Due in");
   await page.goto(inspectionUrl, { waitUntil: "networkidle" });
-  await page.locator(".role-select select").selectOption("reviewer");
-  await page.waitForFunction(() => document.querySelector(".role-select select")?.value === "reviewer");
+  await selectRole(page, "reviewer");
+  await openDetails(page, ".inspection-utilities");
   await page.getByRole("button", { name: /assign findings to me/i }).click();
+  await page.locator(".inspection-utilities > summary").click();
   await page.locator(".suggestion-card .accept-button:not([disabled])").first().waitFor({ timeout: 120_000 });
   await acceptVisibleSuggestions(page);
   await waitForBodyText(page, "Grade ready");
@@ -150,13 +172,22 @@ try {
   await waitForBodyText(page, "Condition grade based on required evidence and reviewer-confirmed findings");
   await page.getByRole("button", { name: /^approve \d\.\d$/i }).click();
   await waitForBodyText(page, "Reviewer approved");
+  await openDetails(page, ".capture-support");
   await waitForBodyText(page, "Ready for report");
   await page.getByRole("button", { name: /draft report/i }).click();
+  await openDetails(page, ".report-edit-details");
   await page.getByRole("textbox", { name: "Buyer-facing condition report" }).waitFor();
   await page.waitForFunction(() => {
     const report = document.querySelector('textarea[aria-label="Buyer-facing condition report"]');
     return report instanceof HTMLTextAreaElement && report.value.trim().length > 0;
   });
+  const reportEditor = page.getByRole("textbox", { name: "Buyer-facing condition report" });
+  const reviewedText = await reportEditor.inputValue();
+  await reportEditor.fill(`${reviewedText}\nUnreviewed edit for UI guard verification.`);
+  if (!await page.getByRole("button", { name: /^approve$/i }).isDisabled()) fail("Unsaved report language can be approved.");
+  if (!await page.getByRole("button", { name: /^finalize$/i }).isDisabled()) fail("Unsaved report language can be finalized.");
+  await waitForBodyText(page, "Unsaved draft · not reviewed");
+  await reportEditor.fill(reviewedText);
   await page.getByRole("button", { name: /^approve$/i }).click();
   await waitForBodyText(page, "Approved");
   await page.getByRole("button", { name: /^finalize$/i }).click();
@@ -174,6 +205,21 @@ try {
   if (exportedText.includes("VisionOutputSchema") || exportedText.includes("validated schema")) {
     fail("Buyer report export leaked internal schema language.");
   }
+  await page.getByRole("button", { name: "View condition report" }).click();
+  await page.waitForFunction(() => {
+    const paper = document.querySelector(".report-paper")?.getBoundingClientRect();
+    const rail = document.querySelector(".review-column")?.getBoundingClientRect();
+    if (!paper || !rail || paper.top >= innerHeight || paper.bottom <= 0) return false;
+    return !(paper.left < rail.right && paper.right > rail.left && paper.top < rail.bottom && paper.bottom > rail.top);
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const navigationToggle = page.getByRole("button", { name: "Toggle navigation" });
+  await navigationToggle.click();
+  await page.getByRole("dialog", { name: "Workspace navigation" }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog", { name: "Workspace navigation" }).waitFor({ state: "hidden" });
+  if (!await navigationToggle.evaluate((element) => document.activeElement === element)) fail("Closing the navigation drawer did not restore keyboard focus.");
+  if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) fail("Phone workbench has page-level horizontal overflow.");
 
   const relevantConsoleIssues = consoleIssues.filter((message) =>
     !message.includes("Download the React DevTools")

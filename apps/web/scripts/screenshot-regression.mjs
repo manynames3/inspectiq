@@ -204,12 +204,15 @@ async function capture(page, name, route, role, text, viewport = { width: 1440, 
   await page.goto(`${baseUrl}${route}`, { waitUntil: "networkidle" });
   await waitForText(page, text);
   await page.addStyleTag({ content: "*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; caret-color: transparent !important; }" });
-  await verifyPageQuality(page, name);
+  let qualityError;
+  try { await verifyPageQuality(page, name); }
+  catch (error) { qualityError = error instanceof Error ? error.message : String(error); }
   const outputPath = path.join(outputDir, `${name}.png`);
   await page.screenshot({
     path: outputPath,
     fullPage: true
   });
+  if (qualityError) return { name, diffRatio: 1, updated: false, error: qualityError };
   return compareScreenshot(name, outputPath);
 }
 
@@ -241,15 +244,29 @@ try {
   const inspectionId = await resolveScreenshotInspection();
 
   const results = [];
+  await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await waitForText(page, "InspectIQ Secure Workspace");
+  await verifyPageQuality(page, "workspace-entry");
+  const entryPath = path.join(outputDir, "workspace-entry.png");
+  await page.screenshot({ path: entryPath, fullPage: true });
+  results.push(await compareScreenshot("workspace-entry", entryPath));
   results.push(await capture(page, "dashboard", "/", "inspector", "Capture queue"));
-  results.push(await capture(page, "inspection-workbench", `/inspections/${inspectionId}`, "reviewer", "Workflow status"));
+  results.push(await capture(page, "inspection-workbench", `/inspections/${inspectionId}`, "reviewer", "Human decision workspace"));
   results.push(await capture(page, "suggestions-queue", "/suggestions", "reviewer", "Suggestions"));
   results.push(await capture(page, "damage-page", "/damage", "reviewer", "Damage"));
   results.push(await capture(page, "reports-page", "/reports", "reviewer", "Report"));
   results.push(await capture(page, "audit-page", "/audit", "admin", "Audit"));
   results.push(await capture(page, "platform-health", "/platform-health", "admin", "Production proof"));
-  results.push(await capture(page, "tablet-workbench", `/inspections/${inspectionId}`, "reviewer", "Workflow status", { width: 1024, height: 768 }));
-  results.push(await capture(page, "mobile-capture", `/inspections/${inspectionId}`, "inspector", "Required photo checklist", { width: 390, height: 844 }));
+  results.push(await capture(page, "recon-operations", "/operations", "admin", "Recon"));
+  results.push(await capture(page, "shop-board", "/shop", "admin", "Shop"));
+  results.push(await capture(page, "tablet-workbench", `/inspections/${inspectionId}`, "reviewer", "Human decision workspace", { width: 1024, height: 768 }));
+  results.push(await capture(page, "mobile-capture", `/inspections/${inspectionId}`, "inspector", "Capture checklist & evidence details", { width: 390, height: 844 }));
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await page.getByRole("dialog", { name: "Workspace navigation" }).waitFor();
+  await verifyPageQuality(page, "mobile-navigation");
+  const navigationPath = path.join(outputDir, "mobile-navigation.png");
+  await page.screenshot({ path: navigationPath });
+  results.push(await compareScreenshot("mobile-navigation", navigationPath));
 
   console.log(JSON.stringify({
     ok: results.every((result) => !result.error),

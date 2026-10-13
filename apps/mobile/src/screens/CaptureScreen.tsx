@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { CameraView, useCameraPermissions, type CameraCapturedPicture } from "expo-camera";
+import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Crypto from "expo-crypto";
 import { File } from "expo-file-system";
 import { Check, RotateCcw, ShieldAlert } from "lucide-react-native";
@@ -39,6 +41,7 @@ const guidance: Record<RequiredPhotoAngle, string> = {
 };
 
 export function CaptureScreen({ route, navigation }: Props) {
+  const insets = useSafeAreaInsets();
   const camera = useRef<CameraView>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const { bundleById, pendingUploads, online, syncNow, refresh } = useWorkspace();
@@ -142,6 +145,8 @@ export function CaptureScreen({ route, navigation }: Props) {
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
+      <View style={[styles.captureStatus, { paddingTop: insets.top + 12 }]}><Text style={styles.captureStatusText}>{requiredPhotoAngles.filter((view) => completedAngles.has(view)).length}/{requiredPhotoAngles.length} captured</Text><Text style={styles.captureStatusText}>{pendingUploads.filter((upload) => upload.inspectionId === route.params.inspectionId).length} queued · {online ? "Online" : "Offline"}</Text></View>
       <CameraView ref={camera} style={styles.camera} facing="back" autofocus="on" onCameraReady={() => setReady(true)}>
         <View style={styles.cameraShade}>
           <View style={styles.cameraTop}>
@@ -157,9 +162,9 @@ export function CaptureScreen({ route, navigation }: Props) {
           </View>
         </View>
       </CameraView>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.angleStrip}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.angleStrip, { paddingBottom: insets.bottom + 8 }]}>
         {requiredPhotoAngles.map((option) => (
-          <Pressable key={option} onPress={() => setAngle(option)} style={[styles.angleButton, angle === option && styles.angleButtonActive]}>
+          <Pressable key={option} onPress={() => setAngle(option)} accessibilityRole="button" accessibilityLabel={`Select ${labels[option]} capture view`} accessibilityState={{ selected: angle === option }} style={[styles.angleButton, angle === option && styles.angleButtonActive]}>
             {completedAngles.has(option) ? <Check size={13} color={angle === option ? "white" : colors.teal} /> : null}
             <Text style={[styles.angleText, angle === option && styles.angleTextActive]}>{labels[option]}</Text>
           </Pressable>
@@ -170,10 +175,12 @@ export function CaptureScreen({ route, navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  captureStatus: { flexDirection: "row", justifyContent: "space-between", gap: 12, padding: 16, backgroundColor: colors.navy },
+  captureStatusText: { color: colors.mint, fontSize: 12 },
   container: { flex: 1, backgroundColor: "#000" },
   camera: { flex: 1 },
   cameraShade: { flex: 1, justifyContent: "space-between", backgroundColor: "rgba(0,0,0,0.08)", padding: 20 },
-  cameraTop: { backgroundColor: "rgba(7,28,44,0.82)", borderRadius: 8, padding: 12, gap: 4 },
+  cameraTop: { backgroundColor: "rgba(11,20,22,0.85)", borderRadius: 10, padding: 14, gap: 4 },
   cameraTitle: { color: "white", fontSize: 20, fontWeight: "800" },
   cameraGuidance: { color: "#DCE8F4", fontSize: 13, lineHeight: 18 },
   overlay: { position: "absolute", left: "8%", right: "8%", top: "29%", height: "38%", borderWidth: 2, borderColor: "rgba(255,255,255,0.9)", borderRadius: 18 },
@@ -184,7 +191,7 @@ const styles = StyleSheet.create({
   shutterInner: { width: 58, height: 58, borderRadius: 29, backgroundColor: "white" },
   shutterDisabled: { opacity: 0.45 },
   angleStrip: { minHeight: 70, backgroundColor: colors.navy, paddingHorizontal: 10, alignItems: "center", gap: 8 },
-  angleButton: { flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: "#486176", borderRadius: 16, paddingHorizontal: 11, paddingVertical: 7 },
+  angleButton: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderColor: "#526963", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
   angleButtonActive: { backgroundColor: colors.blue, borderColor: colors.blue },
   angleText: { color: "#DCE8F4", fontSize: 12, fontWeight: "700" },
   angleTextActive: { color: "white" },

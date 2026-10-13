@@ -1,21 +1,24 @@
+import { supremeBrand, supremeField } from "@inspectiq/shared";
+
 export const colors = {
-  ink: "#172033",
-  muted: "#5E708D",
-  line: "#D6DFEB",
-  canvas: "#F3F6FA",
-  surface: "#FFFFFF",
-  navy: "#071C2C",
-  blue: "#1162C8",
-  blueSoft: "#EAF2FF",
-  teal: "#0F7F78",
-  tealSoft: "#E4F6F2",
-  green: "#147A55",
-  greenSoft: "#E7F7EF",
+  ink: supremeField.ink,
+  muted: supremeField.muted,
+  line: supremeField.line,
+  canvas: supremeField.canvas,
+  surface: supremeField.surface,
+  navy: supremeBrand.canvas,
+  blue: supremeField.primary,
+  blueSoft: supremeField.soft,
+  teal: supremeField.accent,
+  tealSoft: supremeField.soft,
+  green: supremeField.accent,
+  greenSoft: supremeField.soft,
+  mint: supremeBrand.mint,
   amber: "#A75A08",
   amberSoft: "#FFF3DF",
   red: "#C92B32",
   redSoft: "#FDEBED",
-  graySoft: "#EEF2F7"
+  graySoft: "#EAF0EC"
 } as const;
 
 export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;

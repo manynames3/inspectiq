@@ -44,6 +44,8 @@ const context = await browser.newContext({
   viewport: { width: 1440, height: 960 }
 });
 const page = await context.newPage();
+page.setDefaultTimeout(15_000);
+page.setDefaultNavigationTimeout(30_000);
 const consoleIssues = [];
 page.on("console", (message) => {
   if (message.type() === "error" || message.type() === "warning") {
@@ -56,14 +58,16 @@ page.on("pageerror", (error) => {
 
 try {
   await page.goto(baseUrl, { waitUntil: "networkidle" });
-  await expectBodyText(page, "VEHICLE INSPECTION WORKSPACE");
+  await expectBodyText(page, "Review the system without a login.");
   const previewButton = page.getByRole("button", { name: "Open evaluation workspace" });
   await previewButton.waitFor({ state: "visible", timeout: 20_000 }).catch(() => {
     fail("Open evaluation workspace button was not available.");
   });
   await previewButton.click();
-  await expectBodyText(page, "Dashboard");
+  await expectBodyText(page, "Your work, in focus.");
   await expectBodyText(page, "Operations control");
+  await page.waitForFunction(() => document.querySelector(".work-queue-page .row-link")
+    || document.querySelector(".work-queue-page .error-banner"), null, { timeout: 30_000 });
   await expectNoPublicErrors(page, "Dashboard");
 
   await page.goto(`${baseUrl}/suggestions`, { waitUntil: "networkidle" });
@@ -89,6 +93,11 @@ try {
   await inspectionLinks.first().click();
   await page.waitForURL(/\/inspections\/[^/]+$/, { timeout: 15_000 });
   await page.waitForLoadState("networkidle", { timeout: 30_000 });
+  await page.getByRole("region", { name: "Evidence review stage" }).waitFor({ state: "visible" });
+  const captureSupport = page.locator(".capture-support");
+  if (!await captureSupport.evaluate((element) => element.open)) {
+    await captureSupport.locator(":scope > summary").click();
+  }
   await expectBodyText(page, "Workflow status");
   await expectBodyText(page, "Required photo checklist");
   await expectBodyText(page, "Uploaded images");

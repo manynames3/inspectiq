@@ -50,16 +50,17 @@ export function ReportsPage() {
 
   const reportRecords = useMemo(() => records.filter(({ bundle }) => bundle.finalReport), [records]);
   const finalizedCount = reportRecords.filter(({ bundle }) => bundle.finalReport?.finalizedAt).length;
-  const draftCount = reportRecords.length - finalizedCount;
-  const humanReviewCount = records.filter(({ bundle }) => bundle.aiReportDraft?.humanReviewRequired).length;
+  const approvedCount = reportRecords.filter(({ bundle }) => !bundle.finalReport?.finalizedAt && bundle.finalReport?.approvalStatus === "approved").length;
+  const draftCount = reportRecords.length - finalizedCount - approvedCount;
   const partialDetailCount = records.filter((record) => record.bundleLoadError).length;
 
   return (
     <section className="page">
       <div className="page-heading">
         <div>
-          <h1>Report</h1>
-          <p>Condition report drafts, reviewer status, and finalization coverage.</p>
+          <span className="eyebrow">Disclosure / human approval / release</span>
+          <h1>Reports, with a record.</h1>
+          <p>Every condition report has a version, a reviewer, and an explicit release state.</p>
         </div>
         <button className="secondary-button" onClick={() => void load()}>
           <RefreshCw size={16} /> Refresh
@@ -87,8 +88,8 @@ export function ReportsPage() {
           <strong>{finalizedCount}</strong>
         </article>
         <article className="summary-card">
-          <span>Human review</span>
-          <strong>{humanReviewCount}</strong>
+          <span>Approved · awaiting release</span>
+          <strong>{approvedCount}</strong>
         </article>
       </div>
 
@@ -106,7 +107,7 @@ export function ReportsPage() {
                 <th>Inspection</th>
                 <th>Report status</th>
                 <th>Grade</th>
-                <th>Confidence</th>
+                <th>Human approval</th>
                 <th>Buyer visibility</th>
                 <th>Recon estimate</th>
                 <th>Version</th>
@@ -117,7 +118,7 @@ export function ReportsPage() {
             <tbody>
               {records.map((record) => {
                 const { inspection, bundle } = record;
-                const status = bundle.finalReport?.finalizedAt ? "Finalized" : bundle.finalReport ? "Draft" : "Not started";
+                const status = bundle.finalReport?.finalizedAt ? "Finalized" : bundle.finalReport?.approvalStatus === "approved" ? "Approved" : bundle.finalReport ? "Draft" : "Not started";
                 const readiness = deriveMarketplaceReadiness(bundle);
                 return (
                   <tr key={inspection.id}>
@@ -129,7 +130,7 @@ export function ReportsPage() {
                     <td>{bundle.conditionGrade
                       ? formatConditionGrade(bundle.conditionGrade, true)
                       : "Not graded"}</td>
-                    <td>{bundle.aiReportDraft ? `${Math.round(bundle.aiReportDraft.confidence * 100)}%` : "Pending"}</td>
+                    <td>{bundle.finalReport?.approvedBy ? <><strong>{bundle.finalReport.approvedBy}</strong><small>{bundle.finalReport.approvedAt ? new Date(bundle.finalReport.approvedAt).toLocaleDateString() : "Approval recorded"}</small></> : "Not approved"}</td>
                     <td>{readiness.buyerVisibility}</td>
                     <td>{readiness.reconditioningEstimate}</td>
                     <td>{bundle.finalReport?.version ?? "Pending"}</td>
@@ -137,7 +138,7 @@ export function ReportsPage() {
                     <td>
                       <div className="row-actions">
                         {bundle.finalReport ? (
-                          <button className="row-link button-link" type="button" onClick={() => void downloadBuyerReport(bundle.finalReport!.id, actor)}>
+                          <button className="row-link button-link" type="button" onClick={() => void downloadBuyerReport(bundle.finalReport!.id, actor).catch((err: unknown) => setError(err instanceof Error ? err.message : "Could not export report."))}>
                             <Download size={14} /> Export
                           </button>
                         ) : null}

@@ -56,7 +56,7 @@ const styles = StyleSheet.create({
   card: { flexDirection: "row", alignItems: "center", gap: 10 },
   copy: { flex: 1, gap: 4 },
   vehicle: { color: colors.ink, fontSize: 15, fontWeight: "800" },
-  vin: { color: colors.muted, fontSize: 10 },
+  vin: { color: colors.muted, fontSize: 12 },
   summary: { color: colors.muted, fontSize: 12 },
   right: { alignItems: "flex-end", gap: 12 }
 });
