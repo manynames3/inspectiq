@@ -11,6 +11,12 @@ This document separates Git visibility, frontend delivery, and backend compatibi
 - Branch CI: [all eight jobs at `9d10913`](https://github.com/manynames3/inspectiq/actions/runs/38370051612) passed, including Linux visual regression, real Postgres, and browser E2E.
 - Database: a read-only production ledger check on 2026-10-13 confirmed numbered migrations `0001`–`0007` are applied. The subsequent branch changes add `0008` and serialized startup; they are not yet applied.
 
+### Android Emulator Follow-up
+
+The `9d10913` x86 APK compiled, but its [Maestro journey](https://github.com/manynames3/inspectiq/actions/runs/38370051703/job/115204499722) failed when a recurring **Quickstep launcher** ANR modal obscured accessibility. The captured screenshot shows the expected Review queue and 22 findings behind that system modal; logcat identifies `com.android.launcher3`, with no captured InspectIQ fatal stack. This is not a passing native journey or proof of physical-device performance.
+
+The follow-up [test-only change `0d58344`](https://github.com/manynames3/inspectiq/commit/0d583447b0559a7e3fc276def42c9e1f61fb8210) closes only the exact Android Quickstep modal, with three bounded attempts, at transition boundaries. It preserves every product assertion and cannot dismiss an InspectIQ ANR. All 18 workflow/plan tests and Maestro syntax checks passed. The [emulator rerun](https://github.com/manynames3/inspectiq/actions/runs/38373633881) is pending; do not describe recovery as runtime-verified until it passes. The application source remains identical to the deployed/tested `9d10913` revision.
+
 ## Why the New AWS Backend Is Not Yet Applied
 
 The newer condition-report QC backend requires a `gradeEvidenceFingerprint` and a report-source fingerprint to prevent approving or publishing stale facts. The old backend did not save these fields. New demo seeds do not upgrade existing persisted records.
