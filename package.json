@@ -19,7 +19,8 @@
     "ops:walkthrough": "node scripts/ops-walkthrough.mjs",
     "prepare:live-photos": "node scripts/prepare-live-photo-set.mjs",
     "seed": "npm run seed -w @inspectiq/api",
-    "test": "npm run test:workflows && npm run build -w @inspectiq/shared && npm run test -w @inspectiq/api && npm run test -w @inspectiq/web && npm run test -w @inspectiq/mobile",
+    "test": "npm run test:security-dependencies && npm run test:workflows && npm run build -w @inspectiq/shared && npm run test -w @inspectiq/api && npm run test -w @inspectiq/web && npm run test -w @inspectiq/mobile",
+    "test:security-dependencies": "node --test scripts/security-dependencies.test.mjs",
     "test:e2e": "node apps/web/scripts/e2e-inspection-flow.mjs",
     "test:live": "node apps/web/scripts/live-readonly-smoke.mjs",
     "test:mobile": "npm run build -w @inspectiq/shared && npm run typecheck -w @inspectiq/mobile && npm run test -w @inspectiq/mobile",
@@ -49,6 +50,10 @@
     "node": ">=20"
   },
   "overrides": {
-    "react-native": "0.86.3"
+    "react-native": "0.86.3",
+    "metro": "0.84.5",
+    "metro-config": "0.84.5",
+    "metro-transform-worker": "0.84.5",
+    "shell-quote": "^1.12.0"
   }
 }
