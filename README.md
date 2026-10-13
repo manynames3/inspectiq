@@ -1,5 +1,13 @@
 # InspectIQ
 
+> [!IMPORTANT]
+> **Looking for the current product?** Start with the [active inspection/recon branch and product tour](https://github.com/manynames3/inspectiq/tree/agent/inspection-recon-operations#readme).
+> `main` is the historical baseline. The evidence workbench, revised report/mobile experience, condition-report QC, and recon workflow are **unmerged work on `agent/inspection-recon-operations`**, not features already merged here.
+>
+> [Current screenshots and walkthrough](https://github.com/manynames3/inspectiq/tree/agent/inspection-recon-operations#product-tour) · [C4 views](https://github.com/manynames3/inspectiq/blob/agent/inspection-recon-operations/docs/c4.md) · [Architecture decisions](https://github.com/manynames3/inspectiq/tree/agent/inspection-recon-operations/docs/adr) · [Compare branches](https://github.com/manynames3/inspectiq/compare/main...agent/inspection-recon-operations)
+>
+> The [live evaluation workspace](https://inspectiq.pages.dev/?review=1) is deployed from the active branch. A live deployment does not mean that branch has been merged into `main`. The documentation below describes the baseline checkout.
+
 [![CI](https://github.com/manynames3/inspectiq/actions/workflows/ci.yml/badge.svg)](https://github.com/manynames3/inspectiq/actions/workflows/ci.yml)
 
 Vehicle inspection and imaging workflow for wholesale and offsite operations.
