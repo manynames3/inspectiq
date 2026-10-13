@@ -4,10 +4,11 @@ This document separates Git visibility, frontend delivery, and backend compatibi
 
 ## Verified Baseline
 
-- Frontend: Supreme AI Ventures styling and evidence workbench, deployed at [`6deeb1b`](https://github.com/manynames3/inspectiq/actions/runs/38359117411) to [InspectIQ Pages](https://inspectiq.pages.dev/). The new reinspection UI is a subsequent branch implementation, not yet that deployment.
+- Frontend: Supreme AI Ventures styling, evidence workbench, and compatible reinspection/history surfaces deployed at [`9d10913`](https://github.com/manynames3/inspectiq/actions/runs/38370130534) to [InspectIQ Pages](https://inspectiq.pages.dev/); immutable deployment URL [6fdf5596](https://6fdf5596.inspectiq.pages.dev/). Three new files were uploaded. The required read-only live smoke passed on 2026-10-13. Production browser QA confirmed the older API's report is labeled current-QC unverified and exposes no unsupported reinspection action.
 - AWS backend: last successful [apply at `f0c8697`](https://github.com/manynames3/inspectiq/actions/runs/30098914862). A deployment plan is not an apply.
-- Reviewed [AWS plan at `2b49dee`](https://github.com/manynames3/inspectiq/actions/runs/38357983624): zero additions, three in-place Lambda code updates, zero destruction. It was **not applied** because code/data compatibility is a separate gate from infrastructure safety.
-- Native: [Android CI at `2b49dee`](https://github.com/manynames3/inspectiq/actions/runs/38339742078) passed both jobs; the [tour capture](images/tour/README.md) records the actual arm64 APK and emulator provenance.
+- Reviewed [AWS plan at `9d10913`](https://github.com/manynames3/inspectiq/actions/runs/38370130011): zero additions, three in-place Lambda code updates, zero destruction. The guard parsed the actual saved plan and accepted only those code/computed changes. Apply and post-apply steps were **skipped**; the model gate remains separate from infrastructure safety.
+- Native: the [internal arm64 build at `9d10913`](https://github.com/manynames3/inspectiq/actions/runs/38370051703/job/115204499423) passed. [Android CI at `2b49dee`](https://github.com/manynames3/inspectiq/actions/runs/38339742078) passed both jobs and supplies the older [tour capture](images/tour/README.md); its exact APK/emulator provenance remains documented. APK compilation is not physical-device or authenticated field proof.
+- Branch CI: [all eight jobs at `9d10913`](https://github.com/manynames3/inspectiq/actions/runs/38370051612) passed, including Linux visual regression, real Postgres, and browser E2E.
 - Database: a read-only production ledger check on 2026-10-13 confirmed numbered migrations `0001`–`0007` are applied. The subsequent branch changes add `0008` and serialized startup; they are not yet applied.
 
 ## Why the New AWS Backend Is Not Yet Applied
@@ -32,7 +33,7 @@ Production snapshot `snap-icy-butterfly-atd3j37p` (`inspectiq-pre-reinspection-2
 
 The web deployment at [commit `6deeb1b`](https://github.com/manynames3/inspectiq/actions/runs/38359117411) succeeded, and [all eight branch CI jobs](https://github.com/manynames3/inspectiq/actions/runs/38359124729) passed. Its required live smoke nevertheless reproduced intermittent 500/preflight failures from the unchanged `f0c8697` AWS API. Serial health/detail/preflight probes succeeded; Lambda error stacks identified bootstrap Postgres serialization failures, not missing frontend assets.
 
-The active branch now fixes writer snapshot/lock ordering, commit acknowledgment, and failed-runtime cache recovery. The recorded real Postgres tests failed before and passed after the fix; [ADR 0013](adr/0013-postgres-writer-snapshots-and-runtime-recovery.md) explains the constraints. Those source fixes are **not** a live API repair until AWS is safely promoted. Do not report the release as a clean end-to-end production pass merely because one warmed request succeeds.
+The active branch now fixes writer snapshot/lock ordering, commit acknowledgment, and failed-runtime cache recovery. The recorded real Postgres tests failed before and passed after the fix; [ADR 0013](adr/0013-postgres-writer-snapshots-and-runtime-recovery.md) explains the constraints. The newer `9d10913` read-only browser smoke passed, but those source fixes are **not** a live API repair until AWS is safely promoted. A passing warmed tour does not establish recovered cold-start concurrency or verification of the new authenticated release path.
 
 ### Promotion Gates
 

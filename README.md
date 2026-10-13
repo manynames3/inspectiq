@@ -9,7 +9,7 @@ Evidence-first vehicle inspection, condition-report quality control, and authori
 >
 > The live web app was deployed from this branch. Deployment, branch implementation, and production readiness are different claims: the latest frontend does not prove every backend revision is deployed, and neither establishes commercial model accuracy.
 >
-> The AWS API remains at `f0c8697`. The active branch now includes audited, fresh-evidence reinspection that preserves legacy publications; production promotion still requires its release checks and the paid, no-fallback Bedrock prompt gate. See the [release status and safety gate](docs/release-status.md).
+> The web app is deployed at `9d10913`; the AWS API remains at `f0c8697`. Audited fresh-evidence reinspection and startup/history safeguards are implemented and tested on this branch. AWS promotion is held for the paid, no-fallback Bedrock prompt gate; older API responses show current-QC status as unverified and do not expose unsupported reinspection actions. See the [release status and safety gate](docs/release-status.md).
 
 [No-login product tour](https://inspectiq.pages.dev/?review=1) | [Native mobile](apps/mobile/README.md) | [C4 architecture](docs/c4.md) | [ADRs](docs/adr/README.md) | [Implementation boundary](docs/implementation-boundary.md)
 
@@ -110,7 +110,7 @@ Operational views:
 | CR and recon comparison | The live Recon Operations queue contrasts a published 4.7 CR with no confirmed repair findings and `$0` recon against a preliminary 4.1 CR with confirmed rear damage and a `$1,200–$2,500` repair range. The range comes from confirmed damage, not a score-to-dollar lookup. |
 | Vehicle reference | NHTSA vPIC decodes a complete VIN into reference metadata. It is not a vehicle-history report, proprietary condition score, or replacement for evidence review. |
 | Operations | Platform Health exposes queue state, outbox delivery, EventBridge/DLQ status, projector health, model usage, and recovery controls. |
-| Verification | [InspectIQ CI at `6deeb1b`](https://github.com/manynames3/inspectiq/actions/runs/38359124729) passed all eight jobs, including Postgres integration, browser E2E, and responsive visual/accessibility regression. [Android CI at `2b49dee`](https://github.com/manynames3/inspectiq/actions/runs/38339742078) passed the native evaluation journey and internal arm64 APK build used in the tour. These prove the tested branch workflow, not a `main` merge, successful backend promotion, or physical-device camera quality. |
+| Verification | [InspectIQ CI at `9d10913`](https://github.com/manynames3/inspectiq/actions/runs/38370051612) passed all eight jobs, including real Postgres upgrade/concurrency tests, browser E2E, and responsive visual/accessibility regression. [Web deployment at that revision](https://github.com/manynames3/inspectiq/actions/runs/38370130534) and the read-only production smoke passed. The [internal arm64 APK build](https://github.com/manynames3/inspectiq/actions/runs/38370051703/job/115204499423) passed; the tour's actual native capture is from the separately documented older `2b49dee` APK. These prove the tested workflow, not a `main` merge, completed AWS promotion, authenticated production reinspection, or physical-device camera quality. |
 
 The marketplace run is one traceable workflow proof, not an accuracy benchmark. The source image is not committed to this repository.
 Review decisions and damage entries created in the Evaluation Workspace stay in browser session storage and never mutate the production inspection record.
