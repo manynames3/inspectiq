@@ -1,0 +1,455 @@
+{
+  "kind": "cost-preflight-only",
+  "ok": false,
+  "inferencePerformed": false,
+  "modelId": "us.anthropic.claude-sonnet-4-6",
+  "promptVersion": "photo-analysis-v5-recall-review",
+  "caseCount": 108,
+  "inputTokens": 246200,
+  "inputUsdPerMillion": 3.3,
+  "outputUsdPerMillion": 16.5,
+  "inputCostUsd": 0.81246,
+  "maximumOutputCostUsd": 2.4948,
+  "singleAttemptMaximumInferenceCostUsd": 3.3072600000000003,
+  "authorizedBudgetUsd": 1,
+  "singleAttemptUpperBoundWithinBudget": false,
+  "pricingSource": "https://www-cdn.anthropic.com/files/4zrzovbb/website/3684c2faafb97418665782cea0001f439f74b1d2.pdf",
+  "cases": [
+    {
+      "id": "clean_front__baseline",
+      "inputTokens": 2398
+    },
+    {
+      "id": "clean_front__jpeg-65",
+      "inputTokens": 2400
+    },
+    {
+      "id": "clean_front__resize-960",
+      "inputTokens": 1891
+    },
+    {
+      "id": "clean_front__mild-dark",
+      "inputTokens": 2400
+    },
+    {
+      "id": "clean_front__mild-bright",
+      "inputTokens": 2400
+    },
+    {
+      "id": "clean_front__rotate-3",
+      "inputTokens": 2477
+    },
+    {
+      "id": "clean_front__retake-blur-heavy",
+      "inputTokens": 2403
+    },
+    {
+      "id": "clean_front__retake-low-light",
+      "inputTokens": 2403
+    },
+    {
+      "id": "clean_front__retake-occluded",
+      "inputTokens": 2403
+    },
+    {
+      "id": "rear_bumper_dent__baseline",
+      "inputTokens": 2556
+    },
+    {
+      "id": "rear_bumper_dent__jpeg-65",
+      "inputTokens": 2558
+    },
+    {
+      "id": "rear_bumper_dent__resize-960",
+      "inputTokens": 1795
+    },
+    {
+      "id": "rear_bumper_dent__mild-dark",
+      "inputTokens": 2558
+    },
+    {
+      "id": "rear_bumper_dent__mild-bright",
+      "inputTokens": 2558
+    },
+    {
+      "id": "rear_bumper_dent__rotate-3",
+      "inputTokens": 2541
+    },
+    {
+      "id": "rear_bumper_dent__retake-blur-heavy",
+      "inputTokens": 2561
+    },
+    {
+      "id": "rear_bumper_dent__retake-low-light",
+      "inputTokens": 2561
+    },
+    {
+      "id": "rear_bumper_dent__retake-occluded",
+      "inputTokens": 2561
+    },
+    {
+      "id": "passenger_door_collision_dent__baseline",
+      "inputTokens": 2550
+    },
+    {
+      "id": "passenger_door_collision_dent__jpeg-65",
+      "inputTokens": 2552
+    },
+    {
+      "id": "passenger_door_collision_dent__resize-960",
+      "inputTokens": 1898
+    },
+    {
+      "id": "passenger_door_collision_dent__mild-dark",
+      "inputTokens": 2552
+    },
+    {
+      "id": "passenger_door_collision_dent__mild-bright",
+      "inputTokens": 2552
+    },
+    {
+      "id": "passenger_door_collision_dent__rotate-3",
+      "inputTokens": 2518
+    },
+    {
+      "id": "passenger_door_collision_dent__retake-blur-heavy",
+      "inputTokens": 2555
+    },
+    {
+      "id": "passenger_door_collision_dent__retake-low-light",
+      "inputTokens": 2555
+    },
+    {
+      "id": "passenger_door_collision_dent__retake-occluded",
+      "inputTokens": 2555
+    },
+    {
+      "id": "clean_passenger_side__baseline",
+      "inputTokens": 2402
+    },
+    {
+      "id": "clean_passenger_side__jpeg-65",
+      "inputTokens": 2404
+    },
+    {
+      "id": "clean_passenger_side__resize-960",
+      "inputTokens": 1895
+    },
+    {
+      "id": "clean_passenger_side__mild-dark",
+      "inputTokens": 2404
+    },
+    {
+      "id": "clean_passenger_side__mild-bright",
+      "inputTokens": 2404
+    },
+    {
+      "id": "clean_passenger_side__rotate-3",
+      "inputTokens": 2481
+    },
+    {
+      "id": "clean_passenger_side__retake-blur-heavy",
+      "inputTokens": 2407
+    },
+    {
+      "id": "clean_passenger_side__retake-low-light",
+      "inputTokens": 2407
+    },
+    {
+      "id": "clean_passenger_side__retake-occluded",
+      "inputTokens": 2407
+    },
+    {
+      "id": "interior_overview__baseline",
+      "inputTokens": 2398
+    },
+    {
+      "id": "interior_overview__jpeg-65",
+      "inputTokens": 2400
+    },
+    {
+      "id": "interior_overview__resize-960",
+      "inputTokens": 1891
+    },
+    {
+      "id": "interior_overview__mild-dark",
+      "inputTokens": 2400
+    },
+    {
+      "id": "interior_overview__mild-bright",
+      "inputTokens": 2400
+    },
+    {
+      "id": "interior_overview__rotate-3",
+      "inputTokens": 2477
+    },
+    {
+      "id": "interior_overview__retake-blur-heavy",
+      "inputTokens": 2403
+    },
+    {
+      "id": "interior_overview__retake-low-light",
+      "inputTokens": 2403
+    },
+    {
+      "id": "interior_overview__retake-occluded",
+      "inputTokens": 2403
+    },
+    {
+      "id": "interior_wear_positive__baseline",
+      "inputTokens": 2547
+    },
+    {
+      "id": "interior_wear_positive__jpeg-65",
+      "inputTokens": 2549
+    },
+    {
+      "id": "interior_wear_positive__resize-960",
+      "inputTokens": 1786
+    },
+    {
+      "id": "interior_wear_positive__mild-dark",
+      "inputTokens": 2549
+    },
+    {
+      "id": "interior_wear_positive__mild-bright",
+      "inputTokens": 2549
+    },
+    {
+      "id": "interior_wear_positive__rotate-3",
+      "inputTokens": 2532
+    },
+    {
+      "id": "interior_wear_positive__retake-blur-heavy",
+      "inputTokens": 2552
+    },
+    {
+      "id": "interior_wear_positive__retake-low-light",
+      "inputTokens": 2552
+    },
+    {
+      "id": "interior_wear_positive__retake-occluded",
+      "inputTokens": 2552
+    },
+    {
+      "id": "clean_engine_bay__baseline",
+      "inputTokens": 2402
+    },
+    {
+      "id": "clean_engine_bay__jpeg-65",
+      "inputTokens": 2404
+    },
+    {
+      "id": "clean_engine_bay__resize-960",
+      "inputTokens": 1895
+    },
+    {
+      "id": "clean_engine_bay__mild-dark",
+      "inputTokens": 2404
+    },
+    {
+      "id": "clean_engine_bay__mild-bright",
+      "inputTokens": 2404
+    },
+    {
+      "id": "clean_engine_bay__rotate-3",
+      "inputTokens": 2481
+    },
+    {
+      "id": "clean_engine_bay__retake-blur-heavy",
+      "inputTokens": 2407
+    },
+    {
+      "id": "clean_engine_bay__retake-low-light",
+      "inputTokens": 2407
+    },
+    {
+      "id": "clean_engine_bay__retake-occluded",
+      "inputTokens": 2407
+    },
+    {
+      "id": "readable_odometer__baseline",
+      "inputTokens": 1711
+    },
+    {
+      "id": "readable_odometer__jpeg-65",
+      "inputTokens": 1713
+    },
+    {
+      "id": "readable_odometer__resize-960",
+      "inputTokens": 1713
+    },
+    {
+      "id": "readable_odometer__mild-dark",
+      "inputTokens": 1713
+    },
+    {
+      "id": "readable_odometer__mild-bright",
+      "inputTokens": 1713
+    },
+    {
+      "id": "readable_odometer__rotate-3",
+      "inputTokens": 1803
+    },
+    {
+      "id": "readable_odometer__retake-blur-heavy",
+      "inputTokens": 1716
+    },
+    {
+      "id": "readable_odometer__retake-low-light",
+      "inputTokens": 1716
+    },
+    {
+      "id": "readable_odometer__retake-occluded",
+      "inputTokens": 1716
+    },
+    {
+      "id": "readable_vin__baseline",
+      "inputTokens": 1720
+    },
+    {
+      "id": "readable_vin__jpeg-65",
+      "inputTokens": 1722
+    },
+    {
+      "id": "readable_vin__resize-960",
+      "inputTokens": 1722
+    },
+    {
+      "id": "readable_vin__mild-dark",
+      "inputTokens": 1722
+    },
+    {
+      "id": "readable_vin__mild-bright",
+      "inputTokens": 1722
+    },
+    {
+      "id": "readable_vin__rotate-3",
+      "inputTokens": 1812
+    },
+    {
+      "id": "readable_vin__retake-blur-heavy",
+      "inputTokens": 1725
+    },
+    {
+      "id": "readable_vin__retake-low-light",
+      "inputTokens": 1725
+    },
+    {
+      "id": "readable_vin__retake-occluded",
+      "inputTokens": 1725
+    },
+    {
+      "id": "motion_blur_front__baseline",
+      "inputTokens": 2400
+    },
+    {
+      "id": "motion_blur_front__jpeg-65",
+      "inputTokens": 2402
+    },
+    {
+      "id": "motion_blur_front__resize-960",
+      "inputTokens": 1893
+    },
+    {
+      "id": "motion_blur_front__mild-dark",
+      "inputTokens": 2402
+    },
+    {
+      "id": "motion_blur_front__mild-bright",
+      "inputTokens": 2402
+    },
+    {
+      "id": "motion_blur_front__rotate-3",
+      "inputTokens": 2479
+    },
+    {
+      "id": "motion_blur_front__retake-blur-heavy",
+      "inputTokens": 2405
+    },
+    {
+      "id": "motion_blur_front__retake-low-light",
+      "inputTokens": 2405
+    },
+    {
+      "id": "motion_blur_front__retake-occluded",
+      "inputTokens": 2405
+    },
+    {
+      "id": "partial_vin__baseline",
+      "inputTokens": 2404
+    },
+    {
+      "id": "partial_vin__jpeg-65",
+      "inputTokens": 2406
+    },
+    {
+      "id": "partial_vin__resize-960",
+      "inputTokens": 1897
+    },
+    {
+      "id": "partial_vin__mild-dark",
+      "inputTokens": 2406
+    },
+    {
+      "id": "partial_vin__mild-bright",
+      "inputTokens": 2406
+    },
+    {
+      "id": "partial_vin__rotate-3",
+      "inputTokens": 2483
+    },
+    {
+      "id": "partial_vin__retake-blur-heavy",
+      "inputTokens": 2409
+    },
+    {
+      "id": "partial_vin__retake-low-light",
+      "inputTokens": 2409
+    },
+    {
+      "id": "partial_vin__retake-occluded",
+      "inputTokens": 2409
+    },
+    {
+      "id": "dirty_odometer__baseline",
+      "inputTokens": 2400
+    },
+    {
+      "id": "dirty_odometer__jpeg-65",
+      "inputTokens": 2402
+    },
+    {
+      "id": "dirty_odometer__resize-960",
+      "inputTokens": 1893
+    },
+    {
+      "id": "dirty_odometer__mild-dark",
+      "inputTokens": 2402
+    },
+    {
+      "id": "dirty_odometer__mild-bright",
+      "inputTokens": 2402
+    },
+    {
+      "id": "dirty_odometer__rotate-3",
+      "inputTokens": 2479
+    },
+    {
+      "id": "dirty_odometer__retake-blur-heavy",
+      "inputTokens": 2405
+    },
+    {
+      "id": "dirty_odometer__retake-low-light",
+      "inputTokens": 2405
+    },
+    {
+      "id": "dirty_odometer__retake-occluded",
+      "inputTokens": 2405
+    }
+  ],
+  "generatedAt": "2026-10-13T17:03:16.687Z",
+  "evalSet": "inspectiq-rights-cleared-vision-challenge-v2",
+  "inferenceSpendUsd": 0,
+  "tokenCountingModelId": "anthropic.claude-sonnet-4-6"
+}

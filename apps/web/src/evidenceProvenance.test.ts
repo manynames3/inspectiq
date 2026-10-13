@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider } from "./evidenceProvenance.js";
+import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider, operatorEvidenceExplanation } from "./evidenceProvenance.js";
 import type { PhotoAnalysisResult, VehiclePhoto } from "./types.js";
 
 function photo(captureSource: VehiclePhoto["captureSource"]): VehiclePhoto {
@@ -54,7 +54,7 @@ describe("evidence provenance", () => {
     const result = analysis("referenceManifestProvider");
     expect(isReferenceProvider(result.provider)).toBe(true);
     expect(isReferenceEvidence(photo("reference"), result)).toBe(true);
-    expect(analysisProviderLabel(result)).toBe("Reference manifest");
+    expect(analysisProviderLabel(result)).toBeNull();
   });
 
   it("lets a later Bedrock result supersede reference-source presentation", () => {
@@ -65,5 +65,14 @@ describe("evidence provenance", () => {
 
   it("labels the deterministic provider without claiming a production model", () => {
     expect(analysisProviderLabel(analysis("localVisionProvider"))).toBe("Local evaluator");
+  });
+
+  it("converts implementation provenance into operator-facing evidence language", () => {
+    expect(operatorEvidenceExplanation("Reference manifest maps this image to the driver_side checklist slot. Reviewer confirmation required."))
+      .toBe("Photo is assigned to the driver side required view. Reviewer confirmation required.");
+    expect(operatorEvidenceExplanation("Mapped from documented source metadata; no model quality score is claimed."))
+      .toBe("Photo is assigned to the required checklist view.");
+    expect(operatorEvidenceExplanation("Imported evidence is assigned to the passenger side required view."))
+      .toBe("Photo is assigned to the passenger side required view.");
   });
 });

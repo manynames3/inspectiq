@@ -12,6 +12,12 @@ esac
 
 export NODE_ENV="${NODE_ENV:-production}"
 
+java_version="$(java -version 2>&1 | awk -F '[\".]' '/version/ { print $2; exit }')"
+if [[ "$java_version" != "17" ]]; then
+  printf 'Java 17 is required for the Android release build. Set JAVA_HOME to a JDK 17 installation.\n' >&2
+  exit 2
+fi
+
 npm run build -w @inspectiq/shared
 npx expo prebuild --platform android --clean
 

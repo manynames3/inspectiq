@@ -18,6 +18,7 @@ import { ReportsScreen } from "../screens/ReportsScreen";
 import { ReviewScreen } from "../screens/ReviewScreen";
 import { UploadsScreen } from "../screens/UploadsScreen";
 import { colors } from "../theme";
+import { BrandWordmark } from "../components/BrandWordmark";
 import { tabBarLayout } from "./layout";
 import type { MainTabParamList, RootStackParamList } from "./types";
 
@@ -89,7 +90,7 @@ export function AppNavigator() {
           </Pressable>
         )
       }}>
-        <Stack.Screen name="Main" component={MainTabs} options={{ title: "InspectIQ" }} />
+        <Stack.Screen name="Main" component={MainTabs} options={{ title: "InspectIQ", headerTitle: () => <BrandWordmark /> }} />
         <Stack.Screen name="InspectionDetail" component={InspectionDetailScreen} options={{ title: "Inspection" }} />
         <Stack.Screen name="Capture" component={CaptureScreen} options={{ title: "Required photos", headerShown: false, presentation: "fullScreenModal" }} />
         <Stack.Screen name="NewInspection" component={NewInspectionScreen} options={{ title: "New inspection" }} />
@@ -101,9 +102,9 @@ export function AppNavigator() {
 
 const styles = StyleSheet.create({
   tabBar: { paddingTop: 5, borderTopColor: colors.line },
-  tabLabel: { fontSize: 10, fontWeight: "700" },
-  signOut: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 38 },
+  tabLabel: { fontSize: 12, fontWeight: "600" },
+  signOut: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 48 },
   roleCopy: { alignItems: "flex-end" },
   role: { color: colors.ink, fontSize: 11, fontWeight: "800", textTransform: "capitalize" },
-  mode: { color: colors.muted, fontSize: 9 }
+  mode: { color: colors.muted, fontSize: 11 }
 });

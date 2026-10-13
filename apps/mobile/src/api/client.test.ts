@@ -27,6 +27,21 @@ describe("mobileApi", () => {
     expect(String(fetchSpy.mock.calls[0][0])).toContain("/api/evaluation/inspections");
   });
 
+  it("forwards idempotency keys for retry-safe mutations", async () => {
+    const fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { ok: true } })
+    } as Response);
+    await mobileApi("/api/inspections/1/grade", { ...evaluation, mode: "oidc", idToken: "token" }, {
+      method: "POST",
+      idempotencyKey: "mobile-grade:inspection-1",
+      body: "{}"
+    });
+    const requestInit = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect(new Headers(requestInit.headers).get("idempotency-key")).toBe("mobile-grade:inspection-1");
+  });
+
   it("preserves API error codes for version-conflict recovery", async () => {
     jest.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: false,

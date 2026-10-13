@@ -9,17 +9,42 @@ Local checks:
 5. `npm run build`
 6. `npm run dev`
 
-Bedrock model gate:
+Free Bedrock cost preflight (counts the exact corpus inputs; never runs inference):
+
+```bash
+VISION_EVAL_PREFLIGHT_ONLY=true BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-6 npm run eval:vision
+```
+
+This is not accuracy evidence or a passing promotion gate. Prices are verified only for US Sonnet 4.6. If saving output, use an absolute `VISION_EVAL_OUTPUT` path: npm runs the script in `apps/api`, not the repository root. Missing/unsupported token counts fail closed.
+
+Bedrock model gate, **only after spending authorization and a safe enforceable budget**:
 
 ```bash
 AWS_REGION=us-east-1 VISION_PROVIDER=bedrock BEDROCK_VISION_FALLBACK=fail npm run eval:vision
 ```
+
+Current authorization is $1 total, not $1 per retry/run. The paid runner has no persistent retry-safe cap and must not be launched under that limit. The free preflight found a $3.30726 single-attempt upper bound for the unchanged 108-case gate; retries could add charges. AWS promotion is on hold. See [release status](release-status.md). Never use cost-only output, deterministic output, fallback, or a partial corpus as real-model promotion evidence.
 
 Deployed operations walkthrough:
 
 ```bash
 npm run ops:walkthrough
 ```
+
+Audited reinspection:
+
+1. Open the finalized inspection as an authorized Inspector, Reviewer, or Admin. Evaluation access is read-only; native reinspection requires an online authenticated session.
+2. Record a 10–1,000 character reason and create a separate inspection. `POST /api/inspections/:id/reinspections` requires `operationId` (UUID) and the exact `expectedReportVersion`.
+3. If the response is lost, retry the identical payload. A changed reason/version with the same operation ID conflicts; a definite stale-version response requires refreshing authoritative history.
+4. Verify the new draft's source inspection/report/version and audit reason. No evidence, grades, approvals, spending authority, or work orders carry forward. Capture fresh evidence and follow normal review/QC/finalization.
+5. Keep the original publication available as historical evidence with its current-policy limitation, including exports. Never modify the old report body or synthesize fingerprints to make it appear current.
+
+AWS code promotion:
+
+1. Run `make verify-full` with a disposable real `TEST_DATABASE_URL`; verify the legacy upgrade and concurrent startup tests. Run the no-fallback Bedrock gate with explicitly approved AWS test spending before promoting model/prompt changes.
+2. Verify a recoverable database snapshot and record before/after digests of published inspection/report/grade/version rows. Migration `0008_audited_reinspections.sql` is additive; startup serializes schema/ledger writes across API and worker cold starts.
+3. Dispatch `deploy-aws.yml` with `action=plan` at the exact release ref and review its artifact. An `apply` dispatch creates a fresh plan: the workflow validates that saved plan immediately before apply, allowing only code/computed-attribute updates to the three existing InspectIQ Lambdas. It rejects infrastructure/configuration changes and all creates/deletes/replacements. Those require separate review, not weakening the guard.
+4. After apply, verify ledger `0008`, unchanged historical digests, authenticated reinspection/history behavior, and repeated public/API/browser smoke. One warmed health request is not sufficient evidence of recovered concurrency.
 
 Postgres persistence smoke:
 

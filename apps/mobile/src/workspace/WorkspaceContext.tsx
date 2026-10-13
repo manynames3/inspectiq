@@ -15,6 +15,7 @@ type WorkspaceContextValue = {
   bundles: InspectionBundle[];
   loading: boolean;
   online: boolean;
+  syncing: boolean;
   error: string | null;
   pendingUploads: UploadOperation[];
   lastSync: SyncSummary | null;
@@ -31,6 +32,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [bundles, setBundles] = useState<InspectionBundle[]>([]);
   const [loading, setLoading] = useState(true);
   const [online, setOnline] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<UploadOperation[]>([]);
   const [lastSync, setLastSync] = useState<SyncSummary | null>(null);
@@ -66,7 +68,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setError(null);
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : "Could not refresh the mobile workspace.");
-      await loadLocal();
+      try {
+        await loadLocal();
+      } catch {
+        // Keep the network error visible even if local SQLite is unavailable.
+      }
     } finally {
       setLoading(false);
     }
@@ -75,11 +81,24 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const syncNow = useCallback(async (): Promise<SyncSummary | null> => {
     const current = await getFreshSession();
     if (!current || !canMutate) return null;
-    const summary = await syncUploadQueue(current);
-    setLastSync(summary);
-    await refresh();
-    return summary;
-  }, [getFreshSession, canMutate, refresh]);
+    setSyncing(true);
+    try {
+      const summary = await syncUploadQueue(current);
+      setLastSync(summary);
+      await refresh();
+      return summary;
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : "Could not synchronize local captures.");
+      try {
+        await loadLocal();
+      } catch {
+        // Keep the sync error visible even if local SQLite is unavailable.
+      }
+      return null;
+    } finally {
+      setSyncing(false);
+    }
+  }, [getFreshSession, canMutate, refresh, loadLocal]);
 
   useEffect(() => {
     if (!session) return;
@@ -90,12 +109,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (connected && canMutate) void syncNow();
     });
     return unsubscribe;
-  }, [session?.actor.id]);
+  }, [session?.actor.id, canMutate, refresh, syncNow]);
 
   const value = useMemo<WorkspaceContextValue>(() => ({
     bundles,
     loading,
     online,
+    syncing,
     error,
     pendingUploads,
     lastSync,
@@ -103,7 +123,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     syncNow,
     request,
     bundleById: (inspectionId) => bundles.find((bundle) => bundle.inspection.id === inspectionId) ?? null
-  }), [bundles, loading, online, error, pendingUploads, lastSync, refresh, syncNow, request]);
+  }), [bundles, loading, online, syncing, error, pendingUploads, lastSync, refresh, syncNow, request]);
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }

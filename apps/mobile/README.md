@@ -30,6 +30,12 @@ Inspector assignments and upload operations are cached in SQLite. Captured files
 
 Before upload, capture applies a required-angle overlay, minimum-resolution check, local brightness/sharpness guidance, normalization/compression, and EXIF removal. A local warning guides the operator but does not claim model-grade image quality.
 
+## Published History and Reinspection
+
+Finalized records stay read-only, including the capture screen. An online, authenticated Inspector, Reviewer, or Admin can start a separate audited reinspection when the API advertises the capability. A reason and exact source-report version link the fresh draft to the original; evidence, findings, grades, approvals, and recon spending authority are not copied.
+
+Lost creation responses retry the same operation ID. If creation succeeds but assignment refresh disconnects, refresh the existing child instead of creating another. Historical releases and older caches with unknown current-QC status show explicit limitations. Evaluation access cannot create replacements. See [ADR 0014](../../docs/adr/0014-audited-reinspection-with-immutable-history.md) and [release status](../../docs/release-status.md) for the implementation/deployment boundary.
+
 ## Verify
 
 ```bash
@@ -44,6 +50,7 @@ Install Java 17 and the Android command-line SDK/NDK, then build one architectur
 
 ```bash
 cd apps/mobile
+export JAVA_HOME=/path/to/jdk-17
 ANDROID_ABI=arm64-v8a npm run build:android:apk
 ```
 

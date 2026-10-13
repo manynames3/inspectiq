@@ -5,6 +5,12 @@ jest.mock("lucide-react-native", () => {
   return {
     AlertTriangle: Icon,
     ChevronRight: Icon,
+    ChevronLeft: Icon,
+    ImageOff: Icon,
+    Minus: Icon,
+    Plus: Icon,
+    Scan: Icon,
+    X: Icon,
     Inbox: Icon,
     RefreshCw: Icon,
     WifiOff: Icon

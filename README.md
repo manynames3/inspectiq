@@ -1,20 +1,21 @@
 # InspectIQ
 
+[![CI](https://github.com/manynames3/inspectiq/actions/workflows/ci.yml/badge.svg?branch=agent%2Finspection-recon-operations&event=pull_request)](https://github.com/manynames3/inspectiq/actions/workflows/ci.yml?query=branch%3Aagent%2Finspection-recon-operations)
+
+Evidence-first vehicle inspection, condition-report quality control, and authorized reconditioning. Built by [Supreme AI Ventures](https://supremeaiventures.dev/).
+
 > [!IMPORTANT]
-> **Looking for the current product?** Start with the [active inspection/recon branch and product tour](https://github.com/manynames3/inspectiq/tree/agent/inspection-recon-operations#readme).
-> `main` is the historical baseline. The evidence workbench, revised report/mobile experience, condition-report QC, and recon workflow are **unmerged work on `agent/inspection-recon-operations`**, not features already merged here.
+> This is the **active, unmerged `agent/inspection-recon-operations` branch**. `main` remains the historical baseline; the workbench, report/mobile redesign, QC, and recon features described here are not merged into it. See [PR #1](https://github.com/manynames3/inspectiq/pull/1) and the [branch comparison](https://github.com/manynames3/inspectiq/compare/main...agent/inspection-recon-operations).
 >
-> [Current screenshots and walkthrough](https://github.com/manynames3/inspectiq/tree/agent/inspection-recon-operations#product-tour) · [C4 views](https://github.com/manynames3/inspectiq/blob/agent/inspection-recon-operations/docs/c4.md) · [Architecture decisions](https://github.com/manynames3/inspectiq/tree/agent/inspection-recon-operations/docs/adr) · [Compare branches](https://github.com/manynames3/inspectiq/compare/main...agent/inspection-recon-operations)
+> The live web app was deployed from this branch. Deployment, branch implementation, and production readiness are different claims: the latest frontend does not prove every backend revision is deployed, and neither establishes commercial model accuracy.
 >
-> The [live evaluation workspace](https://inspectiq.pages.dev/?review=1) is deployed from the active branch. A live deployment does not mean that branch has been merged into `main`. The documentation below describes the baseline checkout.
+> The web app is deployed at `9d10913`; the AWS API remains at `f0c8697`. Audited fresh-evidence reinspection and startup/history safeguards are implemented and tested on this branch. AWS promotion is held for the no-fallback Bedrock prompt gate: the authorized ceiling is $1 total, and the free cost preflight has not established that the full run fits. No paid inference ran. Older API responses show current-QC status as unverified and do not expose unsupported reinspection actions. Android emulator CI now passes. See the [release status and safety gate](docs/release-status.md).
 
-[![CI](https://github.com/manynames3/inspectiq/actions/workflows/ci.yml/badge.svg)](https://github.com/manynames3/inspectiq/actions/workflows/ci.yml)
+[No-login product tour](https://inspectiq.pages.dev/?review=1) | [Native mobile](apps/mobile/README.md) | [C4 architecture](docs/c4.md) | [ADRs](docs/adr/README.md) | [Implementation boundary](docs/implementation-boundary.md)
 
-Vehicle inspection and imaging workflow for wholesale and offsite operations.
+InspectIQ helps inspection and auction-facility teams catch missing evidence, questionable identity readings, unresolved damage findings, and report/release blockers before a vehicle is presented to a buyer. The workflow continues into consignor-controlled recon, authorized work, shop QC, and sale release. AI suggests; a human decides what becomes a vehicle fact.
 
-[Live app](https://inspectiq.pages.dev) | [No-login review](https://inspectiq.pages.dev/?review=1) | [Architecture](docs/architecture.md) | [Production boundary](docs/implementation-boundary.md)
-
-InspectIQ helps inspection teams collect complete photo evidence, review AI-assisted findings, and release an auditable condition report. AI suggests; a human decides what becomes a vehicle fact.
+Start with the [product tour](#product-tour) for the visible workflow, [C4 views](docs/c4.md) for system boundaries, and the [ADR index](docs/adr/README.md) for the engineering tradeoffs.
 
 ## The Problem
 
@@ -24,9 +25,11 @@ Wholesale condition reports break down when evidence is incomplete or inconsiste
 - VIN and odometer evidence cannot be verified;
 - reviewers spend time finding the right photo for each issue;
 - damage descriptions and recon estimates vary by reviewer;
+- recon recommendations are mistaken for permission to spend consignor money;
+- revised estimates and failed quality control are difficult to track against a sale deadline;
 - buyers cannot trace a disclosure back to its evidence and approval history.
 
-InspectIQ keeps capture, analysis, review, grading, reporting, and audit history in one workflow.
+InspectIQ keeps condition facts, spending decisions, authorized work, quality control, release blockers, and audit history in one workflow.
 
 ## Users
 
@@ -34,37 +37,87 @@ InspectIQ keeps capture, analysis, review, grading, reporting, and audit history
 | --- | --- |
 | Inspector | Capture required evidence, resolve retakes, and submit photos for analysis. |
 | Reviewer | Confirm, edit, or reject findings; grade the vehicle; approve the report. |
-| Admin | Manage exceptions, monitor the platform, and recover failed work. |
+| Recon Coordinator | Prepare estimates, submit authorization requests, and coordinate authorized work and QC. |
+| Consignor Approver | Approve, decline, or request revision for represented consignor accounts. |
+| Technician | Update assigned, authorized facility work orders. |
+| Admin | Manage policies, exceptions, platform health, and recovery. |
 
 ## Workflow
 
 1. Create or receive an assigned inspection.
-2. Capture the required vehicle angles on web or mobile.
+2. Capture the required vehicle angles on web or mobile and cross-check a complete VIN through NHTSA vPIC when needed.
 3. Upload privately to S3 and queue analysis through SQS.
 4. Validate Bedrock output against a strict schema.
-5. Require a Reviewer decision before a finding becomes confirmed damage or identity evidence.
-6. Grade the inspection, approve the report version, and release it when all blockers are resolved.
-7. Preserve uploads, model runs, decisions, corrections, and finalization in the audit trail.
+5. Record direct Inspector observations with source attribution; require a Reviewer decision before an AI candidate becomes confirmed damage or identity evidence.
+6. Approve the 0.0–5.0 InspectIQ Reference Grade and publish an immutable report version.
+7. Create recon recommendations and illustrative estimates without treating them as authorization.
+8. Apply a snapshotted Consignor Authorization Policy or route the item to a Consignor Approver.
+9. Generate work orders only for authorized items, block overruns for reauthorization, and record QC.
+10. Release the vehicle only when the backend sale-readiness assessment has no blockers.
 
-## Product Views
+Published history is never reopened or silently reapproved. An authorized user can start a separately audited reinspection linked to the exact original report version. Only intake metadata carries forward; photos, findings, grades, report approvals, recon authorization, and work must be collected or decided anew. Historical reports and exports explicitly disclose their current-policy limitation. See [ADR 0014](docs/adr/0014-audited-reinspection-with-immutable-history.md).
 
-| Inspection queue | Inspection workbench |
-| --- | --- |
-| ![InspectIQ inspection queue](docs/images/regression/dashboard.png) | ![InspectIQ inspection workbench](docs/images/regression/inspection-workbench.png) |
+## Product Tour
+
+The desktop workbench uses Supreme AI Ventures' ink-and-mint identity; native field screens stay light and readable. Shared brand tokens align the clients without forcing a desktop layout onto a camera workflow.
+
+### 1. Find the next decision
+
+The role-aware work queue separates incomplete evidence, human review, and buyer-visible release. Search by vehicle/VIN or filter to work that needs action; each record exposes its next step instead of an ambiguous "all good" score.
+
+![Role-aware InspectIQ work queue with explicit next actions](docs/images/tour/work-queue.png)
+
+### 2. Review the evidence, not an AI percentage
+
+A large photo, filmstrip, and photo-linked decisions keep evidence and reviewer action together. Open a photo to enlarge it, move left/right, zoom to 4×, or pan. Missing, unavailable, low-certainty, and retake-required evidence remains visible; no confirmed findings is not a damage-free certification.
+
+<details>
+<summary>Open the full evidence-workbench screenshot</summary>
+
+![Evidence-first workbench showing reference demo evidence, reviewer decisions, and report limitations](docs/images/tour/evidence-workbench.png)
+
+</details>
+
+### 3. Separate a draft from an approved release
+
+The paper-style report shows its version, VIN/odometer verification, limitations, reviewer approval, and release record. Unsaved language is labeled as unreviewed and cannot be approved/finalized. A polished preview is not the export format: the current buyer download is text, not a PDF/photo package.
+
+![Report queue separating draft, approval, release, version, and buyer visibility](docs/images/tour/reports.png)
+
+### 4. Capture in the field, synchronize deliberately
+
+The **native Expo/React Native app** provides assigned inspections, required-angle camera guidance, local quality checks, sandboxed photos, SQLite upload operations, retry visibility, and a light field UI. Uploaded and queued photos are distinct. Review/report mutations require connectivity; only capture and cached assignment access work offline. Native evidence viewing supports enlargement, previous/next, swipe navigation, zoom, and pan.
+
+<img src="docs/images/tour/android-workspace.png" alt="Native Android InspectIQ workspace captured from the verified arm64 APK in an emulator" width="320" />
+
+The Android image is a genuine APK capture, not responsive web. The [mobile guide](apps/mobile/README.md) covers Cognito PKCE, offline sync, and internal APK builds. No app-store release or physical-device camera validation is claimed.
+
+Screenshots show illustrative demo data, not customer inspections or damage-detection accuracy. [Capture provenance and image credits](docs/images/tour/README.md) distinguish the local deterministic web tour from the native public evaluation view. The native image demonstrates the workspace, not a tested camera/offline journey.
+
+Operational views:
+
+- **Recon Operations:** compare published or preliminary CR scores, confirmed repair exposure, authorization state, work progress, and sale blockers in one queue;
+- **Recon Decisions:** scope estimates and preserve the distinction between a recommendation, consignor authorization, and executable work; and
+- **Shop Board:** track authorized work, estimate overruns, reauthorization, and quality control.
 
 ## Live Proof
 
 | Proof | Evidence |
 | --- | --- |
-| Public walkthrough | The read-only [Evaluation Workspace](https://inspectiq.pages.dev/?review=1) requires no credentials. |
-| Authenticated workflow | Cognito roles separate Inspector, Reviewer, and Admin actions. See [role-separated proof](docs/role-separated-proof.md). |
+| Public walkthrough | The [Evaluation Workspace](https://inspectiq.pages.dev/?review=1) requires no credentials; Reviewer/Admin findings and manual damage entries are isolated to the browser session. |
+| Authenticated workflow | Cognito roles separate inspection, review, recon, consignor approval, technician, and administrative actions. See [role-separated proof](docs/role-separated-proof.md). |
 | Real image analysis | A Copart marketplace photo moved through private S3, SQS, Lambda, Bedrock, schema validation, and Reviewer acceptance before becoming a confirmed damage record. See [the recorded model trace](evals/marketplace-bedrock-proof.json). |
+| CR and recon comparison | The live Recon Operations queue contrasts a published 4.7 CR with no confirmed repair findings and `$0` recon against a preliminary 4.1 CR with confirmed rear damage and a `$1,200–$2,500` repair range. The range comes from confirmed damage, not a score-to-dollar lookup. |
+| Vehicle reference | NHTSA vPIC decodes a complete VIN into reference metadata. It is not a vehicle-history report, proprietary condition score, or replacement for evidence review. |
 | Operations | Platform Health exposes queue state, outbox delivery, EventBridge/DLQ status, projector health, model usage, and recovery controls. |
-| Verification | CI runs TypeScript, Python, Postgres integration, browser E2E, visual regression, mobile, and Terraform checks. |
+| Verification | [InspectIQ CI at `9d10913`](https://github.com/manynames3/inspectiq/actions/runs/38370051612) passed all eight jobs, including real Postgres upgrade/concurrency tests, browser E2E, and responsive visual/accessibility regression. [Web deployment at that revision](https://github.com/manynames3/inspectiq/actions/runs/38370130534) and the read-only production smoke passed. The [internal arm64 APK build](https://github.com/manynames3/inspectiq/actions/runs/38370051703/job/115204499423) passed; the tour's actual native capture is from the separately documented older `2b49dee` APK. These prove the tested workflow, not a `main` merge, completed AWS promotion, authenticated production reinspection, or physical-device camera quality. |
 
 The marketplace run is one traceable workflow proof, not an accuracy benchmark. The source image is not committed to this repository.
+Review decisions and damage entries created in the Evaluation Workspace stay in browser session storage and never mutate the production inspection record.
 
 ## Architecture
+
+The [C4 system-context and container views](docs/c4.md) separate users, application responsibilities, data ownership, and external services. The [ADR index](docs/adr/README.md) explains why those boundaries exist; the [runtime architecture](docs/architecture.md) carries the implementation detail.
 
 ![AWS Architecture](docs/architecture_aws.png)
 
@@ -76,6 +129,7 @@ React web / Expo mobile
 API Gateway -> Node.js Lambda -> Neon Postgres
         |              |
         |              +-> outbox -> EventBridge -> Python projector -> DynamoDB
+        |              +-> consignor policy -> authorized work -> QC -> sale readiness
         |
         +-> private S3 -> SQS -> image worker Lambda -> Bedrock
 ```
@@ -86,9 +140,12 @@ API Gateway -> Node.js Lambda -> Neon Postgres
 - **S3** stores private photo evidence; clients use presigned uploads and short-lived previews.
 - **SQS** isolates image upload from model latency and supports retry and DLQ recovery.
 - **Bedrock** returns advisory angle, quality, OCR, and damage findings.
+- **NHTSA vPIC** supplies VIN-decoded reference metadata; it does not supply AutoCheck data, ownership history, or a condition score.
 - **EventBridge** carries versioned domain events from the transactional outbox.
 - **DynamoDB** holds idempotency records, operational timelines, and model-usage reservations. It is not a second business database.
 - **CloudWatch and X-Ray** cover logs, metrics, traces, alarms, and the operations dashboard.
+
+Condition grade and operational urgency are separate: grade describes the vehicle; urgency prioritizes facility work. The CR score provides comparison context, while recon cost comes from confirmed findings and coordinator-scoped work rather than a score-to-dollar lookup. Recon recommendations, authorization decisions, and work orders remain separate because the facility recommends work while the consignor retains economic control. See the [inspection-to-recon workflow](docs/inspection-recon-workflow.md) and [authorization policy](docs/recon-authorization-policy.md).
 
 Why other AWS services were deferred is documented in [ADR 0009](docs/adr/0009-aws-orchestration-and-vision-services.md).
 
@@ -120,9 +177,9 @@ The Expo/React Native client provides:
 
 Only capture works offline. Review, grading, reporting, and administrative mutations require a connection.
 
-## Run Locally
+Native setup and APK instructions are in [the mobile README](apps/mobile/README.md). The offline boundary is recorded in [ADR 0011](docs/adr/0011-offline-capture-online-decisions.md); the shared brand and evidence-first interaction choices are in [ADR 0012](docs/adr/0012-shared-brand-evidence-first-surfaces.md).
 
-Requirements: Node.js 22+, npm, and Python 3.12 for the Python services.
+## Quick Start
 
 ```bash
 cp .env.example .env
@@ -131,43 +188,7 @@ npm run seed
 npm run dev
 ```
 
-Open `http://localhost:5173`.
-
-Local development defaults to in-memory or file persistence and deterministic providers. See [developer workflow](docs/developer-workflow.md) for Postgres, Cognito, AWS, and mobile setup.
-
-## Verify
-
-```bash
-make verify-fast             # TypeScript build, typecheck, and unit tests
-make verify-full             # Full local suite, E2E, visual checks, Python, Terraform
-make verify-production-proof # Live-review verification ladder
-```
-
-Useful targeted commands:
-
-```bash
-make verify-api
-make verify-web
-make verify-mobile
-make terraform-validate
-npm run eval:vision
-```
-
-GitHub Actions also provides manually approved AWS deployment, Cloudflare Pages deployment, live smoke, real-upload proof, Bedrock evaluation, and Android E2E workflows.
-
-## Repository Map
-
-```text
-apps/api/                    Lambda-ready Node.js API and image worker
-apps/web/                    React/TypeScript workbench
-apps/mobile/                 Expo/React Native client
-packages/shared/             Schemas, permissions, and shared contracts
-services/grading-python/     Deterministic Python grading boundary
-services/operations-projector/ EventBridge projection Lambda
-infra/terraform/             AWS infrastructure
-evals/                       Reproducible model-contract evaluation
-docs/                        Architecture, ADRs, proof, security, and runbooks
-```
+Requirements, environment setup, repository structure, and verification commands are in the [developer workflow](docs/developer-workflow.md).
 
 ## Current Limits
 
@@ -180,17 +201,27 @@ InspectIQ is a working reference implementation with a live AWS backend. It is n
 - The current buyer export is not yet a polished PDF and photo package.
 - Generic CSV and signed webhook integrations are not implemented.
 - Some Postgres flows still hydrate the in-memory domain store; high-concurrency use would require direct aggregate repositories.
+- Seeded repair costs, durations, grade lift, and authorization limits are illustrative rather than a commercial repair-pricing database.
+- The InspectIQ Reference Grade is not Manheim AutoGrade, MMR, or another proprietary score.
 - Commercial use requires rights-cleared field data, security review, customer integration work, and a controlled inspector pilot.
 
-External marketplace evidence is source-attributed and stored privately for workflow proof. Marketplace images are not redistributed in this repository and remain subject to their source terms.
+External marketplace evidence remains subject to its source terms and is not a licensed training corpus. The marketplace proof does not commit its source image. Workbench screenshots include existing dealer/reference imagery for contextual UI documentation; they do not grant rights to reuse it commercially or establish a rights-cleared field dataset. See the [capture provenance](docs/images/tour/README.md).
 
 ## Documentation
 
-- [Hiring manager brief](docs/hiring-manager-brief.md)
+- [Condition-report QC product contract and real-car validation protocol](docs/condition-qc-product.md)
 - [Implementation boundary](docs/implementation-boundary.md)
+- [Inspection-to-recon workflow](docs/inspection-recon-workflow.md)
+- [Recon authorization policy](docs/recon-authorization-policy.md)
+- [Recon API examples](docs/inspection-recon-api.md)
+- [Five-minute recon walkthrough](docs/inspection-recon-demo.md)
 - [Production readiness](docs/production-readiness.md)
+- [Release status and backend safety gate](docs/release-status.md)
 - [Engineering iterations](docs/engineering-iterations.md)
 - [Architecture and tradeoffs](docs/architecture.md)
+- [C4 system context and containers](docs/c4.md)
+- [Architecture decision records](docs/adr/README.md)
+- [Tour screenshots and provenance](docs/images/tour/README.md)
 - [State machine](docs/state-machine.md)
 - [Security](docs/security.md)
 - [Observability](docs/observability.md)

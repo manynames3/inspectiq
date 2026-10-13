@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { applyEvaluationState } from "../evaluationReview.js";
 import type { Actor, Inspection, InspectionBundle } from "../types.js";
 
 export type InspectionReviewRecord = {
@@ -54,9 +55,12 @@ export async function loadInspectionReviewRecords(actor: Actor): Promise<Inspect
   const inspections = await api<Inspection[]>("/api/inspections", {}, actor);
   return mapWithConcurrency(inspections, detailConcurrency, async (inspection) => {
     try {
+      const bundle = await api<InspectionBundle>(`/api/inspections/${inspection.id}`, {}, actor);
       return {
         inspection,
-        bundle: await api<InspectionBundle>(`/api/inspections/${inspection.id}`, {}, actor)
+        bundle: actor.id.startsWith("evaluation-") && typeof window !== "undefined"
+          ? applyEvaluationState(window.sessionStorage, bundle)
+          : bundle
       };
     } catch (error) {
       return {

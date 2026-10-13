@@ -80,7 +80,7 @@ The raw model response estimated `$4,500-$9,000`; that value remains in the audi
 - Invalid schema output is rejected and recorded as a failed analysis.
 - A visible but unreadable VIN label creates a retake requirement; external metadata can update the record only when independently matched and validated, never by guessing obscured characters.
 - Image quality is evaluated separately from damage confidence.
-- Material damage candidates below the configured threshold, default `MIN_DAMAGE_CONFIDENCE=0.80`, are discarded before reviewer suggestions are created.
+- Material damage candidates below the configured threshold, default `MIN_DAMAGE_CONFIDENCE=0.85`, are discarded before reviewer suggestions are created.
 - Retake-required photos create quality-warning suggestions and block buyer-visible release until resolved.
 - Every suggestion starts as pending.
 - Photo-angle and image-quality suggestions are assigned to Inspector QA; damage and OCR suggestions are assigned to Reviewer.

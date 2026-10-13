@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "runId": "REPLACE_WITH_REAL_RUN_ID",
+  "model": {
+    "provider": "bedrockVisionProvider",
+    "modelId": "REPLACE_WITH_ACTUAL_MODEL_ID",
+    "promptVersion": "photo-analysis-v5-recall-review",
+    "codeCommit": "",
+    "startedAt": "",
+    "completedAt": ""
+  },
+  "groundTruth": {
+    "labeler": "",
+    "adjudicator": "",
+    "blindToPredictions": true,
+    "lockedAt": "",
+    "protocolReference": ""
+  },
+  "tuningVehicleIds": [],
+  "tuningPhotoSha256": [],
+  "vehicles": []
+}

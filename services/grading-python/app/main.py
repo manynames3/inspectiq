@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
 from typing import Literal
 
 from fastapi import FastAPI
@@ -35,79 +34,68 @@ class GradeRequest(BaseModel):
 
 class Deduction(BaseModel):
     reason: str
-    points: int
+    amount: float = Field(ge=0, le=5)
 
 
 class GradeExplanation(BaseModel):
-    baseScore: int
+    baseGrade: float = Field(ge=0, le=5)
     deductions: list[Deduction]
-    completionPenalty: int
-    mileageAdjustment: int
-    ageAdjustment: int
 
 
 class GradeResponse(BaseModel):
-    score: int = Field(ge=0, le=100)
-    grade: Literal["A", "B", "C", "D", "F"]
+    suggestedGrade: float = Field(ge=0, le=5)
+    conditionGradeBeforeRecon: float = Field(ge=0, le=5)
+    evidenceBlockers: list[str]
     explanation: GradeExplanation
     gradingVersion: str
 
 
-app = FastAPI(title="InspectIQ Grading Service", version="0.1.0")
+app = FastAPI(title="InspectIQ Grading Service", version="0.2.0")
 
 
-def mileage_adjustment(mileage: int) -> int:
-    if mileage > 120_000:
-        return 10
-    if mileage > 90_000:
-        return 7
-    if mileage > 60_000:
-        return 4
-    if mileage > 30_000:
-        return 2
-    return 0
+def clamp_grade(value: float) -> float:
+    bounded_value = max(0.0, min(5.0, value))
+    return round(bounded_value, 1)
 
 
-def letter_grade(score: int) -> Literal["A", "B", "C", "D", "F"]:
-    if score >= 90:
-        return "A"
-    if score >= 80:
-        return "B"
-    if score >= 70:
-        return "C"
-    if score >= 60:
-        return "D"
-    return "F"
+def severity_deduction(severity: str) -> float:
+    if severity == "severe":
+        return 0.9
+    if severity == "moderate":
+        return 0.45
+    if severity == "minor":
+        return 0.15
+    return 0.3
 
 
 def grade_condition(request: GradeRequest) -> GradeResponse:
-    severity_points = {"severe": 18, "moderate": 9, "minor": 3, "unknown": 5}
-    deductions = [
-        Deduction(
-            reason=f"{item.severity} {item.damageType.replace('_', ' ')} on {item.location}",
-            points=severity_points[item.severity],
+    deductions: list[Deduction] = []
+    for item in request.damageItems:
+        deductions.append(
+            Deduction(
+                reason=f"{item.severity} {item.damageType.replace('_', ' ')} on {item.location}",
+                amount=severity_deduction(item.severity),
+            )
         )
-        for item in request.damageItems
-    ]
 
-    missing_ratio = max(0, 1 - request.requiredPhotoCompletion)
-    completion_penalty = round(missing_ratio * 24)
-    mileage = mileage_adjustment(request.vehicle.mileage)
-    age = max(0, min(8, (date.today().year - request.vehicle.year) // 3))
-    total = sum(item.points for item in deductions) + completion_penalty + mileage + age
-    score = max(0, min(100, 100 - total))
+    evidence_blockers: list[str] = []
+    if request.requiredPhotoCompletion < 1:
+        evidence_blockers.append("Required inspection photographs are incomplete")
 
+    total_deduction = 0.0
+    for deduction in deductions:
+        total_deduction += deduction.amount
+
+    suggested_grade = clamp_grade(5.0 - total_deduction)
     return GradeResponse(
-        score=score,
-        grade=letter_grade(score),
+        suggestedGrade=suggested_grade,
+        conditionGradeBeforeRecon=suggested_grade,
+        evidenceBlockers=evidence_blockers,
         explanation=GradeExplanation(
-            baseScore=100,
+            baseGrade=5.0,
             deductions=deductions,
-            completionPenalty=completion_penalty,
-            mileageAdjustment=mileage,
-            ageAdjustment=age,
         ),
-        gradingVersion="grading-rules-v1-python",
+        gradingVersion="inspectiq-reference-grade-v2-python",
     )
 
 

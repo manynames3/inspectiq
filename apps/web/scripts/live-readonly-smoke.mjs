@@ -10,6 +10,17 @@ function fail(message) {
   throw new Error(`[inspectiq-live-smoke] ${message}`);
 }
 
+function withoutUrlCredentials(message) {
+  return message.replace(/https?:\/\/[^\s"')<>]+/g, (value) => {
+    try {
+      const url = new URL(value);
+      return `${url.origin}${url.pathname}`;
+    } catch {
+      return "[redacted URL]";
+    }
+  });
+}
+
 async function bodyText(page) {
   return page.locator("body").innerText({ timeout: 15_000 });
 }
@@ -44,25 +55,48 @@ const context = await browser.newContext({
   viewport: { width: 1440, height: 960 }
 });
 const page = await context.newPage();
+page.setDefaultTimeout(15_000);
+page.setDefaultNavigationTimeout(30_000);
 const consoleIssues = [];
+page.on("response", (response) => {
+  if (response.status() < 400) return;
+  // Keep signed preview query strings and other credentials out of failure logs.
+  const url = new URL(response.url());
+  consoleIssues.push(`http: ${response.status()} ${url.origin}${url.pathname}`);
+});
 page.on("console", (message) => {
   if (message.type() === "error" || message.type() === "warning") {
-    consoleIssues.push(`${message.type()}: ${message.text()}`);
+    consoleIssues.push(`${message.type()}: ${withoutUrlCredentials(message.text())}`);
   }
 });
 page.on("pageerror", (error) => {
-  consoleIssues.push(`pageerror: ${error.message}`);
+  consoleIssues.push(`pageerror: ${withoutUrlCredentials(error.message)}`);
 });
 
 try {
   await page.goto(baseUrl, { waitUntil: "networkidle" });
-  await expectBodyText(page, "VEHICLE INSPECTION WORKSPACE");
-  const previewButton = page.getByRole("button", { name: "Enter read-only workspace" });
-  if (await previewButton.count() !== 1) fail("Enter read-only workspace button was not available.");
+  await expectBodyText(page, "Review the system without a login.");
+  const previewButton = page.getByRole("button", { name: "Open evaluation workspace" });
+  await previewButton.waitFor({ state: "visible", timeout: 20_000 }).catch(() => {
+    fail("Open evaluation workspace button was not available.");
+  });
   await previewButton.click();
-  await expectBodyText(page, "Dashboard");
+  await expectBodyText(page, "Your work, in focus.");
   await expectBodyText(page, "Operations control");
+  await page.waitForFunction(() => document.querySelector(".work-queue-page .row-link")
+    || document.querySelector(".work-queue-page .error-banner"), null, { timeout: 30_000 });
   await expectNoPublicErrors(page, "Dashboard");
+
+  await page.goto(`${baseUrl}/suggestions`, { waitUntil: "networkidle" });
+  await expectBodyText(page, "Suggestions");
+  await expectBodyText(page, "Evaluation session");
+  const enabledEvaluationActions = page.locator(".table-actions .accept-button:not([disabled])");
+  await enabledEvaluationActions.first().waitFor({ timeout: 30_000 });
+  const actionableCount = await enabledEvaluationActions.count();
+  if (actionableCount < 1) fail("Evaluation Reviewer/Admin actions were not enabled.");
+  await enabledEvaluationActions.first().click();
+  await expectBodyText(page, "Reset 1 decision");
+  await expectNoPublicErrors(page, "Suggestions");
 
   await page.goto(`${baseUrl}/inspections`, { waitUntil: "networkidle" });
   await expectBodyText(page, "Inspections");
@@ -76,6 +110,11 @@ try {
   await inspectionLinks.first().click();
   await page.waitForURL(/\/inspections\/[^/]+$/, { timeout: 15_000 });
   await page.waitForLoadState("networkidle", { timeout: 30_000 });
+  await page.getByRole("region", { name: "Evidence review stage" }).waitFor({ state: "visible" });
+  const captureSupport = page.locator(".capture-support");
+  if (!await captureSupport.evaluate((element) => element.open)) {
+    await captureSupport.locator(":scope > summary").click();
+  }
   await expectBodyText(page, "Workflow status");
   await expectBodyText(page, "Required photo checklist");
   await expectBodyText(page, "Uploaded images");
@@ -101,9 +140,10 @@ try {
 
   console.log(JSON.stringify({
     ok: true,
-    flow: "public_preview_readonly_dashboard_inspections_detail_platform_health",
+    flow: "public_evaluation_dashboard_session_review_inspections_detail_platform_health",
     baseUrl,
-    evidenceImages: imageCount
+    evidenceImages: imageCount,
+    evaluationActions: actionableCount
   }));
 } finally {
   await context.close();

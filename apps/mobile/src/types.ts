@@ -37,6 +37,11 @@ export type Inspection = {
   createdAt: string;
   updatedAt: string;
   finalizedAt: string | null;
+  reinspectionSourceInspectionId?: string | null;
+  reinspectionSourceReportId?: string | null;
+  reinspectionSourceReportVersion?: number | null;
+  reinspectionReason?: string | null;
+  reinspectionOperationId?: string | null;
 };
 
 export type VehiclePhoto = {
@@ -130,12 +135,27 @@ export type AuditEvent = {
 };
 
 export type InspectionBundle = {
+  requiresReinspection?: boolean;
+  conditionQc?: import("@inspectiq/shared").ConditionQcAssessment;
   inspection: Inspection;
   photos: VehiclePhoto[];
   photoAnalysisResults?: PhotoAnalysisResult[];
   suggestions: VisionSuggestion[];
   damageItems: DamageItem[];
-  conditionGrade: { id: string; score: number; grade: string; explanationJson: unknown; gradingVersion: string } | null;
+  conditionGrade: {
+    id: string;
+    inspectionId: string;
+    suggestedGrade: number;
+    approvedGrade: number | null;
+    conditionGradeBeforeRecon: number;
+    estimatedGradeAfterRecon: number;
+    reviewedBy: string | null;
+    overrideReason: string | null;
+    evidenceBlockers: string[];
+    explanationJson: unknown;
+    gradingVersion: string;
+    version: number;
+  } | null;
   aiReportJob: { id: string; status: string; errorMessage: string | null } | null;
   aiReportDraft: { id: string; confidence: number; humanReviewRequired: boolean } | null;
   finalReport: FinalReport | null;

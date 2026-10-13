@@ -1,6 +1,6 @@
 import { createPublicKey, createVerify, type JsonWebKey } from "node:crypto";
 import type { Request } from "express";
-import { UserRoleSchema } from "@inspectiq/shared";
+import { UserRoleSchema, userRoles } from "@inspectiq/shared";
 import { unauthorized } from "./errors.js";
 import type { Actor } from "./domain.js";
 
@@ -31,7 +31,7 @@ type JwtPayload = Record<string, unknown> & {
 
 let cachedJwks: JsonWebKeySet | null = null;
 
-const inspectIqRoles = ["admin", "reviewer", "inspector"] as const;
+const inspectIqRoles = userRoles;
 const directRoleClaimKeys = [
   "custom:role",
   "custom:inspectiq_role",
@@ -57,7 +57,7 @@ function roleFromString(value: unknown): Actor["role"] | null {
 
   const compact = normalized.replace(/[^a-z]/g, "");
   const withoutProductPrefix = compact.startsWith("inspectiq") ? compact.slice("inspectiq".length) : compact;
-  return inspectIqRoles.find((role) => withoutProductPrefix === role) ?? null;
+  return inspectIqRoles.find((role) => withoutProductPrefix === role.replace(/[^a-z]/g, "")) ?? null;
 }
 
 function stringList(value: unknown): string[] {

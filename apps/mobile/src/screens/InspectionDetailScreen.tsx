@@ -5,6 +5,9 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { canRole, requiredPhotoAngles, type RequiredPhotoAngle } from "@inspectiq/shared";
 import { useAuth } from "../auth/AuthContext";
 import { EvidenceImage } from "../components/EvidenceImage";
+import { EvidencePhotoViewer } from "../components/EvidencePhotoViewer";
+import { ConditionQcPanel } from "../components/ConditionQcPanel";
+import { ReinspectionPanel } from "../components/ReinspectionPanel";
 import { ActionButton, Card, Notice, PageHeading, Screen, Section, StatusPill } from "../components/Primitives";
 import type { RootStackParamList } from "../navigation/types";
 import { colors } from "../theme";
@@ -25,16 +28,21 @@ const labels: Record<RequiredPhotoAngle, string> = {
 
 export function InspectionDetailScreen({ route, navigation }: Props) {
   const { session, canMutate } = useAuth();
-  const { bundleById, refresh, request, online, loading, pendingUploads } = useWorkspace();
+  const { bundleById, refresh, request, online, loading, pendingUploads, error: workspaceError } = useWorkspace();
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
   const bundle = bundleById(route.params.inspectionId);
   if (!session || !bundle) {
-    return <Screen><Notice tone="warn" title="Inspection unavailable" message="Refresh assignments while online to cache this inspection." /></Screen>;
+    return <Screen refresh={() => void refresh()} refreshing={loading}>
+      <Notice tone={online ? "warn" : "offline"} title="Inspection not cached" message="Reconnect and tap Refresh to load this inspection. If creation already completed, the new record exists on the server; refresh here rather than creating another reinspection." />
+      {workspaceError ? <Notice tone="bad" title="Refresh not completed" message={workspaceError} /> : null}
+    </Screen>;
   }
   const { inspection } = bundle;
+  const selectedPhoto = selectedPhotoIndex == null ? null : bundle.photos[selectedPhotoIndex] ?? null;
   const pendingForInspection = pendingUploads.filter((item) => item.inspectionId === inspection.id);
-  const captured = new Set(bundle.photos.map((photo) => photo.declaredAngle));
+  const captured = new Set(bundle.photos.filter((photo) => photo.uploadStatus === "uploaded").map((photo) => photo.declaredAngle));
   const pendingSuggestions = bundle.suggestions.filter((item) => item.status === "pending");
   const steps = [
     { label: "Inspection", complete: inspection.completenessPercentage === 100 },
@@ -43,11 +51,11 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
     { label: "Report", complete: inspection.status === "FINALIZED" }
   ];
 
-  const runAction = async (path: string, body: Record<string, unknown> = {}) => {
+  const runAction = async (path: string, body: Record<string, unknown> = {}, idempotencyKey?: string) => {
     setBusy(true);
     setActionError(null);
     try {
-      await request(path, { method: "POST", body: JSON.stringify(body) });
+      await request(path, { method: "POST", body: JSON.stringify(body), idempotencyKey });
       await refresh();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "The workflow action failed.");
@@ -59,6 +67,12 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
   return (
     <Screen refresh={() => void refresh()} refreshing={loading}>
       <PageHeading title={`${inspection.year} ${inspection.make} ${inspection.model}`} subtitle={`${inspection.vin} · ${inspection.mileage.toLocaleString()} mi · ${inspection.trim}`} />
+      <View style={styles.captureLedger}><Text style={styles.captureLedgerText}>{bundle.photos.filter((photo) => photo.uploadStatus === "uploaded").length} uploaded · {pendingForInspection.length} queued</Text><Text style={styles.captureLedgerText}>{online ? "Online" : inspection.status === "FINALIZED" ? "Offline · historical record" : "Offline · capture available"}</Text></View>
+      <ReinspectionPanel key={`reinspection:${inspection.id}`} bundle={bundle} onOpenInspection={(inspectionId) => navigation.push("InspectionDetail", { inspectionId })} />
+      {canMutate && canRole(session.actor.role, "photo:capture") && inspection.status !== "FINALIZED" ? (
+        <ActionButton label="Capture required photos" icon={<Camera size={18} color="white" />} onPress={() => navigation.navigate("Capture", { inspectionId: inspection.id })} />
+      ) : null}
+      {bundle.photos[0] ? <Card style={styles.focusEvidence}><EvidenceImage photo={bundle.photos[0]} onPress={() => setSelectedPhotoIndex(0)} /><Text style={styles.focusCaption}>{bundle.photos[0].declaredAngle?.replaceAll("_", " ") ?? "Vehicle evidence"} · tap to inspect and compare</Text></Card> : null}
       {!online ? <Notice tone="offline" title="Cached inspection" message={`${pendingForInspection.length} local capture operation${pendingForInspection.length === 1 ? "" : "s"} will sync after reconnection.`} /> : null}
       {actionError ? <Notice tone="bad" title="Action not completed" message={actionError} /> : null}
       {bundle.readinessIssues.length > 0 ? (
@@ -91,21 +105,18 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
                 <View key={angle} style={styles.checkRow}>
                   <View style={[styles.checkCircle, complete && styles.checkCircleComplete]}>{complete ? <Check size={13} color={colors.teal} /> : <Circle size={13} color={colors.muted} />}</View>
                   <Text style={styles.checkLabel}>{labels[angle]}</Text>
-                  <Text style={[styles.checkState, complete && styles.checkStateComplete]}>{complete ? "Captured" : "Required"}</Text>
+                  <Text style={[styles.checkState, complete && styles.checkStateComplete]}>{captured.has(angle) ? "Uploaded" : complete ? "Queued locally" : "Required"}</Text>
                 </View>
               );
             })}
           </View>
         </Card>
       </Section>
-      {canMutate && canRole(session.actor.role, "photo:capture") && inspection.status !== "FINALIZED" ? (
-        <ActionButton label="Capture required photos" icon={<Camera size={18} color="white" />} onPress={() => navigation.navigate("Capture", { inspectionId: inspection.id })} />
-      ) : null}
       <Section title={`Evidence (${bundle.photos.length})`}>
         <View style={styles.photoGrid}>
-          {bundle.photos.map((photo) => (
+          {bundle.photos.map((photo, index) => (
             <Card key={photo.id} style={styles.photoCard}>
-              <EvidenceImage photo={photo} />
+              <EvidenceImage photo={photo} onPress={() => setSelectedPhotoIndex(index)} />
               <View style={styles.photoCopy}>
                 <Text style={styles.photoLabel}>{photo.declaredAngle ? labels[photo.declaredAngle] : "Unclassified"}</Text>
                 <StatusPill label={photo.analysisStatus === "completed" ? "Analyzed" : photo.qualityStatus === "fail" ? "Retake" : "Pending"} tone={photo.analysisStatus === "completed" ? "good" : photo.qualityStatus === "fail" ? "bad" : "warn"} />
@@ -115,21 +126,39 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
         </View>
       </Section>
       <View style={styles.actions}>
-        {canMutate && online && canRole(session.actor.role, "photo:analyze") && bundle.photos.length > 0 ? (
-          <ActionButton label={busy ? "Submitting…" : "Analyze photos"} tone="secondary" disabled={busy} icon={<Play size={17} color={colors.ink} />} onPress={() => void runAction(`/api/inspections/${inspection.id}/photos/analyze`)} />
+        {canMutate && online && inspection.status !== "FINALIZED" && canRole(session.actor.role, "photo:analyze") && bundle.photos.length > 0 ? (
+          <ActionButton label={busy ? "Submitting…" : "Analyze photos"} tone="secondary" disabled={busy} icon={<Play size={17} color={colors.ink} />} onPress={() => void runAction(`/api/inspections/${inspection.id}/photos/analyze`, {}, `mobile-analysis:${inspection.id}`)} />
         ) : null}
-        {canMutate && online && canRole(session.actor.role, "grade:calculate") && inspection.status === "READY_FOR_GRADING" ? (
-          <ActionButton label="Calculate grade" tone="secondary" icon={<Sparkles size={17} color={colors.ink} />} onPress={() => void runAction(`/api/inspections/${inspection.id}/grade`)} />
+        {canMutate && online && canRole(session.actor.role, "grade:calculate") && ["READY_FOR_GRADING", "GRADED", "HUMAN_REVIEW_REQUIRED", "AI_DRAFTED", "REPORT_FAILED"].includes(inspection.status) ? (
+          <ActionButton label="Calculate grade" tone="secondary" icon={<Sparkles size={17} color={colors.ink} />} onPress={() => void runAction(`/api/inspections/${inspection.id}/grade`, {}, `mobile-grade:${inspection.id}`)} />
         ) : null}
         {canRole(session.actor.role, "report:edit") || bundle.finalReport ? (
           <ActionButton label="Open condition report" tone="secondary" icon={<FileText size={17} color={colors.ink} />} onPress={() => navigation.navigate("ReportEditor", { inspectionId: inspection.id })} />
         ) : null}
       </View>
+      <ConditionQcPanel key={inspection.id} bundle={bundle} onPhoto={(id) => {
+        const index = bundle.photos.findIndex((p) => p.id === id);
+        if (index >= 0) setSelectedPhotoIndex(index);
+      }} onFinding={() => navigation.navigate("Main", { screen: "Review" })} />
+      {selectedPhoto ? (
+        <EvidencePhotoViewer
+          photo={selectedPhoto}
+          position={selectedPhotoIndex ?? 0}
+          total={bundle.photos.length}
+          onClose={() => setSelectedPhotoIndex(null)}
+          onPrevious={() => setSelectedPhotoIndex((current) => current == null || bundle.photos.length === 0 ? current : (current - 1 + bundle.photos.length) % bundle.photos.length)}
+          onNext={() => setSelectedPhotoIndex((current) => current == null || bundle.photos.length === 0 ? current : (current + 1) % bundle.photos.length)}
+        />
+      ) : null}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  captureLedger: { flexDirection: "row", justifyContent: "space-between", gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.line },
+  captureLedgerText: { color: colors.muted, fontSize: 12 },
+  focusEvidence: { padding: 0, overflow: "hidden" },
+  focusCaption: { padding: 12, color: colors.muted, fontSize: 12, textTransform: "capitalize" },
   steps: { flexDirection: "row", alignItems: "flex-start" },
   stepWrap: { flex: 1, alignItems: "center", gap: 7 },
   stepLineRow: { flexDirection: "row", alignItems: "center", width: "100%" },

@@ -83,7 +83,7 @@ export function AuditPage() {
         </article>
       </div>
 
-      <div className="table-panel audit-table">
+      <div className="table-panel audit-table" role="region" aria-label="Audit events" tabIndex={0}>
         {rows.length === 0 ? (
           <div className="empty-state">
             <ShieldCheck size={22} />

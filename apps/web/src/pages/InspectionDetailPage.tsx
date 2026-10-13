@@ -1,14 +1,23 @@
-import { AlertTriangle, ArrowDown, Bot, Check, ChevronLeft, ChevronRight, Download, FileText, Filter, GitCompare, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X } from "lucide-react";
-import { estimateDamageRepairCost, maxImageUploadBytes, maxLocalPreviewUploadBytes, requiredPhotoAngles, supportedImageUploadMimeTypes } from "@inspectiq/shared";
+import { AlertTriangle, ArrowDown, BadgeInfo, Bot, Check, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Filter, GitCompare, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X, MoreHorizontal, Maximize2, ArrowRight } from "lucide-react";
+import { canRole, estimateDamageRepairCost, maxImageUploadBytes, maxLocalPreviewUploadBytes, requiredPhotoAngles, supportedImageUploadMimeTypes } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiClientError, apiUrl, assetUrl, requestHeaders } from "../api.js";
 import { useActor } from "../App.js";
 import { isEvaluationSession, storedLocalSession } from "../auth.js";
-import { StatusPill } from "../components/StatusPill.js";
-import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider } from "../evidenceProvenance.js";
+import { StatusPill, statusLabel } from "../components/StatusPill.js";
+import { ConditionQcPanel } from "../components/ConditionQcPanel.js";
+import { ConditionQcDialog } from "../components/ConditionQcDialog.js";
+import { EvidenceViewer } from "../components/EvidenceViewer.js";
+import { ZoomableEvidence } from "../components/ZoomableEvidence.js";
+import { ConditionReportDocument } from "../components/ConditionReportDocument.js";
+import { ReinspectionControls, ReinspectionLineage } from "../components/ReinspectionControls.js";
+import { conditionGradeView, formatConditionGrade } from "../conditionGrade.js";
+import { loadEvaluationDamage, saveEvaluationDamage } from "../evaluationDamage.js";
+import { applyEvaluationReview, clearEvaluationReview, recordEvaluationReview } from "../evaluationReview.js";
+import { analysisProviderLabel, isReferenceEvidence, isReferenceProvider, operatorEvidenceExplanation } from "../evidenceProvenance.js";
 import { deriveMarketplaceReadiness, formatReportReadiness } from "../marketplaceReadiness.js";
-import type { Inspection, InspectionBundle, PhotoAnalysisResult, ReportVersion, SamplePhotoSet, VehiclePhoto, VisionSuggestion } from "../types.js";
+import type { DamageItem, Inspection, InspectionBundle, PhotoAnalysisResult, ReportVersion, SamplePhotoSet, VehiclePhoto, VehicleReference, VisionSuggestion } from "../types.js";
 import { inspectionNeedsWork, isReviewQueueInspection } from "../workflowMetrics.js";
 
 const requiredAngles = [...requiredPhotoAngles];
@@ -22,10 +31,8 @@ type ConditionDockTab = "grading" | "damage";
 type ReportDockTab = "draft" | "summary";
 
 type GradeExplanationView = {
-  deductions?: Array<{ reason?: string; points?: number }>;
-  completionPenalty?: number;
-  mileageAdjustment?: number;
-  ageAdjustment?: number;
+  baseGrade?: number;
+  deductions?: Array<{ reason?: string; amount?: number }>;
 };
 
 type ReportOutputView = {
@@ -34,6 +41,12 @@ type ReportOutputView = {
   missingEvidence?: string[];
   recommendedDisclosure?: string;
   reasoningSummary?: string;
+  conditionReportSections?: Array<{
+    key: string;
+    title: string;
+    status: "VERIFIED" | "OBSERVED" | "NOT_OBSERVED" | "NOT_APPLICABLE" | "REQUIRES_REVIEW";
+    observations: string[];
+  }>;
 };
 
 function formatAngleLabel(value: string | null | undefined) {
@@ -64,7 +77,7 @@ function photoSourceLabel(photo: Pick<VehiclePhoto, "objectBucket" | "storageKey
   if (photo.sourceName === "CarsDirect OEM photo gallery") return "Sourced vehicle image";
   if (photo.sourceName) return photo.sourceName;
   if (photo.objectBucket && photo.objectBucket !== "inspectiq-sample-images") return "Uploaded image";
-  if (photo.objectBucket === "inspectiq-sample-images" || photo.storageKey.startsWith("/sample-images/")) return "Reference evidence";
+  if (photo.objectBucket === "inspectiq-sample-images" || photo.storageKey.startsWith("/sample-images/")) return "Source photo";
   if (photo.storageKey.startsWith("data:")) return "Inline evidence";
   return "Evidence image";
 }
@@ -163,14 +176,14 @@ function suggestionFacts(suggestion: VisionSuggestion): SuggestionFact[] {
 function referenceSuggestionFacts(suggestion: VisionSuggestion): SuggestionFact[] {
   const value = suggestionValueRecord(suggestion);
   if (suggestion.suggestionType === "photo_angle") {
-    return [{ label: "Checklist Slot", value: formatAngleLabel(formatSuggestionValue(value.photoAngle)) }];
+    return [{ label: "Required View", value: formatAngleLabel(formatSuggestionValue(value.photoAngle)) }];
   }
   if (suggestion.suggestionType === "quality_warning") {
     const quality = qualityValueRecord(value.imageQuality);
     return [
-      { label: "Source QA Status", value: formatTitleValue(quality.grade ?? "review") },
+      { label: "Evidence Status", value: formatTitleValue(quality.grade ?? "review") },
       { label: "Retake Required", value: quality.retakeRequired === true ? "Yes" : "No" },
-      { label: "Action", value: quality.retakeRequired === true ? "Replace source image before release" : "Reviewer can accept if the source image is usable" }
+      { label: "Action", value: quality.retakeRequired === true ? "Replace photo before release" : "Reviewer can accept if the photo is usable" }
     ];
   }
   return suggestionFacts(suggestion);
@@ -184,8 +197,8 @@ function conditionGradeExplanation(grade: InspectionBundle["conditionGrade"]): G
 function conditionGradeDeductions(grade: InspectionBundle["conditionGrade"]) {
   const explanation = conditionGradeExplanation(grade);
   if (!Array.isArray(explanation.deductions)) return [];
-  return explanation.deductions.filter((item): item is { reason: string; points: number } => (
-    typeof item.reason === "string" && typeof item.points === "number"
+  return explanation.deductions.filter((item): item is { reason: string; amount: number } => (
+    typeof item.reason === "string" && typeof item.amount === "number"
   ));
 }
 
@@ -376,7 +389,8 @@ function suggestionFocus(suggestion: VisionSuggestion) {
 
 function suggestionNote(suggestion: VisionSuggestion) {
   const value = suggestionValueRecord(suggestion);
-  return typeof value.explanation === "string" && value.explanation.length > 0 ? value.explanation : suggestion.explanation;
+  const explanation = typeof value.explanation === "string" && value.explanation.length > 0 ? value.explanation : suggestion.explanation;
+  return operatorEvidenceExplanation(explanation);
 }
 
 function suggestionPriority(suggestion: VisionSuggestion) {
@@ -416,17 +430,17 @@ function photoQualityView(
     if (qualitySuggestion && (qualitySuggestion.status === "pending" || qualitySuggestion.status === "edited")) {
       return {
         status: "review",
-        label: "Source QA review",
-        detail: formatTitleValue(suggestionValue.warning ?? "Reviewer should confirm the source image fits the required capture slot"),
+        label: "Review required",
+        detail: formatTitleValue(suggestionValue.warning ?? "Reviewer should confirm the photo fits the required view"),
         scores: []
       };
     }
     return {
       status: photo.qualityStatus === "fail" ? "retake" : "ready",
-      label: photo.qualityStatus === "fail" ? "Replace source" : "Source reviewed",
+      label: photo.qualityStatus === "fail" ? "Replace photo" : "Ready",
       detail: photo.qualityStatus === "fail"
-        ? "The reference image does not satisfy the documented capture requirement."
-        : "Mapped from documented source metadata; no model quality score is claimed.",
+        ? "The photo does not satisfy the required checklist view."
+        : "Photo is assigned to the required checklist view.",
       scores: []
     };
   }
@@ -488,8 +502,10 @@ function ProtectedPhotoImage({ photo }: { photo: VehiclePhoto }) {
   const { actor } = useActor();
   const directUrl = photoImageUrl(photo);
   const [src, setSrc] = useState(() => needsAuthenticatedImageFetch(photo) ? "" : directUrl);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    setFailed(false);
     if (!needsAuthenticatedImageFetch(photo)) {
       setSrc(directUrl);
       return undefined;
@@ -517,7 +533,7 @@ function ProtectedPhotoImage({ photo }: { photo: VehiclePhoto }) {
         setSrc(imageUrl.startsWith("/") ? assetUrl(imageUrl) : imageUrl);
       })
       .catch(() => {
-        if (!cancelled) setSrc("");
+        if (!cancelled) { setSrc(""); setFailed(true); }
       });
 
     return () => {
@@ -525,15 +541,16 @@ function ProtectedPhotoImage({ photo }: { photo: VehiclePhoto }) {
     };
   }, [actor.id, actor.name, actor.role, directUrl, photo.id, photo.objectBucket, photo.objectKey]);
 
-  if (!src) {
+  if (!src || failed) {
     return (
-      <div className="image-preview-placeholder" aria-label={`${photo.originalFilename} preview loading`}>
+      <div className="image-preview-placeholder" role="status" aria-label={`${photo.originalFilename} ${failed ? "preview unavailable" : "preview loading"}`}>
         <ImagePlus size={18} />
+        <span>{failed ? "Evidence preview unavailable" : "Loading evidence…"}</span>
       </div>
     );
   }
 
-  return <img src={src} alt={photo.originalFilename} />;
+  return <img src={src} alt={photo.originalFilename} onError={() => setFailed(true)} onLoad={(event) => { if (event.currentTarget.naturalWidth < 16 || event.currentTarget.naturalHeight < 16) setFailed(true); }} />;
 }
 
 async function downloadBuyerReport(reportId: string, actor: ReturnType<typeof useActor>["actor"]): Promise<void> {
@@ -582,6 +599,8 @@ async function waitForPhotoAnalysisCompletion(inspectionId: string, photoIds: st
 
 export function InspectionDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { actor, can } = useActor();
   const [bundle, setBundle] = useState<InspectionBundle | null>(null);
   const [inspections, setInspections] = useState<Inspection[]>([]);
@@ -595,23 +614,40 @@ export function InspectionDetailPage() {
   const [queuePage, setQueuePage] = useState(1);
   const [conditionDockTab, setConditionDockTab] = useState<ConditionDockTab>("grading");
   const [reportDockTab, setReportDockTab] = useState<ReportDockTab>("draft");
-  const [queueCollapsed, setQueueCollapsed] = useState(false);
+  const [queueCollapsed, setQueueCollapsed] = useState(true);
   const [reviewRailCollapsed, setReviewRailCollapsed] = useState(false);
+  const [activeEvidenceId, setActiveEvidenceId] = useState<string | null>(null);
+  useEffect(() => { setActiveEvidenceId(null); setQcOpen(false); }, [id]);
   const [damageForm, setDamageForm] = useState({
+    photoId: "",
     location: "front bumper",
     damageType: "scratch",
     severity: "minor",
     notes: "Manual inspector note."
   });
+  const [damageOperationId, setDamageOperationId] = useState(() => crypto.randomUUID());
+  const [expandedPhotoId, setExpandedPhotoId] = useState<string | null>(null);
+  const [qcOpen, setQcOpen] = useState(false);
+  const [evaluationDamageItems, setEvaluationDamageItems] = useState<DamageItem[]>([]);
   const [reportBody, setReportBody] = useState("");
   const [reportComment, setReportComment] = useState("");
   const [reportVersions, setReportVersions] = useState<ReportVersion[]>([]);
   const [comparedReportVersion, setComparedReportVersion] = useState<ReportVersion | null>(null);
+  const [vehicleReferenceOpen, setVehicleReferenceOpen] = useState(searchParams.get("reference") === "nhtsa");
+  const [vehicleReference, setVehicleReference] = useState<VehicleReference | null>(null);
+  const [vehicleReferenceLoading, setVehicleReferenceLoading] = useState(false);
+  const [vehicleReferenceError, setVehicleReferenceError] = useState<string | null>(null);
 
   async function load() {
     if (!id) return;
     setError(null);
-    const nextBundle = await api<InspectionBundle>(`/api/inspections/${id}`, {}, actor);
+    const loadedBundle = await api<InspectionBundle>(`/api/inspections/${id}`, {}, actor);
+    const nextBundle = actor.id.startsWith("evaluation-")
+      ? {
+          ...loadedBundle,
+          suggestions: applyEvaluationReview(window.sessionStorage, loadedBundle.inspection.id, loadedBundle.suggestions)
+        }
+      : loadedBundle;
     setBundle(nextBundle);
     setReportBody(nextBundle.finalReport?.reportBody ?? "");
     setReportComment(nextBundle.finalReport?.reviewerComment ?? "");
@@ -654,9 +690,76 @@ export function InspectionDetailPage() {
     }
   }
 
+  async function reviewSuggestion(
+    suggestion: VisionSuggestion,
+    status: "accepted" | "rejected" | "edited",
+    edit?: { suggestedValue: unknown; explanation?: string }
+  ) {
+    if (!actor.id.startsWith("evaluation-")) {
+      const reason = status === "rejected" && suggestion.suggestionType === "quality_warning"
+        ? window.prompt("Explain why this photo is usable despite the quality warning (at least 10 characters).")
+        : undefined;
+      if (reason === null) return;
+      const path = status === "edited"
+        ? `/api/vision-suggestions/${suggestion.id}`
+        : `/api/vision-suggestions/${suggestion.id}/${status === "accepted" ? "accept" : "reject"}`;
+      const options = status === "edited"
+        ? { method: "PATCH", body: JSON.stringify({ ...edit, expectedVersion: suggestion.version }) }
+        : { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version, reason }) };
+      return runAction(status, () => api(path, options, actor));
+    }
+
+    setBusy(status);
+    setError(null);
+    try {
+      recordEvaluationReview(window.sessionStorage, actor, suggestion, status, edit);
+      setBundle((current) => current ? {
+        ...current,
+        suggestions: applyEvaluationReview(window.sessionStorage, current.inspection.id, current.suggestions)
+      } : current);
+      setEvaluationDamageItems(loadEvaluationDamage(window.sessionStorage, suggestion.inspectionId));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function loadVehicleReference() {
+    if (!id || vehicleReferenceLoading) return;
+    setVehicleReferenceLoading(true);
+    setVehicleReferenceError(null);
+    try {
+      setVehicleReference(await api<VehicleReference>(`/api/inspections/${id}/vehicle-reference`, {}, actor));
+    } catch (err) {
+      setVehicleReferenceError(err instanceof Error ? err.message : "NHTSA VIN decoding is unavailable.");
+    } finally {
+      setVehicleReferenceLoading(false);
+    }
+  }
+
   useEffect(() => {
     void load().catch((err) => setError(err instanceof Error ? err.message : "Failed to load inspection."));
   }, [id, actor]);
+
+  useEffect(() => {
+    setVehicleReference(null);
+    setVehicleReferenceError(null);
+    setVehicleReferenceOpen(searchParams.get("reference") === "nhtsa");
+    setDamageOperationId(crypto.randomUUID());
+  }, [id, searchParams]);
+
+  useEffect(() => {
+    if (!id || !actor.id.startsWith("evaluation-")) {
+      setEvaluationDamageItems([]);
+      return;
+    }
+    setEvaluationDamageItems(loadEvaluationDamage(window.sessionStorage, id));
+  }, [actor.id, id]);
+
+  useEffect(() => {
+    if (vehicleReferenceOpen && !vehicleReference && !vehicleReferenceLoading && !vehicleReferenceError) {
+      void loadVehicleReference();
+    }
+  }, [vehicleReferenceOpen, vehicleReference, vehicleReferenceLoading, vehicleReferenceError, id, actor]);
 
   const confirmedAngles = useMemo(() => {
     const values = new Set<string>();
@@ -748,9 +851,21 @@ export function InspectionDetailPage() {
     .slice()
     .sort((left, right) => suggestionPriority(left) - suggestionPriority(right));
   const reviewedSuggestions = bundle.suggestions.filter((suggestion) => suggestion.status === "accepted" || suggestion.status === "rejected");
+  const activePhoto = bundle.photos.find((photo) => photo.id === activeEvidenceId) ?? bundle.photos.find((photo) => photo.id === pendingSuggestions[0]?.photoId) ?? bundle.photos[0];
+  const activePhotoIndex = activePhoto ? bundle.photos.findIndex((photo) => photo.id === activePhoto.id) : 0;
+  const activeFindings = activePhoto ? pendingSuggestions.filter((suggestion) => suggestion.photoId === activePhoto.id) : [];
+  const moveEvidence = (step: number) => setActiveEvidenceId(bundle.photos[(activePhotoIndex + step + bundle.photos.length) % bundle.photos.length]?.id ?? null);
   const acceptedSuggestions = reviewedSuggestions.filter((suggestion) => suggestion.status === "accepted");
   const rejectedSuggestions = reviewedSuggestions.filter((suggestion) => suggestion.status === "rejected");
+  const evaluationReviewCount = bundle.suggestions.filter((suggestion) =>
+    suggestion.reviewedBy === actor.name
+    && (suggestion.status === "accepted" || suggestion.status === "rejected" || suggestion.status === "edited")
+  ).length;
   const isFinalizedInspection = bundle.inspection.status === "FINALIZED";
+  const isHistoricalRelease = isFinalizedInspection && Boolean(bundle.requiresReinspection);
+  const qcStatusUnknown = isFinalizedInspection && bundle.requiresReinspection === undefined;
+  const historicalPublication = isHistoricalRelease || qcStatusUnknown;
+  const publicationLabel = isHistoricalRelease ? "Historical release" : qcStatusUnknown ? "Published history" : statusLabel(bundle.inspection.status);
   const workflowStep = bundle.inspection.status === "FINALIZED" ? 4 : bundle.inspection.status === "HUMAN_REVIEW_REQUIRED" || bundle.inspection.status === "AI_DRAFTED" ? 3 : bundle.conditionGrade ? 2 : 1;
   const capturedEvidencePercent = Math.round((requiredAngles.filter((angle) => capturedAngles.has(angle)).length / requiredAngles.length) * 100);
   const missingAngles = requiredAngles.filter((angle) => !capturedAngles.has(angle));
@@ -760,8 +875,11 @@ export function InspectionDetailPage() {
   const blockerIssues = (bundle.readinessIssues ?? []).filter((issue) => issue.severity === "blocker");
   const watchIssues = (bundle.readinessIssues ?? []).filter((issue) => issue.severity === "watch");
   const visibleReadinessIssues = [...blockerIssues, ...watchIssues].slice(0, 3);
-  const gradeExplanation = conditionGradeExplanation(bundle.conditionGrade);
   const gradeDeductions = conditionGradeDeductions(bundle.conditionGrade);
+  const gradeView = conditionGradeView(bundle.conditionGrade);
+  const gradeEvidenceBlockers = Array.isArray(bundle.conditionGrade?.evidenceBlockers)
+    ? bundle.conditionGrade.evidenceBlockers
+    : [];
   const reportOutput = reportOutputView(bundle.aiReportDraft);
   const reportSummary = reportOutput.summary
     ?? bundle.finalReport?.reportBody.split("\n").find((line) => line.trim().length > 0)?.replace(/^Summary:\s*/i, "")
@@ -774,17 +892,19 @@ export function InspectionDetailPage() {
   const missingEvidence = reportOutput.missingEvidence?.length
     ? reportOutput.missingEvidence
     : marketplaceReadiness.blockers.filter((blocker) => blocker.toLowerCase().includes("missing"));
+  const isEvaluationWorkspace = actor.id.startsWith("evaluation-");
+  const canPreviewDamage = isEvaluationWorkspace && canRole(actor.role, "damage:create");
   const canCaptureEvidence = can("photo:capture");
   const canAnalyzePhotos = can("photo:analyze");
-  const canReviewSuggestions = can("suggestion:review");
+  const canReviewSuggestions = can("suggestion:review") || (isEvaluationWorkspace && canRole(actor.role, "suggestion:review"));
   const canAssignSuggestions = can("suggestion:assign");
   const canConfirmDamage = can("damage:create");
   const canGrade = can("grade:calculate");
+  const canApproveGrade = can("grade:approve");
   const canDraftReport = can("report:draft");
   const canEditReport = can("report:edit");
   const canApproveReport = can("report:approve");
   const canFinalizeReport = can("report:finalize");
-  const isEvaluationWorkspace = actor.id.startsWith("evaluation-");
   const canRequestReportDraft = bundle.inspection.status === "GRADED" ||
     bundle.inspection.status === "REPORT_FAILED" ||
     bundle.inspection.status === "HUMAN_REVIEW_REQUIRED";
@@ -793,12 +913,57 @@ export function InspectionDetailPage() {
   const sampleAttachDisabled = !referenceEvidenceEnabled || captureDisabled || !matchedSamplePhotoSet;
   const analysisDisabled = busy !== null || isFinalizedInspection || !canAnalyzePhotos;
   const reviewDisabled = busy !== null || isFinalizedInspection || !canReviewSuggestions;
-  const damageDisabled = busy !== null || isFinalizedInspection || !canConfirmDamage;
+  const damageDisabled = busy !== null || isFinalizedInspection || (!canConfirmDamage && !canPreviewDamage);
+  const damageDisabledReason = finalizedActionTitle
+    ?? (!canConfirmDamage && !canPreviewDamage
+      ? isEvaluationWorkspace
+        ? "Select Inspector, Reviewer, or Admin to preview manual damage entry."
+        : "Inspector, Reviewer, or Admin access required."
+      : undefined);
+  const damageHelperText = damageDisabledReason
+    ?? (canPreviewDamage
+      ? "Evaluation sandbox: preview items stay in this browser tab and do not change the inspection record."
+      : undefined);
+  const damageItemsForDisplay = isEvaluationWorkspace
+    ? [...bundle.damageItems, ...evaluationDamageItems]
+    : bundle.damageItems;
+
+  function addEvaluationDamagePreview() {
+    if (!id || !canPreviewDamage || isFinalizedInspection) return;
+    const location = damageForm.location.trim();
+    if (!location) {
+      setError("Enter the damaged area before adding a preview item.");
+      return;
+    }
+    const previewItem: DamageItem = {
+      id: `evaluation-damage-${typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now()}`,
+      inspectionId: id,
+      photoId: damageForm.photoId || null,
+      location,
+      damageType: damageForm.damageType,
+      severity: damageForm.severity,
+      notes: damageForm.notes,
+      source: "evaluation_preview"
+    };
+    const nextItems = [...evaluationDamageItems, previewItem];
+    setEvaluationDamageItems(nextItems);
+    saveEvaluationDamage(window.sessionStorage, id, nextItems);
+    setError(null);
+  }
+
+  function clearEvaluationDamagePreview() {
+    if (!id) return;
+    setEvaluationDamageItems([]);
+    saveEvaluationDamage(window.sessionStorage, id, []);
+  }
   const gradeDisabled = busy !== null || isFinalizedInspection || !canGrade;
+  const approveGradeDisabled = busy !== null || isFinalizedInspection || !canApproveGrade || gradeView?.reviewState !== "suggested" || gradeEvidenceBlockers.length > 0;
   const draftReportDisabled = busy !== null || isFinalizedInspection || !canDraftReport || !canRequestReportDraft;
   const editReportDisabled = isFinalizedInspection || !canEditReport;
-  const approveReportDisabled = !bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || isFinalizedInspection || !canApproveReport || busy !== null;
-  const finalizeReportDisabled = !bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || isFinalizedInspection || !canFinalizeReport || bundle.finalReport.approvalStatus !== "approved";
+  const unsavedReportText = Boolean(bundle.finalReport && reportBody !== bundle.finalReport.reportBody);
+  const unsavedReportComment = Boolean(bundle.finalReport && reportComment !== (bundle.finalReport.reviewerComment ?? ""));
+  const approveReportDisabled = !bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || isFinalizedInspection || !canApproveReport || busy !== null || unsavedReportText;
+  const finalizeReportDisabled = !bundle.finalReport || Boolean(bundle.finalReport.finalizedAt) || isFinalizedInspection || !canFinalizeReport || bundle.finalReport.approvalStatus !== "approved" || busy !== null || unsavedReportText || unsavedReportComment;
   const draftReportButtonLabel = bundle.inspection.status === "REPORT_FAILED" ? "Retry draft" : "Draft report";
   const draftReportDisabledReason = isEvaluationWorkspace
     ? "Read-only review mode. Sign in with Cognito as Reviewer or Admin to draft or retry reports."
@@ -864,11 +1029,13 @@ export function InspectionDetailPage() {
         : pendingAnalysisRows.length > 0
           ? "Run image analysis to verify angle, damage, OCR, and quality signals."
           : bundle.photos.every((photo) => isReferenceEvidence(photo, analysisResultByPhotoId.get(photo.id)))
-            ? "Required photos are mapped to documented checklist slots with no open source-review blocker."
+            ? "Required photos are present with no open evidence-review blocker."
             : "Required photos have usable analysis signals and no open retake blocker.";
   const hasModelAnalysis = [...analysisResultByPhotoId.values()].some((analysis) => !isReferenceProvider(analysis.provider));
   const referenceOnlyEvidence = bundle.photos.length > 0 && !hasModelAnalysis;
-  const reviewRailTitle = pendingSuggestions.length > 0
+  const reviewRailTitle = historicalPublication
+    ? "Historical review record."
+    : pendingSuggestions.length > 0
     ? "Reviewer confirmation required."
     : isFinalizedInspection
       ? referenceOnlyEvidence ? "Evidence review complete." : "AI review complete."
@@ -877,26 +1044,30 @@ export function InspectionDetailPage() {
         : pendingAnalysisRows.length > 0
           ? "Image analysis in progress."
           : reviewedSuggestions.length > 0
-            ? referenceOnlyEvidence ? "Evidence mappings reviewed." : "AI findings reviewed."
+            ? referenceOnlyEvidence ? "Evidence reviewed." : "AI findings reviewed."
             : referenceOnlyEvidence ? "No pending evidence decisions." : "No pending AI findings.";
-  const reviewRailBody = pendingSuggestions.length > 0
+  const reviewRailBody = historicalPublication
+    ? isHistoricalRelease
+      ? "The original evidence, reviewer decisions, and published report remain unchanged. This historical release is not certified under the current QC policy; fresh evidence and approvals require a separate audited inspection."
+      : "The published evidence and review history are preserved. Current-policy QC status is unverified; refresh the inspection before relying on a current release."
+    : pendingSuggestions.length > 0
     ? null
     : isFinalizedInspection
       ? referenceOnlyEvidence
-        ? "Reference mappings and reviewer decisions are complete; the condition report is locked for buyer-facing release."
+        ? "Evidence checks and reviewer decisions are complete; the condition report is locked for buyer-facing release."
         : "All AI findings have been resolved and the condition report is locked for buyer-facing release."
       : bundle.photos.length === 0
         ? "Capture required angles before running image analysis."
         : pendingAnalysisRows.length > 0
           ? "Queued image jobs are still processing. Refresh after completion to review findings."
           : reviewedSuggestions.length > 0
-            ? referenceOnlyEvidence ? "No open reference-evidence decisions remain for this inspection." : "No open AI decisions remain for this inspection."
+            ? referenceOnlyEvidence ? "No open evidence decisions remain for this inspection." : "No open AI decisions remain for this inspection."
             : "Run analysis after capture to create reviewable findings.";
   const analyzedPhotoCount = bundle.photos.filter((photo) => photo.analysisStatus === "completed").length;
   const confirmedReviewItems = acceptedSuggestions.slice(0, 3).map((suggestion) => `${formatTitleValue(suggestionFocus(suggestion))} · ${formatSuggestionType(suggestion.suggestionType)}`);
 
   return (
-    <section className="inspection-workspace">
+    <section className="inspection-workspace ledger-workspace">
       {error ? <div className="error-banner">{error}</div> : null}
       <div className={`concept-workbench ${queueCollapsed ? "queue-collapsed" : ""} ${reviewRailCollapsed ? "review-collapsed" : ""}`}>
         <aside className="inspection-list-panel">
@@ -960,7 +1131,7 @@ export function InspectionDetailPage() {
                   <strong>{inspection.year} {inspection.make} {inspection.model}</strong>
                   <small>{inspection.trim || "Base"}</small>
                 </span>
-                <StatusPill status={inspection.status} />
+                {inspection.id === bundle.inspection.id && historicalPublication ? <span className="status-pill">{publicationLabel}</span> : <StatusPill status={inspection.status} />}
                 <time>{formatQueueUpdated(inspection.updatedAt)}</time>
               </Link>
             ))}
@@ -981,15 +1152,32 @@ export function InspectionDetailPage() {
           </div>
         </aside>
 
-        <main className="detail-stage">
+        <section className="detail-stage" aria-label="Inspection evidence and records">
           <div className="detail-titlebar">
             <div>
               <h1>{bundle.inspection.year} {bundle.inspection.make} {bundle.inspection.model}</h1>
               <p>VIN {bundle.inspection.vin} · {bundle.inspection.mileage.toLocaleString()} mi · {bundle.inspection.exteriorColor} · {bundle.inspection.trim || "Base"} · Updated {new Date(bundle.inspection.updatedAt).toLocaleString()}</p>
             </div>
             <div className="heading-actions">
+              <span className={`ledger-state ${historicalPublication ? "historical" : isFinalizedInspection ? "approved" : "held"}`}><span />{publicationLabel}{bundle.finalReport ? ` · v${bundle.finalReport.version}` : " · preliminary"}</span>
+              {bundle.conditionQc ? <button type="button" className="secondary-button" onClick={() => setQcOpen(true)}>Report QC · {bundle.conditionQc.openCount} open</button> : null}
+              <button className="primary-button ledger-next-action" onClick={() => {
+                if (!bundle.photos.length || missingAngles.length) { const support = document.querySelector<HTMLDetailsElement>(".capture-support"); if (support) support.open = true; document.getElementById("evidence-tools")?.scrollIntoView({ behavior: "smooth", block: "center" }); return; }
+                if (pendingSuggestions.length) { setActiveEvidenceId(pendingSuggestions[0].photoId); setReviewRailCollapsed(false); requestAnimationFrame(() => document.querySelector<HTMLElement>(".review-column")?.focus()); return; }
+                if (bundle.conditionQc?.openCount) { setQcOpen(true); return; }
+                document.querySelector<HTMLElement>(bundle.conditionGrade ? ".report-panel" : ".grading-dock-body")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}>{isFinalizedInspection ? "View condition report" : missingAngles.length || !bundle.photos.length ? "Complete evidence" : pendingSuggestions.length ? `Review ${pendingSuggestions.length} finding${pendingSuggestions.length === 1 ? "" : "s"}` : bundle.conditionQc?.openCount ? "Resolve exceptions" : bundle.conditionGrade ? "Review report" : "Review condition grade"}<ArrowRight size={16} /></button>
+              <details className="inspection-utilities"><summary aria-label="Inspection tools"><MoreHorizontal size={20} /></summary><div>
               <button className={`secondary-button dense-toggle ${queueCollapsed ? "active" : ""}`} onClick={() => setQueueCollapsed((current) => !current)}>{queueCollapsed ? "Show queue" : "Hide queue"}</button>
               <button className={`secondary-button dense-toggle ${reviewRailCollapsed ? "active" : ""}`} onClick={() => setReviewRailCollapsed((current) => !current)}>{reviewRailCollapsed ? "Show review" : "Hide review"}</button>
+              <button
+                className={`secondary-button ${vehicleReferenceOpen ? "active" : ""}`}
+                aria-expanded={vehicleReferenceOpen}
+                aria-controls="vehicle-reference-panel"
+                onClick={() => { const support = document.querySelector<HTMLDetailsElement>(".capture-support"); if (support) support.open = true; setVehicleReferenceOpen((current) => !current); }}
+              >
+                <BadgeInfo size={16} /> VIN details
+              </button>
               <button
                 className="secondary-button"
                 disabled={isFinalizedInspection || !canAssignSuggestions || pendingSuggestions.length === 0 || busy !== null}
@@ -1005,11 +1193,82 @@ export function InspectionDetailPage() {
               >
                 <UserRound size={16} /> Assign findings to me
               </button>
-              <StatusPill status={bundle.inspection.status} />
+              {historicalPublication ? <span className="status-pill">{publicationLabel}</span> : <StatusPill status={bundle.inspection.status} />}
               <button className="secondary-button" onClick={() => void load()}><RefreshCw size={16} /> Refresh</button>
+              {isFinalizedInspection && bundle.finalReport && typeof bundle.requiresReinspection === "boolean" && !bundle.requiresReinspection ? <ReinspectionControls key={id} inspectionId={id} reportVersion={bundle.finalReport.version} actor={actor} authorized={can("inspection:reinspect")} onRefresh={load} onCreated={(inspection) => { setBundle(null); navigate(`/inspections/${inspection.id}`); }} /> : null}
+              </div></details>
             </div>
           </div>
+          {bundle.requiresReinspection && bundle.finalReport ? <ReinspectionControls key={id} historical inspectionId={id} reportVersion={bundle.finalReport.version} actor={actor} authorized={can("inspection:reinspect")} onRefresh={load} onCreated={(inspection) => { setBundle(null); navigate(`/inspections/${inspection.id}`); }} /> : null}
+          {qcStatusUnknown ? <div className="warning-banner" role="status">Published history · current-QC status unverified. This API does not supply current policy status or reinspection capability. Refresh after the backend is updated; do not treat this as a current-policy release.</div> : null}
+          <ReinspectionLineage inspection={bundle.inspection} />
+          <div className="evidence-ledger"><span><strong>{bundle.photos.filter((photo) => photo.uploadStatus === "uploaded").length}</strong> uploaded</span><span><strong>{pendingSuggestions.length}</strong> undecided</span><span><strong>{bundle.conditionQc?.openCount ?? 0}</strong> QC exceptions</span><span>{bundle.conditionQc?.identity.vin.status === "verified" ? "VIN verified" : "VIN not verified"}</span><span>{bundle.conditionQc?.identity.odometer.status === "verified" ? "Mileage verified" : "Mileage not verified"}</span></div>
+          <section className="evidence-stage" aria-label="Evidence review stage" onKeyDown={(event) => {
+            if ((event.target as HTMLElement).matches("input, textarea, select")) return;
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); moveEvidence(event.key === "ArrowLeft" ? -1 : 1); }
+          }}>
+            <div className="evidence-stage-heading"><div><span className="eyebrow">Evidence / {String(activePhotoIndex + (activePhoto ? 1 : 0)).padStart(2, "0")} of {String(bundle.photos.length).padStart(2, "0")}</span><h2>{activePhoto ? photoDisplayName(activePhoto) : "Begin with the evidence."}</h2></div><div className="heading-actions"><button className="icon-button" aria-label="Previous evidence" disabled={bundle.photos.length < 2} onClick={() => moveEvidence(-1)}><ChevronLeft size={18} /></button><button className="icon-button" aria-label="Next evidence" disabled={bundle.photos.length < 2} onClick={() => moveEvidence(1)}><ChevronRight size={18} /></button>{activePhoto ? <button className="secondary-button" aria-label={`Enlarge ${activePhoto.originalFilename}`} onClick={() => setExpandedPhotoId(activePhoto.id)}><Maximize2 size={16} /> Enlarge</button> : null}</div></div>
+            {activePhoto ? <>
+              <ZoomableEvidence resetKey={activePhoto.id}><ProtectedPhotoImage photo={activePhoto} /></ZoomableEvidence>
+              <div className="evidence-caption"><span>{activePhoto.originalFilename}</span><span>{photoQualityView(activePhoto, qualitySuggestionsByPhotoId.get(activePhoto.id), imageJobByPhotoId.get(activePhoto.id)?.status, analysisResultByPhotoId.get(activePhoto.id)).label} · {photoSourceLabel(activePhoto)}</span></div>
+              <div className="evidence-filmstrip" aria-label="Select evidence photo">{bundle.photos.map((photo, index) => {
+                const open = pendingSuggestions.filter((finding) => finding.photoId === photo.id).length;
+                return <button key={photo.id} className={activePhoto.id === photo.id ? "selected" : ""} aria-label={`Show ${photoDisplayName(photo)} evidence`} aria-pressed={activePhoto.id === photo.id} onClick={() => setActiveEvidenceId(photo.id)}><ProtectedPhotoImage photo={photo} /><span>{String(index + 1).padStart(2, "0")} · {photoDisplayName(photo)}</span><small>{photo.uploadStatus !== "uploaded" ? "Upload pending" : open ? `${open} to review` : photo.qualityStatus === "fail" ? "Retake" : "Uploaded"}</small></button>;
+              })}</div>
+            </> : <div className="evidence-stage-empty"><ImagePlus size={36} /><h3>Every decision starts with a clear photo.</h3><p>Capture or import the required views. Missing evidence stays explicitly unverified.</p></div>}
+          </section>
+          <details className="capture-support"><summary>Capture checklist &amp; evidence details <span>{capturedEvidencePercent}% captured · {missingAngles.length} required views missing</span></summary>
           <div className="detail-readiness-header">
+            {vehicleReferenceOpen ? (
+              <section id="vehicle-reference-panel" className="vehicle-reference-panel" aria-label="NHTSA VIN reference">
+                <div className="vehicle-reference-heading">
+                  <div>
+                    <span className="eyebrow">Vehicle reference</span>
+                    <strong>NHTSA vPIC VIN decode</strong>
+                    <small>Manufacturer-submitted specifications. This is not an accident, title, ownership, or condition-history report.</small>
+                  </div>
+                  <button className="icon-button" aria-label="Close VIN details" onClick={() => setVehicleReferenceOpen(false)}>
+                    <X size={16} />
+                  </button>
+                </div>
+                {vehicleReferenceLoading ? <p className="vehicle-reference-state">Retrieving NHTSA vehicle specifications...</p> : null}
+                {vehicleReferenceError ? (
+                  <div className="vehicle-reference-error">
+                    <span>{vehicleReferenceError}</span>
+                    <button className="secondary-button" onClick={() => void loadVehicleReference()}><RefreshCw size={14} /> Retry</button>
+                  </div>
+                ) : null}
+                {vehicleReference ? (
+                  <>
+                    <div className={`vehicle-reference-validation ${vehicleReference.validVin ? "valid" : "review"}`}>
+                      <strong>{vehicleReference.validVin ? "VIN decoded cleanly" : "VIN needs review"}</strong>
+                      <span>{vehicleReference.validationMessage}</span>
+                    </div>
+                    <dl className="vehicle-reference-grid">
+                      {[
+                        ["Vehicle", [vehicleReference.specifications.modelYear, vehicleReference.specifications.make, vehicleReference.specifications.model].filter(Boolean).join(" ")],
+                        ["Trim / series", [vehicleReference.specifications.trim, vehicleReference.specifications.series].filter((value, index, values) => value && values.indexOf(value) === index).join(" · ")],
+                        ["Body class", vehicleReference.specifications.bodyClass],
+                        ["Drive type", vehicleReference.specifications.driveType],
+                        ["Fuel", vehicleReference.specifications.fuelType],
+                        ["Engine", vehicleReference.specifications.engine],
+                        ["Manufacturer", vehicleReference.specifications.manufacturer],
+                        ["Assembly plant", vehicleReference.specifications.plant]
+                      ].filter((item) => item[1]).map(([label, value]) => (
+                        <div key={label}>
+                          <dt>{label}</dt>
+                          <dd>{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <div className="vehicle-reference-source">
+                      <span>Retrieved {new Date(vehicleReference.retrievedAt).toLocaleString()} from {vehicleReference.provider}</span>
+                      <a href={vehicleReference.sourceUrl} target="_blank" rel="noreferrer">View NHTSA response <ExternalLink size={13} /></a>
+                    </div>
+                  </>
+                ) : null}
+              </section>
+            ) : null}
             <div className="marketplace-readiness-strip" aria-label="Marketplace readiness">
               <span className={marketplaceReadiness.crStatus === "CR ready" ? "ready" : "blocked"}>
                 <strong>{reportReadiness.label}</strong>
@@ -1028,7 +1287,7 @@ export function InspectionDetailPage() {
                 <small>Recon estimate</small>
               </span>
               <span className={`risk-${marketplaceReadiness.arbitrationRisk.toLowerCase()}`}>
-                <strong>{marketplaceReadiness.arbitrationRisk}</strong>
+                <strong>{bundle.conditionQc?.openCount || !bundle.photos.length ? "Not assessed" : marketplaceReadiness.arbitrationRisk}</strong>
                 <small>Arbitration risk</small>
               </span>
             </div>
@@ -1055,7 +1314,7 @@ export function InspectionDetailPage() {
               <div className="workflow-status">
                 <h2>Workflow status</h2>
                 <div className={`workflow-steps step-${workflowStep}`}>
-                  {["Inspection", referenceOnlyEvidence ? "Evidence Mapping" : "AI Analysis", "Human Review", "Report"].map((label, index) => {
+                  {["Inspection", referenceOnlyEvidence ? "Evidence Review" : "AI Analysis", "Human Review", "Report"].map((label, index) => {
                     const stepNumber = index + 1;
                     const stepState = workflowStep > stepNumber ? "complete" : workflowStep === stepNumber ? "current" : "upcoming";
                     return (
@@ -1136,15 +1395,15 @@ export function InspectionDetailPage() {
                       const analysis = analysisResultByPhotoId.get(photo.id);
                       const referenceEvidence = isReferenceEvidence(photo, analysis);
                       const confidenceLabel = typeof photo.detectedAngleConfidence === "number" ? `${Math.round(photo.detectedAngleConfidence * 100)}%` : "Pending";
-                      const angleConfidenceLabel = referenceEvidence ? "Reference slot" : confidenceLabel === "Pending" ? "Angle pending" : `Angle ${confidenceLabel}`;
+                      const angleConfidenceLabel = referenceEvidence ? "Required view" : confidenceLabel === "Pending" ? "Angle pending" : `Angle ${confidenceLabel}`;
                       const providerLabel = analysisProviderLabel(analysis);
                       const quality = photoQualityView(photo, qualitySuggestionsByPhotoId.get(photo.id), job?.status, analysis);
                       return (
                         <article className={`photo-tile quality-${quality.status}`} key={photo.id}>
-                          <ProtectedPhotoImage photo={photo} />
+                          <button type="button" className="evidence-open-button" aria-label={`Enlarge ${photo.originalFilename}`} onClick={() => setExpandedPhotoId(photo.id)}><ProtectedPhotoImage photo={photo} /></button>
                           <div title={`${photo.originalFilename} · ${quality.detail}`}>
                             <strong>{photoDisplayName(photo)}</strong>
-                            <span className={`photo-confidence-badge ${!referenceEvidence && confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={referenceEvidence ? "Reference manifest checklist mapping" : `Required-angle match confidence ${confidenceLabel}`}>
+                            <span className={`photo-confidence-badge ${!referenceEvidence && confidenceLabel === "Pending" ? "pending" : ""}`} aria-label={referenceEvidence ? "Required checklist view" : `Required-angle match confidence ${confidenceLabel}`}>
                               {angleConfidenceLabel}
                             </span>
                             <span className="photo-file-name">{quality.label}</span>
@@ -1154,7 +1413,7 @@ export function InspectionDetailPage() {
                               <span className="photo-source-chip">{photoSourceLabel(photo)}</span>
                             )}
                             <span className={`analysis-job-chip job-${job?.status ?? photo.analysisStatus}`}>
-                              {referenceEvidence ? "Reference mapped" : `Analysis ${formatJobStatus(job?.status ?? photo.analysisStatus)}`}
+                              {referenceEvidence ? "Checklist matched" : `Analysis ${formatJobStatus(job?.status ?? photo.analysisStatus)}`}
                             </span>
                             {providerLabel ? (
                               <span className={`analysis-provider-chip ${analysis?.provider === "bedrockVisionProvider" ? "provider-bedrock" : "provider-imported"}`}>
@@ -1174,9 +1433,9 @@ export function InspectionDetailPage() {
                 </div>
               </div>
 
-              <div className="sample-actions evidence-actions">
+              <div className="sample-actions evidence-actions" id="evidence-tools">
                 {isFinalizedInspection ? (
-                  <span className="finalized-lock-note"><ShieldCheck size={15} /> Finalized record: evidence is locked for buyer-facing release.</span>
+                  <span className="finalized-lock-note"><ShieldCheck size={15} /> {historicalPublication ? "Historical record: original evidence and report are preserved, not a current-policy release." : "Finalized record: evidence is locked for buyer-facing release."}</span>
                 ) : referenceEvidenceEnabled ? (
                   <>
                     <select aria-label="Reference evidence set" value={sampleKey} onChange={(event) => setSampleKey(event.target.value)} disabled={!matchedSamplePhotoSet}>
@@ -1217,24 +1476,26 @@ export function InspectionDetailPage() {
                 </button> : null}
               </div>
             </section>
-          </div>
-        </main>
+          </div></details>
+            {qcOpen && bundle.conditionQc ? <ConditionQcDialog onClose={() => setQcOpen(false)}><ConditionQcPanel key={id} assessment={bundle.conditionQc} inspectionId={id} actor={actor} photos={bundle.photos} canRecord={can("damage:create")} canReview={can("report:approve")} locked={isEvaluationWorkspace || isFinalizedInspection} onChanged={load} onPhoto={setExpandedPhotoId} onFinding={() => { setQcOpen(false); setReviewRailCollapsed(false); requestAnimationFrame(() => document.querySelector<HTMLElement>(".review-column")?.focus()); }} /></ConditionQcDialog> : null}
+            {expandedPhotoId && bundle.photos.some((p) => p.id === expandedPhotoId) ? <EvidenceViewer photos={bundle.photos} selectedId={expandedPhotoId} onSelect={setExpandedPhotoId} onClose={() => setExpandedPhotoId(null)} renderPhoto={(photo) => <ProtectedPhotoImage key={photo.id} photo={photo} />} /> : null}
+        </section>
 
           <section className="bottom-dock">
             <article className="dock-panel">
               <div className="dock-tabs" role="tablist" aria-label="Condition review">
-                <button type="button" role="tab" aria-selected={conditionDockTab === "grading"} className={conditionDockTab === "grading" ? "active" : ""} onClick={() => setConditionDockTab("grading")}>Condition grading</button>
+                <button type="button" role="tab" aria-selected={conditionDockTab === "grading"} className={conditionDockTab === "grading" ? "active" : ""} onClick={() => setConditionDockTab("grading")}>Condition Report (CR)</button>
                 <button type="button" role="tab" aria-selected={conditionDockTab === "damage"} className={conditionDockTab === "damage" ? "active" : ""} onClick={() => setConditionDockTab("damage")}>Damage items</button>
               </div>
               {conditionDockTab === "grading" ? (
                 <div className="dock-body grading-dock-body">
                   <div className="panel-header">
-                    <h2>Condition grading</h2>
-                    <span>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} grade` : "Not calculated"}</span>
+                    <h2>Condition Report (CR)</h2>
+                    <span>{gradeView?.reviewState === "approved" ? "Reviewer approved" : gradeView ? "Approval required" : bundle.conditionGrade ? "Grade unavailable" : "Not calculated"}</span>
                   </div>
                   <div className="grade-result-card">
-                    <strong>{bundle.conditionGrade ? `${bundle.conditionGrade.score}/100` : "Grade pending"}</strong>
-                    <span>{bundle.conditionGrade ? "Deterministic score based on required evidence, mileage, age, and confirmed damage." : "Calculate the grade after required photo evidence is confirmed."}</span>
+                    <strong>{bundle.conditionGrade ? formatConditionGrade(bundle.conditionGrade) : "Grade pending"}</strong>
+                    <span>{gradeView ? "Condition grade based on required evidence and reviewer-confirmed findings." : bundle.conditionGrade ? "This grade record is incompatible and must be recalculated." : "Calculate the grade after required photo evidence is confirmed."}</span>
                   </div>
                   <div className="grading-stat-grid">
                     <span><strong>{capturedEvidencePercent}%</strong><small>Evidence complete</small></span>
@@ -1244,52 +1505,95 @@ export function InspectionDetailPage() {
                   </div>
                   <div className="grade-detail-list compact-list" tabIndex={0} role="region" aria-label="Condition grade details">
                     {gradeDeductions.length > 0 ? gradeDeductions.map((deduction) => (
-                      <span key={`${deduction.reason}-${deduction.points}`}>
+                      <span key={`${deduction.reason}-${deduction.amount}`}>
                         <strong>{deduction.reason}</strong>
-                        <small>-{deduction.points} pts</small>
+                        <small>-{deduction.amount.toFixed(1)}</small>
                       </span>
                     )) : <p className="empty-dock-state">No damage deductions recorded.</p>}
-                    {bundle.conditionGrade ? (
-                      <>
-                        <span><strong>Evidence completion penalty</strong><small>-{gradeExplanation.completionPenalty ?? 0} pts</small></span>
-                        <span><strong>Mileage adjustment</strong><small>-{gradeExplanation.mileageAdjustment ?? 0} pts</small></span>
-                        <span><strong>Age adjustment</strong><small>-{gradeExplanation.ageAdjustment ?? 0} pts</small></span>
-                      </>
-                    ) : null}
+                    {gradeEvidenceBlockers.map((blocker) => (
+                      <span key={blocker}><strong>Evidence blocker</strong><small>{blocker}</small></span>
+                    ))}
                   </div>
                   <div className="dock-actions">
                     <button className="secondary-button" disabled={gradeDisabled} title={finalizedActionTitle ?? (canGrade ? undefined : "Reviewer or Admin access required")} onClick={() => void runAction("grade", () => api(`/api/inspections/${id}/grade`, { method: "POST", body: JSON.stringify({ idempotencyKey: `grade-${id}` }) }, actor))}>
                       <ShieldCheck size={16} /> Calculate grade
                     </button>
+                    {gradeView?.reviewState === "suggested" ? (
+                      <button className="primary-button" disabled={approveGradeDisabled} title={gradeEvidenceBlockers.length > 0 ? "Resolve evidence blockers before approval." : undefined} onClick={() => void runAction("approve-grade", () => api(`/api/inspections/${id}/condition-grade/approve`, {
+                        method: "POST",
+                        body: JSON.stringify({ approvedGrade: gradeView.value })
+                      }, actor))}>
+                        <Check size={16} /> Approve {gradeView.value.toFixed(1)}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ) : (
                 <div className="dock-body damage-dock-body">
                   <div className="panel-header">
                     <h2>Damage items</h2>
-                    <span>{bundle.damageItems.length} confirmed</span>
+                    <span>
+                      {bundle.damageItems.length} confirmed
+                      {evaluationDamageItems.length > 0 ? ` · ${evaluationDamageItems.length} preview` : ""}
+                    </span>
                   </div>
                   <div className="damage-list compact-list">
-                    {bundle.damageItems.length > 0 ? bundle.damageItems.map((item) => (
-                      <div key={item.id} className="damage-row">
+                    {damageItemsForDisplay.length > 0 ? damageItemsForDisplay.map((item) => (
+                      <div key={item.id} className={`damage-row ${item.source === "evaluation_preview" ? "evaluation-preview" : ""}`}>
                         <strong>{item.location}</strong>
                         <span>{item.severity} {item.damageType.replaceAll("_", " ")}</span>
-                        <small>{item.source === "vision_suggestion" ? "AI-suggested, human-confirmed" : "Manual"}</small>
+                        <small>
+                          {item.source === "vision_suggestion"
+                            ? "AI-suggested, human-confirmed"
+                            : item.source === "evaluation_preview"
+                              ? "Session preview · not saved"
+                              : "Manual"}
+                        </small>
                       </div>
                     )) : <p className="empty-dock-state">No confirmed damage items.</p>}
                   </div>
                   <div className="damage-form">
-                    <input disabled={damageDisabled} value={damageForm.location} onChange={(event) => setDamageForm((current) => ({ ...current, location: event.target.value }))} />
-                    <select disabled={damageDisabled} value={damageForm.damageType} onChange={(event) => setDamageForm((current) => ({ ...current, damageType: event.target.value }))}>
+                    <select aria-label="Damage evidence photo" disabled={damageDisabled} value={damageForm.photoId} onChange={(event) => setDamageForm((current) => ({ ...current, photoId: event.target.value }))}>
+                      <option value="">Inspector observation — no photo</option>
+                      {bundle.photos.filter((p) => p.uploadStatus === "uploaded").map((p) => <option key={p.id} value={p.id}>{p.originalFilename}</option>)}
+                    </select>
+                    <input aria-label="Damaged area" disabled={damageDisabled} value={damageForm.location} onChange={(event) => setDamageForm((current) => ({ ...current, location: event.target.value }))} />
+                    <select aria-label="Damage type" disabled={damageDisabled} value={damageForm.damageType} onChange={(event) => setDamageForm((current) => ({ ...current, damageType: event.target.value }))}>
                       {["scratch", "dent", "crack", "paint_damage", "glass_damage", "wheel_damage", "interior_wear", "unknown"].map((value) => <option key={value}>{value}</option>)}
                     </select>
-                    <select disabled={damageDisabled} value={damageForm.severity} onChange={(event) => setDamageForm((current) => ({ ...current, severity: event.target.value }))}>
+                    <select aria-label="Damage severity" disabled={damageDisabled} value={damageForm.severity} onChange={(event) => setDamageForm((current) => ({ ...current, severity: event.target.value }))}>
                       {["minor", "moderate", "severe", "unknown"].map((value) => <option key={value}>{value}</option>)}
                     </select>
-                    <button className="secondary-button" disabled={damageDisabled} title={finalizedActionTitle ?? (canConfirmDamage ? undefined : "Reviewer or Admin access required")} onClick={() => void runAction("damage", () => api(`/api/inspections/${id}/damage`, { method: "POST", body: JSON.stringify(damageForm) }, actor))}>
+                    <button
+                      className="secondary-button"
+                      disabled={damageDisabled}
+                      title={damageDisabledReason}
+                      onClick={() => {
+                        if (canPreviewDamage) {
+                          addEvaluationDamagePreview();
+                          return;
+                        }
+                        void runAction("damage", async () => {
+                          await api(`/api/inspections/${id}/damage`, {
+                            method: "POST",
+                            headers: { "idempotency-key": damageOperationId },
+                            body: JSON.stringify({ ...damageForm, photoId: damageForm.photoId || null, idempotencyKey: damageOperationId })
+                          }, actor);
+                          setDamageOperationId(crypto.randomUUID());
+                        });
+                      }}
+                    >
                       <Pencil size={16} /> Add
                     </button>
                   </div>
+                  {damageHelperText ? (
+                    <div className={`damage-permission-row ${canPreviewDamage ? "evaluation-preview" : ""}`}>
+                      <p className="damage-permission-note">{damageHelperText}</p>
+                      {canPreviewDamage && evaluationDamageItems.length > 0 ? (
+                        <button className="text-button" type="button" onClick={clearEvaluationDamagePreview}>Clear preview</button>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               )}
             </article>
@@ -1302,7 +1606,21 @@ export function InspectionDetailPage() {
               {reportDockTab === "draft" ? (
                 <div className="dock-body report-dock-body">
                   <div className="report-actions dock-actions">
-                    <button className="secondary-button" disabled={draftReportDisabled} title={draftReportDisabledReason || undefined} onClick={() => void runAction("report", () => api(`/api/inspections/${id}/ai-report`, { method: "POST", body: JSON.stringify({ idempotencyKey: `report-${id}` }) }, actor))}>
+                    <button className="secondary-button" disabled={draftReportDisabled} title={draftReportDisabledReason || undefined} onClick={() => void runAction("report", () => {
+                      if (bundle.inspection.status === "REPORT_FAILED" && bundle.aiReportJob) {
+                        const retryKey = `report-retry-${bundle.aiReportJob.id}`;
+                        return api(`/api/ai-report-jobs/${bundle.aiReportJob.id}/retry`, {
+                          method: "POST",
+                          headers: { "idempotency-key": retryKey },
+                          body: JSON.stringify({ idempotencyKey: retryKey })
+                        }, actor);
+                      }
+                      return api(`/api/inspections/${id}/ai-report`, {
+                        method: "POST",
+                        headers: { "idempotency-key": `report-${id}-${bundle.conditionGrade?.id ?? "pending"}` },
+                        body: JSON.stringify({ idempotencyKey: `report-${id}-${bundle.conditionGrade?.id ?? "pending"}` })
+                      }, actor);
+                    })}>
                       <Bot size={16} /> {draftReportButtonLabel}
                     </button>
                   </div>
@@ -1314,17 +1632,19 @@ export function InspectionDetailPage() {
                     </div>
                   ) : null}
                   <div className="grade-strip">
-                    <strong>{bundle.conditionGrade ? `${bundle.conditionGrade.grade} · ${bundle.conditionGrade.score}` : "Grade not calculated"}</strong>
-                    <span>{bundle.conditionGrade ? "Score based on evidence completeness, mileage, age, and confirmed damage." : "Condition score appears after grading."}</span>
-                  </div>
-                  {bundle.aiReportDraft ? (
-                    <div className="ai-draft" tabIndex={0} role="region" aria-label="AI report draft summary">
-                      <h3>Draft summary</h3>
-                      <p>{bundle.aiReportDraft.outputJson.summary}</p>
-                      <small>Confidence {Math.round(bundle.aiReportDraft.confidence * 100)}% · human review {bundle.aiReportDraft.humanReviewRequired ? "required" : "optional"}</small>
+                    <div>
+                      <strong>{bundle.conditionGrade ? formatConditionGrade(bundle.conditionGrade) : "Grade not calculated"}</strong>
+                      <span>{gradeView?.reviewState === "approved" ? "Reviewer-approved condition grade." : gradeView ? "Suggested grade requires reviewer approval." : bundle.conditionGrade ? "Recalculate this incompatible grade record." : "Condition grade appears after grading."}</span>
                     </div>
+                    {bundle.aiReportDraft ? (
+                      <small>Human approval required · model score is not a calibrated accuracy percentage.</small>
+                    ) : null}
+                  </div>
+                  {!editReportDisabled ? (
+                    <details className="report-edit-details"><summary>Edit report language</summary><textarea className="report-document-editor" aria-label="Buyer-facing condition report" value={reportBody} onChange={(event) => setReportBody(event.target.value)} placeholder="Generate a report draft to review buyer-ready language." /></details>
                   ) : null}
-                  <textarea aria-label="Buyer-facing condition report" value={reportBody} disabled={editReportDisabled} onChange={(event) => setReportBody(event.target.value)} placeholder="Generate a report draft to review buyer-ready language." />
+                  <ConditionReportDocument bundle={bundle} body={reportBody} />
+                  {unsavedReportText || unsavedReportComment ? <p className="action-help-text">Unsaved changes. Save this report version before release; new report language needs human approval.</p> : null}
                   {bundle.finalReport ? (
                     <div className="report-review-state">
                       <div>
@@ -1333,7 +1653,11 @@ export function InspectionDetailPage() {
                       </div>
                       <label>
                         <span>Reviewer comment</span>
-                        <textarea value={reportComment} disabled={editReportDisabled} onChange={(event) => setReportComment(event.target.value)} placeholder="Record evidence checks, disclosure edits, or approval rationale." />
+                        {editReportDisabled ? (
+                          <p className="reviewer-comment-readonly">{reportComment.trim() || "No reviewer comment recorded."}</p>
+                        ) : (
+                          <textarea value={reportComment} onChange={(event) => setReportComment(event.target.value)} placeholder="Record evidence checks, disclosure edits, or approval rationale." />
+                        )}
                       </label>
                     </div>
                   ) : null}
@@ -1341,7 +1665,7 @@ export function InspectionDetailPage() {
                     <button className="secondary-button" disabled={!bundle.finalReport || editReportDisabled} title={finalizedActionTitle ?? (canEditReport ? undefined : "Reviewer or Admin access required")} onClick={() => bundle.finalReport && void runAction("save-report", () => api(`/api/reports/${bundle.finalReport!.id}`, { method: "PATCH", body: JSON.stringify({ reportBody, reviewerComment: reportComment, expectedVersion: bundle.finalReport!.version }) }, actor))}>
                       <FileText size={16} /> Save report edits
                     </button>
-                    <button className="secondary-button" disabled={approveReportDisabled} title={canApproveReport ? "Approve this exact report version after evidence review." : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("approve-report", () => api(`/api/reports/${bundle.finalReport!.id}/approve`, { method: "POST", body: JSON.stringify({ reviewerComment: reportComment, expectedVersion: bundle.finalReport!.version }) }, actor))}>
+                    <button className="secondary-button" disabled={approveReportDisabled} title={unsavedReportText ? "Save new report language before approving it." : canApproveReport ? "Approve this exact report version after evidence review." : "Reviewer or Admin access required"} onClick={() => bundle.finalReport && void runAction("approve-report", () => api(`/api/reports/${bundle.finalReport!.id}/approve`, { method: "POST", body: JSON.stringify({ reviewerComment: reportComment, expectedVersion: bundle.finalReport!.version }) }, actor))}>
                       <ShieldCheck size={16} /> Approve
                     </button>
                     <button className="secondary-button" disabled={!bundle.finalReport} onClick={() => bundle.finalReport && void runAction("export-report", () => downloadBuyerReport(bundle.finalReport!.id, actor))}>
@@ -1404,6 +1728,24 @@ export function InspectionDetailPage() {
                       </ul>
                     ) : <p>No notable items recorded.</p>}
                   </div>
+                  {(reportOutput.conditionReportSections?.length ?? 0) > 0 ? (
+                    <details className="summary-section report-section-details">
+                      <summary>Condition report sections ({reportOutput.conditionReportSections?.length})</summary>
+                      <div className="report-section-list">
+                        {reportOutput.conditionReportSections?.map((section) => (
+                          <article key={section.key}>
+                            <header>
+                              <strong>{section.title}</strong>
+                              <span className={`queue-status section-${section.status.toLowerCase()}`}>{section.status.replaceAll("_", " ")}</span>
+                            </header>
+                            <ul className="summary-list">
+                              {section.observations.map((observation) => <li key={observation}>{observation}</li>)}
+                            </ul>
+                          </article>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
                   <div className="summary-section">
                     <strong>Release Notes</strong>
                     <p>{reportOutput.recommendedDisclosure ?? (missingEvidence.length > 0 ? missingEvidence.join(" ") : "Evidence is complete. Reviewer can finalize once the draft is approved.")}</p>
@@ -1426,13 +1768,29 @@ export function InspectionDetailPage() {
             </article>
           </section>
 
+        <div className="review-rail-cell" hidden={reviewRailCollapsed}>
         <aside className="review-column" tabIndex={0} aria-label="Evidence finding review">
+          <div className="decision-rail-title"><span className="eyebrow">Human decision workspace</span><h2>{activePhoto ? photoDisplayName(activePhoto) : "Evidence review"}</h2><p>Inspect the evidence. Confirm only what it supports.</p></div>
           <div className="review-heading">
             <strong>{reviewRailTitle}</strong>
-            {!canReviewSuggestions && !isFinalizedInspection ? <span>Reviewer or Admin action required.</span> : null}
+            {isEvaluationWorkspace && canReviewSuggestions && !isFinalizedInspection ? (
+              evaluationReviewCount > 0 ? (
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    clearEvaluationReview(window.sessionStorage, id);
+                    setEvaluationDamageItems(loadEvaluationDamage(window.sessionStorage, id));
+                    void load();
+                  }}
+                >
+                  Reset {evaluationReviewCount} session decision{evaluationReviewCount === 1 ? "" : "s"}
+                </button>
+              ) : <span>Session-only decisions</span>
+            ) : null}
+            {!canReviewSuggestions && !isFinalizedInspection ? <span>Select Reviewer or Admin to review.</span> : null}
           </div>
           {pendingSuggestions.length === 0 ? (
-            <div className={`review-empty-state ${isFinalizedInspection ? "complete" : ""}`}>
+            <div className={`review-empty-state ${isFinalizedInspection && !historicalPublication ? "complete" : ""}`}>
               <p>{reviewRailBody}</p>
               <dl className="review-summary-grid">
                 <div>
@@ -1456,25 +1814,29 @@ export function InspectionDetailPage() {
               ) : null}
             </div>
           ) : null}
-          {pendingSuggestions.map((suggestion) => (
+          {pendingSuggestions.length > 0 && activeFindings.length === 0 ? <div className="review-empty-state"><p>No undecided findings on this photo. This does not establish damage-free condition.</p><button className="secondary-button" onClick={() => setActiveEvidenceId(pendingSuggestions[0].photoId)}>Next finding <ArrowRight size={15} /></button></div> : null}
+          {activeFindings.map((suggestion) => (
             <SuggestionCard
               key={suggestion.id}
               suggestion={suggestion}
               photo={photosById.get(suggestion.photoId)}
               analysis={analysisResultByPhotoId.get(suggestion.photoId)}
               disabled={reviewDisabled}
-              onAccept={() => runAction("accept", () => api(`/api/vision-suggestions/${suggestion.id}/accept`, { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) }, actor))}
-              onReject={() => runAction("reject", () => api(`/api/vision-suggestions/${suggestion.id}/reject`, { method: "POST", body: JSON.stringify({ expectedVersion: suggestion.version }) }, actor))}
-              onEdit={(value) => runAction("edit", () => api(`/api/vision-suggestions/${suggestion.id}`, { method: "PATCH", body: JSON.stringify({ ...value, expectedVersion: suggestion.version }) }, actor))}
+              onAccept={() => reviewSuggestion(suggestion, "accepted")}
+              onReject={() => reviewSuggestion(suggestion, "rejected")}
+              onEdit={(value) => reviewSuggestion(suggestion, "edited", value)}
+              onPhoto={() => setExpandedPhotoId(suggestion.photoId)}
             />
           ))}
+          {activePhoto && bundle.conditionQc?.issues.some((issue) => issue.photoIds.includes(activePhoto.id)) ? <div className="photo-linked-qc"><span className="eyebrow">Linked QC exceptions</span>{bundle.conditionQc.issues.filter((issue) => issue.photoIds.includes(activePhoto.id)).map((issue) => <div key={issue.id}><strong>{issue.title}</strong><p>{issue.detail}</p><button className="secondary-button" onClick={() => setQcOpen(true)}>Review exception</button></div>)}</div> : null}
         </aside>
+        </div>
       </div>
     </section>
   );
 }
 
-function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onReject, onEdit }: {
+function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onReject, onEdit, onPhoto }: {
   suggestion: VisionSuggestion;
   photo?: VehiclePhoto;
   analysis?: PhotoAnalysisResult;
@@ -1482,20 +1844,21 @@ function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onRej
   onAccept: () => Promise<unknown>;
   onReject: () => Promise<unknown>;
   onEdit: (value: { suggestedValue: unknown; explanation?: string }) => Promise<unknown>;
+  onPhoto: () => void;
 }) {
   const confidencePercent = Math.round(suggestion.confidence * 100);
   const referenceEvidence = Boolean(photo && isReferenceEvidence(photo, analysis));
   const rows = referenceEvidence ? referenceSuggestionFacts(suggestion) : suggestionFacts(suggestion);
-  const providerLabel = analysisProviderLabel(analysis) ?? "Analysis provider";
+  const providerLabel = analysisProviderLabel(analysis);
   return (
     <article className="suggestion-card">
       <div className="suggestion-context">
         <span>Focus: <strong>{suggestionFocus(suggestion)}</strong></span>
-        <span className="model-chip">{providerLabel} <ChevronRight size={13} /></span>
+        {providerLabel ? <span className="model-chip">{providerLabel} <ChevronRight size={13} /></span> : null}
       </div>
       {photo ? (
         <div className="suggestion-photo">
-          <ProtectedPhotoImage photo={photo} />
+          <button type="button" className="evidence-open-button" aria-label={`Enlarge ${photo.originalFilename}`} onClick={onPhoto}><ProtectedPhotoImage photo={photo} /></button>
         </div>
       ) : null}
       {photo ? <span className="suggestion-source-line">{photoSourceLabel(photo)} · {photo.originalFilename}</span> : null}
@@ -1506,17 +1869,12 @@ function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onRej
             <dd>{value}</dd>
           </div>
         ))}
-        {referenceEvidence ? (
-          <div className="confidence-fact">
-            <dt>Provenance</dt>
-            <dd>Source manifest + reviewer decision</dd>
-          </div>
-        ) : (
+        {!referenceEvidence ? (
           <div className="confidence-fact">
             <dt>Confidence</dt>
             <dd><ConfidenceMeter percent={confidencePercent} /></dd>
           </div>
-        )}
+        ) : null}
         <div className="notes-fact">
           <dt>Notes</dt>
           <dd>{suggestionNote(suggestion)}</dd>
@@ -1537,8 +1895,6 @@ function SuggestionCard({ suggestion, photo, analysis, disabled, onAccept, onRej
 function ConfidenceMeter({ percent }: { percent: number }) {
   const clampedPercent = Math.max(0, Math.min(100, percent));
   return (
-    <span className="confidence-meter" style={{ background: `conic-gradient(#0f766e ${clampedPercent * 3.6}deg, #e2e8f0 0deg)` }}>
-      <span>{clampedPercent}%</span>
-    </span>
+    <span className="certainty-label">{clampedPercent >= 85 ? "Review required" : "Low certainty · verify or recapture"}<small>Model suggestion, not verified vehicle condition</small></span>
   );
 }

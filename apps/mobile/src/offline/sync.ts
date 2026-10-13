@@ -5,6 +5,7 @@ import { deviceIdentity } from "../deviceIdentity";
 import type { MobileSession, UploadOperation, VehiclePhoto } from "../types";
 import { updateUploadOperation, uploadOperations } from "./database";
 import { nextAttempt, shouldAttempt } from "./retryPolicy";
+import { createSingleFlight } from "./singleFlight";
 
 type UploadIntent = {
   objectBucket: string;
@@ -112,7 +113,9 @@ async function uploadOne(operation: UploadOperation, session: MobileSession): Pr
   }
 }
 
-export async function syncUploadQueue(
+const runSingleSync = createSingleFlight<SyncSummary>();
+
+async function syncUploadQueueOnce(
   session: MobileSession,
   onProgress?: (operation: UploadOperation) => void
 ): Promise<SyncSummary> {
@@ -129,4 +132,11 @@ export async function syncUploadQueue(
     summary[result] += 1;
   }
   return summary;
+}
+
+export function syncUploadQueue(
+  session: MobileSession,
+  onProgress?: (operation: UploadOperation) => void
+): Promise<SyncSummary> {
+  return runSingleSync(() => syncUploadQueueOnce(session, onProgress));
 }

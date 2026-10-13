@@ -20,21 +20,26 @@ export function ReportsScreen() {
       <View style={styles.metrics}>
         <Metric label="Created" value={created.length} />
         <Metric label="Awaiting approval" value={created.length - finalized.length - approval.length} tone="warn" />
-        <Metric label="Finalized" value={finalized.length} tone="good" />
+        <Metric label="Published history" value={finalized.length} />
       </View>
       <View style={styles.list}>
         {bundles.map((bundle) => {
-          const status = bundle.finalReport?.finalizedAt ? "Finalized" : bundle.finalReport ? bundle.finalReport.approvalStatus.replaceAll("_", " ") : "Not started";
+          const qcStatusUnknown = Boolean(bundle.finalReport?.finalizedAt && bundle.requiresReinspection === undefined);
+          const status = bundle.requiresReinspection ? "Historical release" : qcStatusUnknown ? "QC unverified" : bundle.finalReport?.finalizedAt ? "Finalized" : bundle.finalReport ? bundle.finalReport.approvalStatus.replaceAll("_", " ") : "Not started";
           return (
             <Pressable key={bundle.inspection.id} onPress={() => navigation.navigate("ReportEditor", { inspectionId: bundle.inspection.id })} accessibilityRole="button">
               <Card style={styles.card}>
                 <View style={styles.copy}>
                   <Text style={styles.vehicle}>{bundle.inspection.year} {bundle.inspection.make} {bundle.inspection.model}</Text>
                   <Text style={styles.vin}>{bundle.inspection.vin}</Text>
-                  <Text style={styles.summary}>{bundle.conditionGrade ? `Grade ${bundle.conditionGrade.grade} · ${bundle.conditionGrade.score}/100` : "Condition grade pending"}</Text>
+                  <Text style={styles.summary}>
+                    {bundle.conditionGrade
+                      ? `InspectIQ Reference Grade ${(bundle.conditionGrade.approvedGrade ?? bundle.conditionGrade.suggestedGrade).toFixed(1)} / 5.0${bundle.conditionGrade.approvedGrade == null ? " · approval required" : ""}`
+                      : "Reference grade pending"}
+                  </Text>
                 </View>
                 <View style={styles.right}>
-                  <StatusPill label={status} tone={bundle.finalReport?.finalizedAt ? "good" : bundle.finalReport ? "info" : "neutral"} />
+                  <StatusPill label={status} tone={bundle.requiresReinspection || qcStatusUnknown ? "warn" : bundle.finalReport?.finalizedAt ? "good" : bundle.finalReport ? "info" : "neutral"} />
                   <ChevronRight size={18} color={colors.muted} />
                 </View>
               </Card>
@@ -52,7 +57,7 @@ const styles = StyleSheet.create({
   card: { flexDirection: "row", alignItems: "center", gap: 10 },
   copy: { flex: 1, gap: 4 },
   vehicle: { color: colors.ink, fontSize: 15, fontWeight: "800" },
-  vin: { color: colors.muted, fontSize: 10 },
+  vin: { color: colors.muted, fontSize: 12 },
   summary: { color: colors.muted, fontSize: 12 },
   right: { alignItems: "flex-end", gap: 12 }
 });

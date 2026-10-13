@@ -14,7 +14,8 @@ function statusPresentation(status: string): { label: string; tone: "neutral" | 
 }
 
 export function InspectionCard({ bundle, onPress }: { bundle: InspectionBundle; onPress: () => void }) {
-  const presentation = statusPresentation(bundle.inspection.status);
+  const qcStatusUnknown = bundle.inspection.status === "FINALIZED" && bundle.requiresReinspection === undefined;
+  const presentation = bundle.requiresReinspection ? { label: "Historical release", tone: "warn" as const } : qcStatusUnknown ? { label: "Published history", tone: "neutral" as const } : statusPresentation(bundle.inspection.status);
   return (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={`Open ${bundle.inspection.year} ${bundle.inspection.make} ${bundle.inspection.model}`}>
       <Card style={styles.card}>
@@ -28,10 +29,10 @@ export function InspectionCard({ bundle, onPress }: { bundle: InspectionBundle; 
             <Text style={styles.detail}>{bundle.inspection.trim} · {bundle.inspection.mileage.toLocaleString()} mi</Text>
             <Text style={styles.detail}>{bundle.inspection.completenessPercentage}% evidence</Text>
           </View>
-          {bundle.readinessIssues.length > 0 ? (
+          {bundle.requiresReinspection ? <Text style={styles.blocker}>Fresh inspection required by current QC rules</Text> : qcStatusUnknown ? <Text style={styles.blocker}>Current-QC release status unverified · refresh online</Text> : bundle.readinessIssues.length > 0 ? (
             <Text style={styles.blocker} numberOfLines={1}>{bundle.readinessIssues.length} release blocker{bundle.readinessIssues.length === 1 ? "" : "s"}</Text>
           ) : (
-            <Text style={styles.ready}>{bundle.buyerVisibleReady ? "Buyer-visible" : "No open readiness issue"}</Text>
+            <Text style={[styles.ready, !bundle.buyerVisibleReady && { color: colors.muted }]}>{bundle.buyerVisibleReady ? "Buyer-visible" : "No open readiness issue · release not confirmed"}</Text>
           )}
         </View>
         <ChevronRight size={20} color={colors.muted} />

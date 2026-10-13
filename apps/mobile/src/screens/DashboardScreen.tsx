@@ -7,6 +7,7 @@ import { useAuth } from "../auth/AuthContext";
 import { ActionButton, Metric, Notice, PageHeading, Screen, Section } from "../components/Primitives";
 import { InspectionCard } from "../components/InspectionCard";
 import type { RootStackParamList } from "../navigation/types";
+import { colors } from "../theme";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 
 export function DashboardScreen() {
@@ -30,25 +31,26 @@ export function DashboardScreen() {
         title={session.actor.role === "inspector" ? "Capture queue" : session.actor.role === "reviewer" ? "Review queue" : "Operations"}
         subtitle={`${session.actor.name} · ${online ? "Online" : "Offline"}`}
       />
+      {priority[0] ? <View style={styles.continueCard}><Text style={styles.continueEyebrow}>NEXT IN YOUR WORKSPACE</Text><Text style={styles.continueTitle}>{priority[0].inspection.year} {priority[0].inspection.make} {priority[0].inspection.model}</Text><Text style={styles.continueCopy}>{session.actor.role === "inspector" ? "Continue required evidence capture." : "Continue evidence and condition-report review."} {pendingUploads.filter((upload) => upload.inspectionId === priority[0].inspection.id).length} uploads pending.</Text><ActionButton label="Continue inspection" onPress={() => navigation.navigate("InspectionDetail", { inspectionId: priority[0].inspection.id })} /></View> : null}
       {!online ? <Notice tone="offline" title="Working offline" message="Cached assignments and photo capture remain available. Changes will upload after reconnection." /> : null}
       {error ? <Notice tone="warn" title="Latest refresh failed" message={error} /> : null}
       <View style={styles.metrics}>
         {session.actor.role === "inspector" ? (
           <>
             <Metric label="Assigned" value={bundles.length} />
-            <Metric label="Capture work" value={captureWork.length} tone={captureWork.length ? "warn" : "good"} />
-            <Metric label="Pending uploads" value={pendingUploads.length} tone={pendingUploads.length ? "warn" : "good"} />
+            <Metric label="Capture work" value={captureWork.length} tone={captureWork.length ? "warn" : "default"} />
+            <Metric label="Pending uploads" value={pendingUploads.length} tone={pendingUploads.length ? "warn" : "default"} />
           </>
         ) : session.actor.role === "reviewer" ? (
           <>
-            <Metric label="Findings" value={pendingSuggestions.length} tone={pendingSuggestions.length ? "warn" : "good"} />
+            <Metric label="Findings" value={pendingSuggestions.length} tone={pendingSuggestions.length ? "warn" : "default"} />
             <Metric label="Reports" value={reportsInReview.length} />
             <Metric label="Finalized" value={finalized.length} tone="good" />
           </>
         ) : (
           <>
             <Metric label="Inspections" value={bundles.length} />
-            <Metric label="Exceptions" value={priority.length} tone={priority.length ? "bad" : "good"} />
+            <Metric label="Exceptions" value={priority.length} tone={priority.length ? "bad" : "default"} />
             <Metric label="Finalized" value={finalized.length} tone="good" />
           </>
         )}
@@ -67,6 +69,10 @@ export function DashboardScreen() {
 }
 
 const styles = StyleSheet.create({
+  continueCard: { padding: 20, borderRadius: 12, backgroundColor: colors.navy, gap: 10, borderLeftWidth: 3, borderLeftColor: colors.mint },
+  continueEyebrow: { color: colors.mint, fontSize: 10, letterSpacing: 1.1 },
+  continueTitle: { color: "#e7eeec", fontSize: 24, fontWeight: "600", letterSpacing: -.6 },
+  continueCopy: { color: "#a0b4b6", fontSize: 13, lineHeight: 20 },
   metrics: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  clear: { paddingVertical: 24, textAlign: "center", color: "#147A55", fontWeight: "700" }
+  clear: { paddingVertical: 24, textAlign: "center", color: colors.muted, fontWeight: "600" }
 });

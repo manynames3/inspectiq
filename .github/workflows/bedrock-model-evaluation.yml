@@ -41,8 +41,22 @@ jobs:
           VISION_PROVIDER: bedrock
           BEDROCK_MODEL_ID: ${{ inputs.model_id }}
           BEDROCK_VISION_FALLBACK: fail
-          VISION_EVAL_OUTPUT: output/model-evaluation/bedrock-report.json
+          VISION_EVAL_OUTPUT: ${{ github.workspace }}/output/model-evaluation/bedrock-report.json
         run: npm run eval:vision
+      - name: Reject cost-only or incomplete model evidence
+        if: steps.evaluation.outcome == 'success'
+        run: |
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const report = JSON.parse(readFileSync("output/model-evaluation/bedrock-report.json", "utf8"));
+            const corpus = JSON.parse(readFileSync("evals/vision-eval-set.json", "utf8"));
+            const expectedCases = corpus.sources.length * corpus.variants.length;
+            if (report.ok !== true || report.mode !== "manual-model-promotion" || report.provider !== "bedrockVisionProvider"
+                || report.corpus?.imageCount !== expectedCases || report.cases?.length !== expectedCases
+                || report.cases.some(item => item.fallbackUsed !== false || item.schemaValid !== true)) {
+              throw new Error("Only a complete, passing, no-fallback real-model evaluation is promotion evidence.");
+            }
+          '
       - name: Upload model evidence
         if: always()
         uses: actions/upload-artifact@v4

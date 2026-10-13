@@ -2,27 +2,27 @@ appId: com.aidenrhaa.inspectiq
 ---
 - launchApp:
     clearState: true
-- tapOn:
-    text: "Wait"
-    optional: true
+- runFlow: subflows/close-quickstep-anr.yaml
 - assertVisible: "InspectIQ"
 - assertVisible: "Open Evaluation Workspace"
 - tapOn: "Open Evaluation Workspace"
+- runFlow: subflows/close-quickstep-anr.yaml
 - assertVisible: "Review queue"
 - assertVisible: "Evaluation"
-- tapOn:
-    text: "Wait"
-    optional: true
 - assertVisible: "InspectIQ"
 - tapOn:
     text: "^Review$"
+- runFlow: subflows/close-quickstep-anr.yaml
 - assertVisible: "Review queue"
 - tapOn:
     text: "^Damage$"
+- runFlow: subflows/close-quickstep-anr.yaml
 - assertVisible: "Confirmed damage"
 - tapOn:
     text: "^Reports$"
+- runFlow: subflows/close-quickstep-anr.yaml
 - assertVisible: "Condition reports"
 - tapOn:
     text: "^Sign out$"
+- runFlow: subflows/close-quickstep-anr.yaml
 - assertVisible: "Open Evaluation Workspace"

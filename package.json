@@ -19,7 +19,8 @@
     "ops:walkthrough": "node scripts/ops-walkthrough.mjs",
     "prepare:live-photos": "node scripts/prepare-live-photo-set.mjs",
     "seed": "npm run seed -w @inspectiq/api",
-    "test": "npm run test:workflows && npm run build -w @inspectiq/shared && npm run test -w @inspectiq/api && npm run test -w @inspectiq/web && npm run test -w @inspectiq/mobile",
+    "test": "npm run test:security-dependencies && npm run test:workflows && npm run build -w @inspectiq/shared && npm run test -w @inspectiq/api && npm run test -w @inspectiq/web && npm run test -w @inspectiq/mobile",
+    "test:security-dependencies": "node --test scripts/security-dependencies.test.mjs",
     "test:e2e": "node apps/web/scripts/e2e-inspection-flow.mjs",
     "test:live": "node apps/web/scripts/live-readonly-smoke.mjs",
     "test:mobile": "npm run build -w @inspectiq/shared && npm run typecheck -w @inspectiq/mobile && npm run test -w @inspectiq/mobile",
@@ -27,7 +28,7 @@
     "test:projector": "python3 -m pytest services/operations-projector",
     "test:postgres": "npm run test:postgres -w @inspectiq/api",
     "test:screenshots": "node apps/web/scripts/screenshot-regression.mjs",
-    "test:workflows": "node --test scripts/workflow-contracts.test.mjs",
+    "test:workflows": "node --test scripts/workflow-contracts.test.mjs scripts/check-aws-code-plan.test.mjs",
     "test:live-upload": "node scripts/live-upload-review-proof.mjs",
     "proof:video": "node apps/web/scripts/proof-video.mjs",
     "typecheck": "npm run build -w @inspectiq/shared && npm run typecheck -w @inspectiq/api && npm run typecheck -w @inspectiq/web && npm run typecheck -w @inspectiq/mobile"
@@ -42,9 +43,17 @@
     "pngjs": "^7.0.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "react-native": "0.86.3",
     "typescript": "^5.9.2"
   },
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "react-native": "0.86.3",
+    "metro": "0.84.5",
+    "metro-config": "0.84.5",
+    "metro-transform-worker": "0.84.5",
+    "shell-quote": "^1.12.0"
   }
 }

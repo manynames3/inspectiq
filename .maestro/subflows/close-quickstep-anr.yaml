@@ -1,0 +1,18 @@
+appId: com.aidenrhaa.inspectiq
+---
+# Close the emulator's failed background launcher, never an InspectIQ ANR.
+- runFlow:
+    when:
+      platform: Android
+      visible: "^Quickstep isn't responding$"
+    commands:
+      - repeat:
+          times: 3
+          while:
+            visible: "^Quickstep isn't responding$"
+          commands:
+            - tapOn:
+                text: "^Close app$"
+            - waitForAnimationToEnd:
+                timeout: 1000
+      - assertNotVisible: "^Quickstep isn't responding$"
