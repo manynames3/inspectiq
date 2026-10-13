@@ -2,6 +2,17 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+test("Bedrock promotion rejects successful cost-only runs and writes evidence outside the npm workspace", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/bedrock-model-evaluation.yml", import.meta.url), "utf8");
+  assert.match(workflow, /VISION_EVAL_OUTPUT: \$\{\{ github\.workspace \}\}\/output\/model-evaluation\/bedrock-report\.json/);
+  assert.match(workflow, /report\.ok !== true/);
+  assert.match(workflow, /report\.mode !== "manual-model-promotion"/);
+  assert.match(workflow, /report\.provider !== "bedrockVisionProvider"/);
+  assert.match(workflow, /report\.corpus\?\.imageCount !== expectedCases/);
+  assert.match(workflow, /report\.cases\?\.length !== expectedCases/);
+  assert.match(workflow, /item\.fallbackUsed !== false \|\| item\.schemaValid !== true/);
+});
+
 test("AWS code promotion validates the exact saved plan before applying it", async () => {
   const workflow = await readFile(new URL("../.github/workflows/deploy-aws.yml", import.meta.url), "utf8");
   const guard = workflow.indexOf("terraform -chdir=infra/terraform show -json tfplan | node scripts/check-aws-code-plan.mjs");

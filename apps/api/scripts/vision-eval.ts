@@ -4,9 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { z } from "zod";
+import { BedrockRuntimeClient, CountTokensCommand } from "@aws-sdk/client-bedrock-runtime";
 import { DamageSeveritySchema, DamageTypeSchema, PhotoAngleSchema } from "@inspectiq/shared";
 import { findSampleImage, sampleImageFilePath } from "../src/sampleImages.js";
-import { getVisionProvider } from "../src/visionProvider.js";
+import { bedrockVisionProvider, buildBedrockVisionPrompt, getVisionProvider } from "../src/visionProvider.js";
 
 const SourceCaseSchema = z.object({
   id: z.string().min(1),
@@ -150,6 +151,63 @@ const expandedCases = evalSet.sources.flatMap((source) => evalSet.variants.map((
 
 if (expandedCases.length < evalSet.minimumCaseCount) {
   throw new Error(`Evaluation corpus expands to ${expandedCases.length} images; at least ${evalSet.minimumCaseCount} are required.`);
+}
+
+// Free cost preflight only: never call analyze/Converse or treat this as model evidence.
+if (process.env.VISION_EVAL_PREFLIGHT_ONLY === "true") {
+  const modelId = process.env.BEDROCK_MODEL_ID ?? "us.anthropic.claude-sonnet-4-6";
+  if (modelId !== "us.anthropic.claude-sonnet-4-6") {
+    throw new Error("Cost preflight has verified prices only for US Sonnet 4.6; no inference was performed.");
+  }
+  const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? "us-east-1", maxAttempts: 1 });
+  const counts: Array<{ id: string; inputTokens: number }> = [];
+  try {
+    for (const testCase of expandedCases) {
+      const image = await renderVariant(testCase.source, testCase.variant);
+      const response = await client.send(new CountTokensCommand({
+        // CountTokens accepts the underlying model, not its US inference profile.
+        modelId: "anthropic.claude-sonnet-4-6",
+        input: { converse: { messages: [{
+          role: "user",
+          content: [
+            { text: buildBedrockVisionPrompt({ filename: image.filename, declaredAngle: testCase.source.expectedAngle }) },
+            { image: { format: "jpeg", source: { bytes: Buffer.from(image.dataUrl.split(",")[1]!, "base64") } } }
+          ]
+        }] } }
+      }));
+      if (!Number.isSafeInteger(response.inputTokens) || response.inputTokens! <= 0) {
+        throw new Error(`Missing valid token count for ${testCase.id}; no inference was performed.`);
+      }
+      counts.push({ id: testCase.id, inputTokens: response.inputTokens! });
+    }
+  } finally {
+    client.destroy();
+  }
+  const inputTokens = counts.reduce((sum, item) => sum + item.inputTokens, 0);
+  // Published US geographic rates, USD / million tokens; no cache, tools or inference tier changes.
+  const inputCostUsd = inputTokens * 3.3 / 1_000_000;
+  const maximumOutputCostUsd = expandedCases.length * 1400 * 16.5 / 1_000_000;
+  const report = {
+    kind: "cost-preflight-only", ok: false, inferencePerformed: false,
+    generatedAt: new Date().toISOString(), evalSet: evalSet.name, inferenceSpendUsd: 0,
+    tokenCountingModelId: "anthropic.claude-sonnet-4-6",
+    modelId, promptVersion: bedrockVisionProvider.promptVersion, caseCount: counts.length,
+    inputTokens, inputUsdPerMillion: 3.3, outputUsdPerMillion: 16.5,
+    inputCostUsd, maximumOutputCostUsd,
+    singleAttemptMaximumInferenceCostUsd: inputCostUsd + maximumOutputCostUsd,
+    authorizedBudgetUsd: 1,
+    singleAttemptUpperBoundWithinBudget: inputCostUsd + maximumOutputCostUsd <= 1,
+    pricingSource: "https://www-cdn.anthropic.com/files/4zrzovbb/website/3684c2faafb97418665782cea0001f439f74b1d2.pdf",
+    cases: counts
+  };
+  const output = JSON.stringify(report, null, 2);
+  console.log(output);
+  if (process.env.VISION_EVAL_OUTPUT) {
+    const outputPath = path.resolve(process.env.VISION_EVAL_OUTPUT);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, `${output}\n`, "utf8");
+  }
+  process.exit(0);
 }
 
 const caseResults: Array<Record<string, unknown> & {

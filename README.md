@@ -9,7 +9,7 @@ Evidence-first vehicle inspection, condition-report quality control, and authori
 >
 > The live web app was deployed from this branch. Deployment, branch implementation, and production readiness are different claims: the latest frontend does not prove every backend revision is deployed, and neither establishes commercial model accuracy.
 >
-> The web app is deployed at `9d10913`; the AWS API remains at `f0c8697`. Audited fresh-evidence reinspection and startup/history safeguards are implemented and tested on this branch. AWS promotion is held for the paid, no-fallback Bedrock prompt gate; older API responses show current-QC status as unverified and do not expose unsupported reinspection actions. See the [release status and safety gate](docs/release-status.md).
+> The web app is deployed at `9d10913`; the AWS API remains at `f0c8697`. Audited fresh-evidence reinspection and startup/history safeguards are implemented and tested on this branch. AWS promotion is held for the no-fallback Bedrock prompt gate: the authorized ceiling is $1 total, and the free cost preflight has not established that the full run fits. No paid inference ran. Older API responses show current-QC status as unverified and do not expose unsupported reinspection actions. Android emulator CI now passes. See the [release status and safety gate](docs/release-status.md).
 
 [No-login product tour](https://inspectiq.pages.dev/?review=1) | [Native mobile](apps/mobile/README.md) | [C4 architecture](docs/c4.md) | [ADRs](docs/adr/README.md) | [Implementation boundary](docs/implementation-boundary.md)
 

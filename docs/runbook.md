@@ -9,11 +9,21 @@ Local checks:
 5. `npm run build`
 6. `npm run dev`
 
-Bedrock model gate:
+Free Bedrock cost preflight (counts the exact corpus inputs; never runs inference):
+
+```bash
+VISION_EVAL_PREFLIGHT_ONLY=true BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-6 npm run eval:vision
+```
+
+This is not accuracy evidence or a passing promotion gate. Prices are verified only for US Sonnet 4.6. If saving output, use an absolute `VISION_EVAL_OUTPUT` path: npm runs the script in `apps/api`, not the repository root. Missing/unsupported token counts fail closed.
+
+Bedrock model gate, **only after spending authorization and a safe enforceable budget**:
 
 ```bash
 AWS_REGION=us-east-1 VISION_PROVIDER=bedrock BEDROCK_VISION_FALLBACK=fail npm run eval:vision
 ```
+
+Current authorization is $1 total, not $1 per retry/run. The paid runner has no persistent retry-safe cap and must not be launched under that limit. The free preflight found a $3.30726 single-attempt upper bound for the unchanged 108-case gate; retries could add charges. AWS promotion is on hold. See [release status](release-status.md). Never use cost-only output, deterministic output, fallback, or a partial corpus as real-model promotion evidence.
 
 Deployed operations walkthrough:
 
