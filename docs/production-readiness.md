@@ -17,6 +17,10 @@ InspectIQ is production-shaped, not a claim that a portfolio corpus and low-volu
 
 ## Remaining Production Gates
 
+### Backend Upgrade Compatibility
+
+The active QC backend cannot be promoted blindly over legacy finalized records: old grades/reports lack the new evidence/source fingerprints, while finalized inspections remain immutable. The [release safety gate](release-status.md) records the verified production shape and the required explicit legacy-record policy. Do not infer that fresh demo seeds or passing contract tests upgrade historical approvals.
+
 ### 1. Field Model Evidence
 
 The current corpus executes 108 images but derives them from 12 independent rights-cleared sources. Before operational rollout, build an adjudicated field dataset spanning operators, devices, vehicle classes, lighting/weather, clean controls, subtle/material damage, VIN/odometer variations, and auction/offsite backgrounds. Record inter-rater agreement, precision/recall by class, calibration, reviewer override rate, latency, and cost for each model/prompt version. Bedrock remains advisory until that evidence supports the intended risk tier.

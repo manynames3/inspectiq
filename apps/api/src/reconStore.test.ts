@@ -138,7 +138,44 @@ describe("inspection-to-recon operations", () => {
     });
   });
 
-  it("blocks overruns, requires reauthorization, records QC, and releases a completed vehicle", () => {
+  it("declines optional recon without creating work and clears the pending-decision blocker", () => {
+    const store = new MemoryStore();
+    seedStore(store);
+    const ford = store.recon.listOperations(reconActor)
+      .find((record) => record.inspection.vin === "1FMCU9H6XNUB81389")!;
+    const workOrderCount = store.recon.workOrdersForInspection(ford.inspection.id).length;
+    expect(ford.readiness.saleReady).toBe(true);
+
+    const optional = store.recon.createRecommendation(ford.inspection.id, {
+      damageItemId: null,
+      serviceType: "BODY",
+      recommendedAction: "Optional cosmetic allowance for consignor review.",
+      estimatedCost: 850,
+      estimatedDurationHours: 6,
+      expectedGradeLift: 0.2,
+      supportingPhotoIds: [],
+      notes: "Illustrative optional service; no unverified vehicle damage is asserted."
+    }, reconActor);
+    const submitted = store.recon.submitEstimate(ford.inspection.id, [optional.id], reconActor);
+    const authorization = store.recon.latestAuthorizationForRecommendation(optional.id)!;
+    expect(authorization.decision).toBe("PENDING");
+    expect(submitted.readiness.saleReady).toBe(false);
+    expect(submitted.readiness.blockers.map((blocker) => blocker.code)).toContain("RECON_DECISION_PENDING");
+    expect(submitted.workOrders).toHaveLength(workOrderCount);
+
+    const declined = store.recon.decideAuthorization(authorization.id, {
+      decision: "DECLINE",
+      decisionReason: "Optional cosmetic allowance is not required for this sale.",
+      expectedVersion: authorization.version
+    }, consignorActor);
+    expect(declined).toMatchObject({ decision: "DECLINED", authorizedAmount: 0, consignorUserId: consignorActor.id });
+    expect(optional.status).toBe("DECLINED");
+    expect(store.recon.generateAuthorizedWorkOrders(ford.inspection.id, reconActor)).toEqual([]);
+    expect(store.recon.workOrdersForInspection(ford.inspection.id)).toHaveLength(workOrderCount);
+    expect(store.recon.assessReadiness(ford.inspection.id, reconActor)).toMatchObject({ saleReady: true, blockers: [] });
+  });
+
+  it("requires reauthorization and failed-QC recovery before releasing a completed vehicle", () => {
     const store = new MemoryStore();
     seedStore(store);
     const nissan = store.recon.listOperations(reconActor)
@@ -166,6 +203,26 @@ describe("inspection-to-recon operations", () => {
       action: "START",
       expectedVersion: mechanicalOrder.version
     }, reconActor);
+    store.recon.updateWorkOrder(mechanicalOrder.id, {
+      action: "SEND_TO_QC",
+      expectedVersion: mechanicalOrder.version
+    }, reconActor);
+    store.recon.recordQualityControl(mechanicalOrder.id, {
+      decision: "FAIL",
+      notes: "Verification scope is incomplete; return to the technician.",
+      expectedVersion: mechanicalOrder.version
+    }, reconActor);
+    expect(mechanicalOrder.status).toBe("IN_PROGRESS");
+    expect(mechanicalOrder.blockedReason).toContain("QC failed");
+    expect(store.recon.latestQualityControlForWorkOrder(mechanicalOrder.id)?.status).toBe("FAILED");
+    const failedReadiness = store.recon.assessReadiness(nissan.inspection.id, reconActor);
+    expect(failedReadiness.saleReady).toBe(false);
+    expect(failedReadiness.blockers.map((blocker) => blocker.code)).toContain("QUALITY_CONTROL_FAILED");
+    expect(() => store.recon.updateWorkOrder(mechanicalOrder.id, {
+      action: "COMPLETE",
+      expectedVersion: mechanicalOrder.version
+    }, reconActor)).toThrow(/Quality control must pass/);
+
     store.recon.updateWorkOrder(mechanicalOrder.id, {
       action: "SEND_TO_QC",
       expectedVersion: mechanicalOrder.version

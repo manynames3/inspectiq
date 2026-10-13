@@ -4,6 +4,8 @@ InspectIQ is a production-shaped inspection workflow implemented as a monorepo w
 
 The architecture is intentionally boring where reliability matters: explicit state transitions, schema-validated model output, append-style audit events, deterministic grading, role-aware actions, and backend-derived readiness blockers. The AI path is advisory by design; it accelerates review without silently becoming the source of truth.
 
+This document describes the active, unmerged inspection/recon branch, not the historical `main` baseline. Start with [C4 context and container views](c4.md) for the high-level map, [ADRs](adr/README.md) for decisions, and the [implementation boundary](implementation-boundary.md) for local/live/production distinctions.
+
 ## Runtime Shape
 
 ```mermaid
@@ -21,7 +23,7 @@ flowchart LR
   Vision --> LocalVision[Deterministic local provider]
   Worker --> BedrockVision[Bedrock multimodal provider]
   API --> Jobs[Image-analysis jobs]
-  API --> Python[Python grading service]
+  API -. optional configured boundary .-> Python[Python grading service; otherwise in-process Node rules]
   API --> Report[Report provider interface]
   Report --> LocalReport[Deterministic local report provider]
   Report --> BedrockReport[Bedrock report provider]

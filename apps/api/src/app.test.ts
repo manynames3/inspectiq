@@ -272,7 +272,73 @@ describe("InspectIQ API", () => {
     expect(store.listDamage(inspectionId)).toHaveLength(2);
   });
 
-  it("enforces consignor scope and completes estimate-overrun recovery through the API", async () => {
+  it("declines optional recon through the scoped API without creating executable work", async () => {
+    const queue = await request(api)
+      .get("/api/operations/recon")
+      .set(reconCoordinatorHeaders)
+      .expect(200);
+    const ford = queue.body.data.find((record: { inspection: { vin: string } }) =>
+      record.inspection.vin === "1FMCU9H6XNUB81389"
+    );
+    const workOrderCount = ford.workOrders.length;
+    expect(ford.readiness.saleReady).toBe(true);
+    const created = await request(api)
+      .post(`/api/inspections/${ford.inspection.id}/recon/recommendations`)
+      .set(reconCoordinatorHeaders)
+      .send({
+        serviceType: "BODY",
+        recommendedAction: "Optional cosmetic allowance for consignor review.",
+        estimatedCost: 850,
+        estimatedDurationHours: 6,
+        expectedGradeLift: 0.2,
+        notes: "Illustrative optional service; no unverified vehicle damage is asserted."
+      })
+      .expect(201);
+    const submitted = await request(api)
+      .post(`/api/inspections/${ford.inspection.id}/recon/submit`)
+      .set(reconCoordinatorHeaders)
+      .send({ recommendationIds: [created.body.data.id] })
+      .expect(200);
+    const authorization = submitted.body.data.authorizations.find((item: { recommendationId: string }) =>
+      item.recommendationId === created.body.data.id
+    );
+    expect(authorization.decision).toBe("PENDING");
+    expect(submitted.body.data.workOrders).toHaveLength(workOrderCount);
+    expect(submitted.body.data.readiness.saleReady).toBe(false);
+    expect(submitted.body.data.readiness.blockers.map((blocker: { code: string }) => blocker.code))
+      .toContain("RECON_DECISION_PENDING");
+    const decision = {
+      decision: "DECLINE",
+      decisionReason: "Optional cosmetic allowance is not required for this sale.",
+      expectedVersion: authorization.version
+    };
+    await request(api)
+      .post(`/api/recon/authorizations/${authorization.id}/decision`)
+      .set(unrelatedConsignorHeaders)
+      .send(decision)
+      .expect(403);
+    const declined = await request(api)
+      .post(`/api/recon/authorizations/${authorization.id}/decision`)
+      .set(consignorApproverHeaders)
+      .send(decision)
+      .expect(200);
+    expect(declined.body.data).toMatchObject({
+      decision: "DECLINED",
+      authorizedAmount: 0,
+      consignorUserId: consignorApproverHeaders["x-actor-id"]
+    });
+    const afterDecline = await request(api)
+      .get(`/api/operations/recon/${ford.inspection.id}`)
+      .set(reconCoordinatorHeaders)
+      .expect(200);
+    expect(afterDecline.body.data.recommendations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: created.body.data.id, status: "DECLINED" })
+    ]));
+    expect(afterDecline.body.data.workOrders).toHaveLength(workOrderCount);
+    expect(afterDecline.body.data.readiness).toMatchObject({ saleReady: true, blockers: [] });
+  });
+
+  it("enforces consignor scope and completes overrun and failed-QC recovery through the API", async () => {
     const queue = await request(api)
       .get("/api/operations/recon")
       .set(reconCoordinatorHeaders)
@@ -328,15 +394,48 @@ describe("InspectIQ API", () => {
       .set(reconCoordinatorHeaders)
       .send({ action: "SEND_TO_QC", expectedVersion: started.body.data.version })
       .expect(200);
+    const failedQc = await request(api)
+      .post(`/api/work-orders/${mechanicalOrder.id}/quality-control`)
+      .set(reconCoordinatorHeaders)
+      .send({
+        decision: "FAIL",
+        notes: "Verification scope is incomplete; return to the technician.",
+        expectedVersion: sentToQc.body.data.version
+      })
+      .expect(201);
+    expect(failedQc.body.data.status).toBe("FAILED");
+    const afterFailure = await request(api)
+      .get(`/api/operations/recon/${nissan.inspection.id}`)
+      .set(reconCoordinatorHeaders)
+      .expect(200);
+    const failedOrder = afterFailure.body.data.workOrders.find((order: { id: string }) =>
+      order.id === mechanicalOrder.id
+    );
+    expect(failedOrder.status).toBe("IN_PROGRESS");
+    expect(failedOrder.blockedReason).toContain("QC failed");
+    expect(afterFailure.body.data.readiness.saleReady).toBe(false);
+    expect(afterFailure.body.data.readiness.blockers.map((blocker: { code: string }) => blocker.code))
+      .toContain("QUALITY_CONTROL_FAILED");
     await request(api)
+      .patch(`/api/work-orders/${mechanicalOrder.id}`)
+      .set(reconCoordinatorHeaders)
+      .send({ action: "COMPLETE", expectedVersion: failedOrder.version })
+      .expect(409);
+    const reinspection = await request(api)
+      .patch(`/api/work-orders/${mechanicalOrder.id}`)
+      .set(reconCoordinatorHeaders)
+      .send({ action: "SEND_TO_QC", expectedVersion: failedOrder.version })
+      .expect(200);
+    const passedQc = await request(api)
       .post(`/api/work-orders/${mechanicalOrder.id}/quality-control`)
       .set(reconCoordinatorHeaders)
       .send({
         decision: "PASS",
-        notes: "Reauthorized condition-verification scope completed.",
-        expectedVersion: sentToQc.body.data.version
+        notes: "Corrected condition-verification scope completed.",
+        expectedVersion: reinspection.body.data.version
       })
       .expect(201);
+    expect(passedQc.body.data.status).toBe("PASSED");
 
     const readiness = await request(api)
       .post(`/api/inspections/${nissan.inspection.id}/sale-readiness`)
