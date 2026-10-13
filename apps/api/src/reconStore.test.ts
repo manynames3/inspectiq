@@ -16,19 +16,23 @@ const consignorActor: Actor = {
 };
 
 describe("inspection-to-recon operations", () => {
-  it("adds missing operational records without replacing persisted vehicles or evidence", () => {
+  it("adds missing mutable operational records without changing published history or evidence", () => {
     const store = new MemoryStore();
     seedStore(store);
     const inspectionIds = [...store.inspections.keys()];
     const photoIds = [...store.photos.keys()];
     const vins = [...store.inspections.values()].map((inspection) => inspection.vin);
+    const publishedFacts = [...store.inspections.values()].filter((inspection) => inspection.status === "FINALIZED").map((inspection) => JSON.stringify(inspection));
     store.recon.reset();
 
     expect(reconcileReconOperations(store)).toBe(true);
     expect([...store.inspections.keys()]).toEqual(inspectionIds);
     expect([...store.photos.keys()]).toEqual(photoIds);
     expect([...store.inspections.values()].map((inspection) => inspection.vin)).toEqual(vins);
-    expect(store.vehicleIntakes.size).toBe(store.inspections.size);
+    expect(store.vehicleIntakes.size).toBe(5);
+    const published = [...store.inspections.values()].filter((inspection) => inspection.status === "FINALIZED");
+    expect(published.map((inspection) => JSON.stringify(inspection))).toEqual(publishedFacts);
+    expect(published.every((inspection) => store.recon.intakeForInspection(inspection.id) === null)).toBe(true);
 
     const operationalCounts = {
       intakes: store.vehicleIntakes.size,
@@ -87,14 +91,21 @@ describe("inspection-to-recon operations", () => {
     seedStore(store);
     const ford = [...store.inspections.values()].find((inspection) => inspection.vin === "1FMCU9H6XNUB81389")!;
     const report = store.latestFinalReport(ford.id)!;
+    ford.status = "HUMAN_REVIEW_REQUIRED";
+    ford.finalizedAt = null;
     report.finalizedAt = null;
+    report.finalizedBy = null;
+    report.approvalStatus = "in_review";
+    report.approvedBy = null;
+    report.approvedAt = null;
+    for (const version of store.reportVersionsFor(report.id)) store.reportVersions.delete(version.id);
     store.recon.reset();
 
     expect(reconcileReconOperations(store)).toBe(true);
     const fordIntake = [...store.vehicleIntakes.values()].find((intake) => intake.inspectionId === ford.id);
     expect(fordIntake?.inspectionWorkflowStatus).toBe("REVIEW_READY");
     expect(store.reconRecommendations.size).toBe(0);
-    expect(store.vehicleIntakes.size).toBe(store.inspections.size);
+    expect(store.vehicleIntakes.size).toBe(6);
   });
 
   it("seeds distinct operational states without asserting unsupported vehicle damage", () => {

@@ -37,6 +37,7 @@ import type {
 } from "./reconDomain.js";
 
 const POSTGRES_ROW_STORE_LOCK_KEY = "7803144587035695001";
+const POSTGRES_MIGRATION_LOCK_KEY = "7803144587035695002";
 const retryablePostgresCodes = new Set(["40001", "40P01", "55P03"]);
 const migratedPools = new WeakSet<Pool>();
 
@@ -236,31 +237,34 @@ function tableSignature(row: unknown[]): string {
 export async function migratePostgres(pool: Pool, filePath = schemaPath()): Promise<void> {
   if (migratedPools.has(pool)) return;
   const schema = await readFile(filePath, "utf8");
-  await pool.query(schema);
   const directory = migrationsPath();
-  if (!directory) {
-    migratedPools.add(pool);
-    return;
-  }
-  const files = (await readdir(directory)).filter((file) => /^\d+.*\.sql$/.test(file)).sort();
-  for (const file of files) {
-    const applied = await pool.query("select 1 from schema_migrations where version = $1", [file]);
-    if (applied.rowCount) continue;
-    const migration = await readFile(path.join(directory, file), "utf8");
-    const client = await pool.connect();
-    try {
-      await client.query("begin");
-      await client.query(migration);
+  const files = directory ? (await readdir(directory)).filter((file) => /^\d+.*\.sql$/.test(file)).sort() : [];
+  const client = await pool.connect();
+  let discardConnection = false;
+  try {
+    await client.query("begin");
+    await client.query("set transaction isolation level read committed");
+    // Serialize schema and ledger checks across API/worker cold starts.
+    await client.query("select pg_advisory_xact_lock($1::bigint)", [POSTGRES_MIGRATION_LOCK_KEY]);
+    await client.query(schema);
+    for (const file of files) {
+      const applied = await client.query("select 1 from schema_migrations where version = $1", [file]);
+      if (applied.rowCount) continue;
+      await client.query(await readFile(path.join(directory!, file), "utf8"));
       await client.query("insert into schema_migrations (version) values ($1)", [file]);
-      await client.query("commit");
-    } catch (error) {
-      await client.query("rollback");
-      throw error;
-    } finally {
-      client.release();
     }
+    await client.query("commit");
+    migratedPools.add(pool);
+  } catch (error) {
+    try {
+      await client.query("rollback");
+    } catch {
+      discardConnection = true;
+    }
+    throw error;
+  } finally {
+    client.release(discardConnection);
   }
-  migratedPools.add(pool);
 }
 
 const versionedTables = new Set([
@@ -347,7 +351,12 @@ async function loadPostgresRowsFromClient(store: MemoryStore, client: PoolClient
         version: record.version ?? 1,
         createdAt: iso(record.created_at),
         updatedAt: iso(record.updated_at),
-        finalizedAt: record.finalized_at ? iso(record.finalized_at) : null
+        finalizedAt: record.finalized_at ? iso(record.finalized_at) : null,
+        reinspectionSourceInspectionId: record.reinspection_source_inspection_id ?? null,
+        reinspectionSourceReportId: record.reinspection_source_report_id ?? null,
+        reinspectionSourceReportVersion: nullableNum(record.reinspection_source_report_version),
+        reinspectionReason: record.reinspection_reason ?? null,
+        reinspectionOperationId: record.reinspection_operation_id ?? null
       } satisfies Inspection);
     }
 
@@ -812,7 +821,7 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
     },
     {
       table: "inspections",
-      columns: ["id", "vin", "year", "make", "model", "trim", "mileage", "exterior_color", "seller_source", "inspector_name", "status", "completeness_percentage", "created_by", "assigned_to_user_id", "version", "created_at", "updated_at", "finalized_at"],
+      columns: ["id", "vin", "year", "make", "model", "trim", "mileage", "exterior_color", "seller_source", "inspector_name", "status", "completeness_percentage", "created_by", "assigned_to_user_id", "version", "created_at", "updated_at", "finalized_at", "reinspection_source_inspection_id", "reinspection_source_report_id", "reinspection_source_report_version", "reinspection_reason", "reinspection_operation_id"],
       rows: [...store.inspections.values()].map((record) => [
         record.id,
         record.vin,
@@ -831,7 +840,12 @@ function tableBatchesFromStore(store: MemoryStore): TableBatch[] {
         record.version,
         record.createdAt,
         record.updatedAt,
-        record.finalizedAt
+        record.finalizedAt,
+        record.reinspectionSourceInspectionId ?? null,
+        record.reinspectionSourceReportId ?? null,
+        record.reinspectionSourceReportVersion ?? null,
+        record.reinspectionReason ?? null,
+        record.reinspectionOperationId ?? null
       ])
     },
     {
@@ -1274,7 +1288,6 @@ async function writePostgresRowsFromStore(store: MemoryStore, client: PoolClient
   for (const batch of tableBatchesFromStore(store)) {
     await upsertRows(client, batch.table, batch.columns, batch.rows);
   }
-  rememberSnapshot(store);
 }
 
 async function writeChangedPostgresRowsFromStore(store: MemoryStore, client: PoolClient): Promise<void> {
@@ -1315,25 +1328,40 @@ async function writeChangedPostgresRowsFromStore(store: MemoryStore, client: Poo
       await upsertRows(client, batch.table, batch.columns, changedRows);
     }
   }
+}
 
-  rememberSnapshot(store);
+async function withRowStoreTransaction<T>(
+  store: MemoryStore,
+  pool: Pool,
+  work: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  await migratePostgres(pool);
+  const client = await pool.connect();
+  let discardConnection = false;
+  try {
+    await client.query("begin");
+    // Refresh the snapshot after waiting for the shared writer lock. Session locks
+    // are not safe with transaction-pooled connections; retain an xact lock.
+    await client.query("set transaction isolation level read committed");
+    await client.query("select pg_advisory_xact_lock($1::bigint)", [POSTGRES_ROW_STORE_LOCK_KEY]);
+    const result = await work(client);
+    await client.query("commit");
+    rememberSnapshot(store);
+    return result;
+  } catch (error) {
+    try {
+      await client.query("rollback");
+    } catch {
+      discardConnection = true;
+    }
+    throw error;
+  } finally {
+    client.release(discardConnection);
+  }
 }
 
 async function savePostgresRowsOnce(store: MemoryStore, pool: Pool): Promise<void> {
-  await migratePostgres(pool);
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await client.query("set transaction isolation level repeatable read");
-    await client.query("select pg_advisory_xact_lock($1::bigint)", [POSTGRES_ROW_STORE_LOCK_KEY]);
-    await writeChangedPostgresRowsFromStore(store, client);
-    await client.query("commit");
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
+  await withRowStoreTransaction(store, pool, (client) => writeChangedPostgresRowsFromStore(store, client));
 }
 
 export async function savePostgresRows(store: MemoryStore, pool: Pool): Promise<void> {
@@ -1354,21 +1382,10 @@ export async function mutatePostgresRows(
   pool: Pool,
   mutation: () => Promise<void>
 ): Promise<boolean> {
-  await migratePostgres(pool);
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await client.query("set transaction isolation level repeatable read");
-    await client.query("select pg_advisory_xact_lock($1::bigint)", [POSTGRES_ROW_STORE_LOCK_KEY]);
+  return withRowStoreTransaction(store, pool, async (client) => {
     const loaded = await loadPostgresRowsFromClient(store, client);
     await mutation();
     await writeChangedPostgresRowsFromStore(store, client);
-    await client.query("commit");
     return loaded;
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }

@@ -1,7 +1,7 @@
 import { AlertTriangle, ArrowDown, BadgeInfo, Bot, Check, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Filter, GitCompare, ImagePlus, Pencil, Play, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserRound, X, MoreHorizontal, Maximize2, ArrowRight } from "lucide-react";
 import { canRole, estimateDamageRepairCost, maxImageUploadBytes, maxLocalPreviewUploadBytes, requiredPhotoAngles, supportedImageUploadMimeTypes } from "@inspectiq/shared";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiClientError, apiUrl, assetUrl, requestHeaders } from "../api.js";
 import { useActor } from "../App.js";
 import { isEvaluationSession, storedLocalSession } from "../auth.js";
@@ -11,6 +11,7 @@ import { ConditionQcDialog } from "../components/ConditionQcDialog.js";
 import { EvidenceViewer } from "../components/EvidenceViewer.js";
 import { ZoomableEvidence } from "../components/ZoomableEvidence.js";
 import { ConditionReportDocument } from "../components/ConditionReportDocument.js";
+import { ReinspectionControls, ReinspectionLineage } from "../components/ReinspectionControls.js";
 import { conditionGradeView, formatConditionGrade } from "../conditionGrade.js";
 import { loadEvaluationDamage, saveEvaluationDamage } from "../evaluationDamage.js";
 import { applyEvaluationReview, clearEvaluationReview, recordEvaluationReview } from "../evaluationReview.js";
@@ -598,6 +599,7 @@ async function waitForPhotoAnalysisCompletion(inspectionId: string, photoIds: st
 
 export function InspectionDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { actor, can } = useActor();
   const [bundle, setBundle] = useState<InspectionBundle | null>(null);
@@ -860,6 +862,10 @@ export function InspectionDetailPage() {
     && (suggestion.status === "accepted" || suggestion.status === "rejected" || suggestion.status === "edited")
   ).length;
   const isFinalizedInspection = bundle.inspection.status === "FINALIZED";
+  const isHistoricalRelease = isFinalizedInspection && Boolean(bundle.requiresReinspection);
+  const qcStatusUnknown = isFinalizedInspection && bundle.requiresReinspection === undefined;
+  const historicalPublication = isHistoricalRelease || qcStatusUnknown;
+  const publicationLabel = isHistoricalRelease ? "Historical release" : qcStatusUnknown ? "Published history" : statusLabel(bundle.inspection.status);
   const workflowStep = bundle.inspection.status === "FINALIZED" ? 4 : bundle.inspection.status === "HUMAN_REVIEW_REQUIRED" || bundle.inspection.status === "AI_DRAFTED" ? 3 : bundle.conditionGrade ? 2 : 1;
   const capturedEvidencePercent = Math.round((requiredAngles.filter((angle) => capturedAngles.has(angle)).length / requiredAngles.length) * 100);
   const missingAngles = requiredAngles.filter((angle) => !capturedAngles.has(angle));
@@ -1027,7 +1033,9 @@ export function InspectionDetailPage() {
             : "Required photos have usable analysis signals and no open retake blocker.";
   const hasModelAnalysis = [...analysisResultByPhotoId.values()].some((analysis) => !isReferenceProvider(analysis.provider));
   const referenceOnlyEvidence = bundle.photos.length > 0 && !hasModelAnalysis;
-  const reviewRailTitle = pendingSuggestions.length > 0
+  const reviewRailTitle = historicalPublication
+    ? "Historical review record."
+    : pendingSuggestions.length > 0
     ? "Reviewer confirmation required."
     : isFinalizedInspection
       ? referenceOnlyEvidence ? "Evidence review complete." : "AI review complete."
@@ -1038,7 +1046,11 @@ export function InspectionDetailPage() {
           : reviewedSuggestions.length > 0
             ? referenceOnlyEvidence ? "Evidence reviewed." : "AI findings reviewed."
             : referenceOnlyEvidence ? "No pending evidence decisions." : "No pending AI findings.";
-  const reviewRailBody = pendingSuggestions.length > 0
+  const reviewRailBody = historicalPublication
+    ? isHistoricalRelease
+      ? "The original evidence, reviewer decisions, and published report remain unchanged. This historical release is not certified under the current QC policy; fresh evidence and approvals require a separate audited inspection."
+      : "The published evidence and review history are preserved. Current-policy QC status is unverified; refresh the inspection before relying on a current release."
+    : pendingSuggestions.length > 0
     ? null
     : isFinalizedInspection
       ? referenceOnlyEvidence
@@ -1119,7 +1131,7 @@ export function InspectionDetailPage() {
                   <strong>{inspection.year} {inspection.make} {inspection.model}</strong>
                   <small>{inspection.trim || "Base"}</small>
                 </span>
-                <StatusPill status={inspection.status} />
+                {inspection.id === bundle.inspection.id && historicalPublication ? <span className="status-pill">{publicationLabel}</span> : <StatusPill status={inspection.status} />}
                 <time>{formatQueueUpdated(inspection.updatedAt)}</time>
               </Link>
             ))}
@@ -1147,7 +1159,7 @@ export function InspectionDetailPage() {
               <p>VIN {bundle.inspection.vin} · {bundle.inspection.mileage.toLocaleString()} mi · {bundle.inspection.exteriorColor} · {bundle.inspection.trim || "Base"} · Updated {new Date(bundle.inspection.updatedAt).toLocaleString()}</p>
             </div>
             <div className="heading-actions">
-              <span className={`ledger-state ${isFinalizedInspection ? "approved" : "held"}`}><span />{statusLabel(bundle.inspection.status)}{bundle.finalReport ? ` · v${bundle.finalReport.version}` : " · preliminary"}</span>
+              <span className={`ledger-state ${historicalPublication ? "historical" : isFinalizedInspection ? "approved" : "held"}`}><span />{publicationLabel}{bundle.finalReport ? ` · v${bundle.finalReport.version}` : " · preliminary"}</span>
               {bundle.conditionQc ? <button type="button" className="secondary-button" onClick={() => setQcOpen(true)}>Report QC · {bundle.conditionQc.openCount} open</button> : null}
               <button className="primary-button ledger-next-action" onClick={() => {
                 if (!bundle.photos.length || missingAngles.length) { const support = document.querySelector<HTMLDetailsElement>(".capture-support"); if (support) support.open = true; document.getElementById("evidence-tools")?.scrollIntoView({ behavior: "smooth", block: "center" }); return; }
@@ -1181,11 +1193,15 @@ export function InspectionDetailPage() {
               >
                 <UserRound size={16} /> Assign findings to me
               </button>
-              <StatusPill status={bundle.inspection.status} />
+              {historicalPublication ? <span className="status-pill">{publicationLabel}</span> : <StatusPill status={bundle.inspection.status} />}
               <button className="secondary-button" onClick={() => void load()}><RefreshCw size={16} /> Refresh</button>
+              {isFinalizedInspection && bundle.finalReport && typeof bundle.requiresReinspection === "boolean" && !bundle.requiresReinspection ? <ReinspectionControls key={id} inspectionId={id} reportVersion={bundle.finalReport.version} actor={actor} authorized={can("inspection:reinspect")} onRefresh={load} onCreated={(inspection) => { setBundle(null); navigate(`/inspections/${inspection.id}`); }} /> : null}
               </div></details>
             </div>
           </div>
+          {bundle.requiresReinspection && bundle.finalReport ? <ReinspectionControls key={id} historical inspectionId={id} reportVersion={bundle.finalReport.version} actor={actor} authorized={can("inspection:reinspect")} onRefresh={load} onCreated={(inspection) => { setBundle(null); navigate(`/inspections/${inspection.id}`); }} /> : null}
+          {qcStatusUnknown ? <div className="warning-banner" role="status">Published history · current-QC status unverified. This API does not supply current policy status or reinspection capability. Refresh after the backend is updated; do not treat this as a current-policy release.</div> : null}
+          <ReinspectionLineage inspection={bundle.inspection} />
           <div className="evidence-ledger"><span><strong>{bundle.photos.filter((photo) => photo.uploadStatus === "uploaded").length}</strong> uploaded</span><span><strong>{pendingSuggestions.length}</strong> undecided</span><span><strong>{bundle.conditionQc?.openCount ?? 0}</strong> QC exceptions</span><span>{bundle.conditionQc?.identity.vin.status === "verified" ? "VIN verified" : "VIN not verified"}</span><span>{bundle.conditionQc?.identity.odometer.status === "verified" ? "Mileage verified" : "Mileage not verified"}</span></div>
           <section className="evidence-stage" aria-label="Evidence review stage" onKeyDown={(event) => {
             if ((event.target as HTMLElement).matches("input, textarea, select")) return;
@@ -1419,7 +1435,7 @@ export function InspectionDetailPage() {
 
               <div className="sample-actions evidence-actions" id="evidence-tools">
                 {isFinalizedInspection ? (
-                  <span className="finalized-lock-note"><ShieldCheck size={15} /> Finalized record: evidence is locked for buyer-facing release.</span>
+                  <span className="finalized-lock-note"><ShieldCheck size={15} /> {historicalPublication ? "Historical record: original evidence and report are preserved, not a current-policy release." : "Finalized record: evidence is locked for buyer-facing release."}</span>
                 ) : referenceEvidenceEnabled ? (
                   <>
                     <select aria-label="Reference evidence set" value={sampleKey} onChange={(event) => setSampleKey(event.target.value)} disabled={!matchedSamplePhotoSet}>
@@ -1774,7 +1790,7 @@ export function InspectionDetailPage() {
             {!canReviewSuggestions && !isFinalizedInspection ? <span>Select Reviewer or Admin to review.</span> : null}
           </div>
           {pendingSuggestions.length === 0 ? (
-            <div className={`review-empty-state ${isFinalizedInspection ? "complete" : ""}`}>
+            <div className={`review-empty-state ${isFinalizedInspection && !historicalPublication ? "complete" : ""}`}>
               <p>{reviewRailBody}</p>
               <dl className="review-summary-grid">
                 <div>

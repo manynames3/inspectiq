@@ -6,6 +6,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uuid,
 } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
@@ -33,7 +34,12 @@ export const inspections = pgTable("inspections", {
   version: integer("version").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  finalizedAt: timestamp("finalized_at", { withTimezone: true })
+  finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+  reinspectionSourceInspectionId: text("reinspection_source_inspection_id"),
+  reinspectionSourceReportId: text("reinspection_source_report_id"),
+  reinspectionSourceReportVersion: integer("reinspection_source_report_version"),
+  reinspectionReason: text("reinspection_reason"),
+  reinspectionOperationId: uuid("reinspection_operation_id")
 });
 
 export const vehiclePhotos = pgTable("vehicle_photos", {

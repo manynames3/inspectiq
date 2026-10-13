@@ -20,11 +20,12 @@ export function ReportsScreen() {
       <View style={styles.metrics}>
         <Metric label="Created" value={created.length} />
         <Metric label="Awaiting approval" value={created.length - finalized.length - approval.length} tone="warn" />
-        <Metric label="Finalized" value={finalized.length} tone="good" />
+        <Metric label="Published history" value={finalized.length} />
       </View>
       <View style={styles.list}>
         {bundles.map((bundle) => {
-          const status = bundle.finalReport?.finalizedAt ? "Finalized" : bundle.finalReport ? bundle.finalReport.approvalStatus.replaceAll("_", " ") : "Not started";
+          const qcStatusUnknown = Boolean(bundle.finalReport?.finalizedAt && bundle.requiresReinspection === undefined);
+          const status = bundle.requiresReinspection ? "Historical release" : qcStatusUnknown ? "QC unverified" : bundle.finalReport?.finalizedAt ? "Finalized" : bundle.finalReport ? bundle.finalReport.approvalStatus.replaceAll("_", " ") : "Not started";
           return (
             <Pressable key={bundle.inspection.id} onPress={() => navigation.navigate("ReportEditor", { inspectionId: bundle.inspection.id })} accessibilityRole="button">
               <Card style={styles.card}>
@@ -38,7 +39,7 @@ export function ReportsScreen() {
                   </Text>
                 </View>
                 <View style={styles.right}>
-                  <StatusPill label={status} tone={bundle.finalReport?.finalizedAt ? "good" : bundle.finalReport ? "info" : "neutral"} />
+                  <StatusPill label={status} tone={bundle.requiresReinspection || qcStatusUnknown ? "warn" : bundle.finalReport?.finalizedAt ? "good" : bundle.finalReport ? "info" : "neutral"} />
                   <ChevronRight size={18} color={colors.muted} />
                 </View>
               </Card>

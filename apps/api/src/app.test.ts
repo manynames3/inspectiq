@@ -229,6 +229,57 @@ describe("InspectIQ API", () => {
     ]));
   });
 
+  it.each(["inspector", "reviewer", "admin"] as const)("allows scoped %s reinspection and preserves historical bytes", async (role) => {
+    const source = [...store.inspections.values()].find((inspection) => inspection.vin === "1FMCU9H6XNUB81389")!;
+    const report = store.latestFinalReport(source.id)!;
+    const before = JSON.stringify({ source, report, versions: store.reportVersionsFor(report.id), photos: store.listPhotos(source.id) });
+    const payload = { operationId: crypto.randomUUID(), reason: "Perform a fresh evidence review without changing the published history.", expectedReportVersion: report.version };
+    const headers = { "x-actor-id": role === "inspector" ? "inspector-john-smith" : `reinspection-${role}`, "x-actor-name": role === "inspector" ? "John Smith" : "Reinspection Operator", "x-actor-role": role };
+    const created = await request(api).post(`/api/inspections/${source.id}/reinspections`).set(headers).send(payload).expect(201);
+    expect(created.body.data.reused).toBe(false);
+    const replacementId = created.body.data.inspection.id;
+    expect(created.body.data.inspection).toMatchObject({ status: "DRAFT", assignedToUserId: source.assignedToUserId, reinspectionSourceReportId: report.id, reinspectionSourceReportVersion: report.version });
+    const replacement = await request(api).get(`/api/inspections/${replacementId}`).set(headers).expect(200);
+    expect(replacement.body.data).toMatchObject({ photos: [], suggestions: [], damageItems: [], conditionGrade: null, finalReport: null, requiresReinspection: false });
+    const retry = await request(api).post(`/api/inspections/${source.id}/reinspections`).set(headers).send(payload).expect(200);
+    expect(retry.body.data).toMatchObject({ reused: true, inspection: { id: replacementId } });
+    await request(api).post(`/api/inspections/${source.id}/reinspections`).set(headers).send({ ...payload, reason: "A different payload cannot reuse the operation identifier." }).expect(409);
+    expect(JSON.stringify({ source, report, versions: store.reportVersionsFor(report.id), photos: store.listPhotos(source.id) })).toBe(before);
+    expect(store.auditForInspection(source.id).at(-1)).toMatchObject({ eventType: "inspection.reinspection_requested", detailsJson: { replacementInspectionId: replacementId, reason: payload.reason, sourceReportId: report.id, sourceReportVersion: report.version } });
+  });
+
+  it("rejects reinspection by unauthorized, unassigned, and evaluation actors without creating replacements", async () => {
+    const source = [...store.inspections.values()].find((inspection) => inspection.vin === "1FMCU9H6XNUB81389")!;
+    const report = store.latestFinalReport(source.id)!;
+    const payload = { operationId: crypto.randomUUID(), reason: "A fresh inspection must be requested by an authorized operator.", expectedReportVersion: report.version };
+    const count = store.inspections.size;
+    for (const role of ["recon_coordinator", "consignor_approver", "technician", "inspector"]) {
+      await request(api).post(`/api/inspections/${source.id}/reinspections`).set({ "x-actor-id": "unassigned-reinspection-operator", "x-actor-name": "Unassigned Operator", "x-actor-role": role }).send(payload).expect(403);
+    }
+    process.env.ENABLE_EVALUATION_MODE = "true";
+    for (const role of ["inspector", "reviewer", "admin"]) {
+      await request(api).post(`/api/evaluation/inspections/${source.id}/reinspections`).set("x-actor-role", role).send(payload).expect(403);
+    }
+    expect(store.inspections.size).toBe(count);
+  });
+
+  it("rejects stale or unfinalized reinspection sources and invalid intents", async () => {
+    const source = [...store.inspections.values()].find((inspection) => inspection.vin === "1FMCU9H6XNUB81389")!;
+    const report = store.latestFinalReport(source.id)!;
+    const payload = { operationId: crypto.randomUUID(), reason: "Request a new condition record while preserving the original report.", expectedReportVersion: report.version };
+    await request(api).post(`/api/inspections/${source.id}/reinspections`).set(reviewerHeaders).send({ ...payload, expectedReportVersion: report.version + 1 }).expect(409);
+    const created = await createInspection();
+    await request(api).post(`/api/inspections/${created.body.data.id}/reinspections`).set(reviewerHeaders).send(payload).expect(409);
+    for (const invalid of [{ ...payload, reason: "short" }, { ...payload, operationId: "invalid" }, { ...payload, expectedReportVersion: 0 }, { ...payload, mileage: 1 }]) {
+      await request(api).post(`/api/inspections/${source.id}/reinspections`).set(reviewerHeaders).send(invalid).expect(400);
+    }
+    delete (store.latestGrade(source.id)!.explanationJson as Record<string, unknown>).gradeEvidenceFingerprint;
+    delete (store.latestReportDraft(source.id)!.inputSummaryJson as Record<string, unknown>).sourceFingerprint;
+    const legacy = await request(api).get(`/api/inspections/${source.id}`).set(reviewerHeaders).expect(200);
+    expect(legacy.body.data.requiresReinspection).toBe(true);
+    expect(legacy.body.data.buyerVisibleReady).toBe(false);
+  });
+
   it("lets the assigned inspector and an admin add manual damage while evaluation roles remain read-only", async () => {
     const created = await createInspection();
     const inspectionId = created.body.data.id as string;

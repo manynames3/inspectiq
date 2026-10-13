@@ -16,7 +16,9 @@ These records describe `agent/inspection-recon-operations`, which remains unmerg
 | [0010 — Hybrid AI/ML direction](0010-hybrid-ai-ml-image-analysis.md) | Specialized automotive models may complement Bedrock. | Dedicated damage segmentation, calibrated OCR, and angle models are not implemented. |
 | [0011 — Offline capture, online decisions](0011-offline-capture-online-decisions.md) | Durable native capture; server-authoritative review/release. | Cached assignments and queued uploads are not finalized reports. |
 | [0012 — Shared brand, evidence-first surfaces](0012-shared-brand-evidence-first-surfaces.md) | Shared tokens; task-specific desktop and native UI. | No new mobile framework, shared UI renderer, or backend approval shortcut. |
+| [0013 — Writer snapshots and runtime recovery](0013-postgres-writer-snapshots-and-runtime-recovery.md) | Serialized write transactions see committed facts; failed bootstrap is retryable. | Tested release fix in this branch, not yet deployed to the AWS API. |
+| [0014 — Audited reinspection with immutable history](0014-audited-reinspection-with-immutable-history.md) | Preserve historical publication; create a separate reasoned, idempotent draft with fresh evidence and approvals. | Additive lineage migration and backend/web/native recovery are implemented on this branch; AWS/model-promotion gates remain independent. |
 
-The first ten records predate this documentation refresh and retain their original wording. ADRs 0011–0012 record already-implemented choices, not a new infrastructure migration.
+The first ten records predate this documentation refresh and retain their original wording. ADRs 0011–0012 record already-implemented choices. ADRs 0013–0014 record implemented release/recovery fixes, not an applied backend rollout or proof that the independent model-promotion gate passed.
 
 For a new record, include status, context, decision, alternatives, consequences, and links to the implementation. Clearly distinguish an implemented decision from a future direction; do not mark a proposed deployment as already operational.

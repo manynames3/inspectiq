@@ -20,6 +20,7 @@ import {
   PatchInspectionSchema,
   PatchReportSchema,
   ReportApprovalSchema,
+  ReinspectionRequestSchema,
   InspectorObservationSchema,
   ConditionQcReviewSchema,
   SamplePhotoSchema,
@@ -595,6 +596,27 @@ export function createApp(appStore = defaultStore, options: AppOptions = {}): ex
     const actor = actorFromRequest(req, appStore);
     inspectionForRequest(appStore, req.params.id, actor);
     sendData(res, appStore.bundle(req.params.id));
+  }));
+
+  app.post("/api/inspections/:id/reinspections", asyncRoute(async (req, res) => {
+    const input = ReinspectionRequestSchema.parse(req.body);
+    const actor = actorFromRequest(req, appStore);
+    requireAction(actor, "inspection:reinspect");
+    inspectionForRequest(appStore, req.params.id, actor, "start a reinspection of this vehicle");
+    let result = appStore.createReinspection(req.params.id, input, actor);
+    if (!result.reused) {
+      try {
+        await persistMutation(options);
+      } catch (error) {
+        const constraint = error && typeof error === "object" ? error as { code?: string; constraint?: string } : null;
+        if (constraint?.code !== "23505" || constraint.constraint !== "idx_inspections_reinspection_operation" || !options.beforeRequest) throw error;
+        await options.beforeRequest();
+        inspectionForRequest(appStore, req.params.id, actor, "start a reinspection of this vehicle");
+        result = appStore.createReinspection(req.params.id, input, actor);
+        if (!result.reused) throw conflict("The concurrent reinspection could not be loaded. Refresh before retrying.");
+      }
+    }
+    sendData(res, result, result.reused ? 200 : 201);
   }));
 
   app.patch("/api/inspections/:id", asyncRoute((req, res) => {

@@ -1,4 +1,4 @@
-import type { Actor } from "./types.js";
+import type { Actor, ReinspectionRequest, ReinspectionResult } from "./types.js";
 import { authHeaders, evaluationApiPath } from "./auth.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -59,4 +59,11 @@ export async function api<T>(path: string, options: RequestInit = {}, actor?: Ac
     );
   }
   return body.data as T;
+}
+
+export function createReinspection(inspectionId: string, input: ReinspectionRequest, actor: Actor): Promise<ReinspectionResult> {
+  return api(`/api/inspections/${encodeURIComponent(inspectionId)}/reinspections`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  }, actor);
 }

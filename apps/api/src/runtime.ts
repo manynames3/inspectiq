@@ -25,6 +25,7 @@ export function shouldPersistInitialStore(
 
 export async function createRuntime(): Promise<Runtime> {
   if (runtimePromise) return runtimePromise;
+  let initializationPool: Pool | null = null;
   runtimePromise = (async () => {
     const persistenceMode = process.env.PERSISTENCE_MODE ?? "file";
     const persistLocally = persistenceMode === "file";
@@ -36,6 +37,7 @@ export async function createRuntime(): Promise<Runtime> {
     }
 
     const pool = persistPostgres && databaseUrl ? createPostgresPool(databaseUrl, "inspectiq-api") : null;
+    initializationPool = pool;
 
     const loadedStore = persistPostgres && pool
       ? await loadPostgresRows(store, pool)
@@ -76,6 +78,14 @@ export async function createRuntime(): Promise<Runtime> {
     }
 
     return { app, pool };
-  })();
+  })().catch(async (error: unknown) => {
+    try {
+      await initializationPool?.end();
+    } catch {
+      // Preserve the initialization failure if connection cleanup also fails.
+    }
+    runtimePromise = null;
+    throw error;
+  });
   return runtimePromise;
 }

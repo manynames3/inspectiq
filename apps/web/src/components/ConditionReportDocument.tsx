@@ -5,15 +5,19 @@ export function ConditionReportDocument({ bundle, body }: { bundle: InspectionBu
   const report = bundle.finalReport;
   const vehicle = bundle.inspection;
   const unsaved = Boolean(report && body !== undefined && body !== report.reportBody);
-  const state = unsaved ? "Unsaved draft · not reviewed" : report?.finalizedAt ? "Finalized" : report?.approvalStatus === "approved" ? "Approved · awaiting release" : "Draft · not approved for buyer release";
+  const historical = Boolean(report?.finalizedAt && bundle.requiresReinspection);
+  const qcStatusUnknown = Boolean(report?.finalizedAt && bundle.requiresReinspection === undefined);
+  const historicalPublication = historical || qcStatusUnknown;
+  const state = unsaved ? "Unsaved draft · not reviewed" : historical ? "Historical release · current-policy reinspection required" : qcStatusUnknown ? "Published history · current-QC status unverified" : report?.finalizedAt ? "Finalized" : report?.approvalStatus === "approved" ? "Approved · awaiting release" : "Draft · not approved for buyer release";
   return <article className="report-paper" role="region" aria-label="Condition report document">
     <header><Brand compact /><span>Condition report / {report ? `v${report.version}` : "preliminary"}</span></header>
-    <div className={`document-state ${report?.finalizedAt && !unsaved ? "released" : "draft"}`}>{state}</div>
+    <div className={`document-state ${report?.finalizedAt && !unsaved && !historicalPublication ? "released" : "draft"}`}>{state}</div>
+    {historicalPublication ? <section className="document-limitations"><h3>Current-policy limitation</h3><p>{historical ? "Preserved historical artifact: the original report and approval record remain unchanged, but this release is not certified under the current evidence-QC policy. A separate audited inspection with fresh evidence and human approvals is required." : "The current evidence-QC status was not supplied for this published record. Refresh the inspection before relying on it as a current-policy release; its historical approval and release remain preserved."}</p></section> : null}
     <h2>{vehicle.year} {vehicle.make} {vehicle.model}</h2>
     <p className="document-vehicle-meta">{vehicle.trim} · {vehicle.exteriorColor} · {vehicle.mileage.toLocaleString()} miles</p>
     <dl className="document-identity"><div><dt>Vehicle identification</dt><dd>{vehicle.vin}<small>{bundle.conditionQc?.identity.vin.status.replaceAll("_", " ") ?? "Not verified"}</small></dd></div><div><dt>Odometer evidence</dt><dd>{vehicle.mileage.toLocaleString()} miles<small>{bundle.conditionQc?.identity.odometer.status.replaceAll("_", " ") ?? "Not verified"}</small></dd></div></dl>
     <div className="document-body">{(body ?? report?.reportBody)?.trim() || "No report language prepared. Complete the evidence review and approve the condition grade before preparing this document."}</div>
     {bundle.conditionQc?.issues.length ? <section className="document-limitations"><h3>Evidence limitations &amp; review record</h3>{bundle.conditionQc.issues.map((issue) => <p key={issue.id}><strong>{issue.title}.</strong> {issue.detail}{issue.decision ? ` Reviewed by ${issue.decision.actor}: ${issue.decision.reason}` : " Review unresolved."}</p>)}</section> : null}
-    <footer><div><span>Reviewer approval</span><strong>{unsaved ? "Not reviewed" : report?.approvedBy ?? "Not approved"}</strong><small>{!unsaved && report?.approvedAt ? new Date(report.approvedAt).toLocaleString() : "Human approval required"}</small></div><div><span>Release record</span><strong>{!unsaved && report?.finalizedAt ? `v${report.version} · finalized` : "Not released"}</strong><small>{!unsaved && report?.finalizedAt ? new Date(report.finalizedAt).toLocaleString() : "Drafts are not buyer-ready reports"}</small></div></footer>
+    <footer><div><span>{historicalPublication ? "Historical reviewer approval" : "Reviewer approval"}</span><strong>{unsaved ? "Not reviewed" : report?.approvedBy ?? "Not approved"}</strong><small>{!unsaved && report?.approvedAt ? new Date(report.approvedAt).toLocaleString() : "Human approval required"}</small></div><div><span>{historicalPublication ? "Historical release record" : "Release record"}</span><strong>{!unsaved && report?.finalizedAt ? `v${report.version} · ${historicalPublication ? "historical publication" : "finalized"}` : "Not released"}</strong><small>{!unsaved && report?.finalizedAt ? new Date(report.finalizedAt).toLocaleString() : "Drafts are not buyer-ready reports"}</small></div></footer>
   </article>;
 }

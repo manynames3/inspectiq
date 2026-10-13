@@ -7,7 +7,8 @@ import * as Crypto from "expo-crypto";
 import { File } from "expo-file-system";
 import { Check, RotateCcw, ShieldAlert } from "lucide-react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { requiredPhotoAngles, type RequiredPhotoAngle } from "@inspectiq/shared";
+import { canRole, requiredPhotoAngles, type RequiredPhotoAngle } from "@inspectiq/shared";
+import { useAuth } from "../auth/AuthContext";
 import { prepareCapture } from "../capture/quality";
 import { ActionButton, Notice, StatusPill } from "../components/Primitives";
 import type { RootStackParamList } from "../navigation/types";
@@ -41,11 +42,13 @@ const guidance: Record<RequiredPhotoAngle, string> = {
 };
 
 export function CaptureScreen({ route, navigation }: Props) {
+  const { session, canMutate } = useAuth();
   const insets = useSafeAreaInsets();
   const camera = useRef<CameraView>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const { bundleById, pendingUploads, online, syncNow, refresh } = useWorkspace();
   const bundle = bundleById(route.params.inspectionId);
+  const canCapture = Boolean(bundle && session?.mode === "oidc" && canMutate && canRole(session.actor.role, "photo:capture") && bundle.inspection.status !== "FINALIZED");
   const completedAngles = useMemo(() => new Set([
     ...(bundle?.photos.map((photo) => photo.declaredAngle).filter(Boolean) ?? []),
     ...pendingUploads.filter((operation) => operation.inspectionId === route.params.inspectionId && operation.status !== "blocked").map((operation) => operation.declaredAngle)
@@ -58,7 +61,7 @@ export function CaptureScreen({ route, navigation }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const takePhoto = async () => {
-    if (!camera.current || !ready || processing) return;
+    if (!canCapture || !camera.current || !ready || processing) return;
     setProcessing(true);
     setError(null);
     try {
@@ -94,7 +97,7 @@ export function CaptureScreen({ route, navigation }: Props) {
   };
 
   const queueCandidate = async (allowQaReview = false) => {
-    if (!candidate) return;
+    if (!canCapture || !candidate) return;
     const queued: UploadOperation = {
       ...candidate,
       status: "queued",
@@ -110,6 +113,13 @@ export function CaptureScreen({ route, navigation }: Props) {
     if (next) setAngle(next);
     else navigation.goBack();
   };
+
+  if (!canCapture) {
+    return <View style={styles.permission}>
+      <Notice tone="warn" title={bundle?.inspection.status === "FINALIZED" ? "Published inspection is locked" : "Capture unavailable"} message={bundle?.inspection.status === "FINALIZED" ? "The original report and evidence must stay unchanged. Start an online reinspection to capture fresh evidence in a separate draft." : "Capture requires an authenticated Inspector or Admin and an available draft inspection."} />
+      <ActionButton label="Back to inspection" tone="secondary" onPress={() => navigation.goBack()} />
+    </View>;
+  }
 
   if (!permission?.granted) {
     const canRequestPermission = permission?.canAskAgain !== false;

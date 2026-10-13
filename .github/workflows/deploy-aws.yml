@@ -70,6 +70,8 @@ jobs:
             infra/terraform/tfplan
             infra/terraform/tfplan.txt
             /tmp/inspectiq-contract-eval.json
+      - name: Validate code-only promotion scope
+        run: terraform -chdir=infra/terraform show -json tfplan | node scripts/check-aws-code-plan.mjs
       - name: Apply reviewed plan
         if: inputs.action == 'apply'
         run: terraform -chdir=infra/terraform apply -input=false -auto-approve tfplan

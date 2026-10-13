@@ -9,7 +9,7 @@ Evidence-first vehicle inspection, condition-report quality control, and authori
 >
 > The live web app was deployed from this branch. Deployment, branch implementation, and production readiness are different claims: the latest frontend does not prove every backend revision is deployed, and neither establishes commercial model accuracy.
 >
-> The AWS API remains at `f0c8697`. Promoting the newer QC backend is blocked on legacy finalized-record handling; see the [release status and safety gate](docs/release-status.md).
+> The AWS API remains at `f0c8697`. The active branch now includes audited, fresh-evidence reinspection that preserves legacy publications; production promotion still requires its release checks and the paid, no-fallback Bedrock prompt gate. See the [release status and safety gate](docs/release-status.md).
 
 [No-login product tour](https://inspectiq.pages.dev/?review=1) | [Native mobile](apps/mobile/README.md) | [C4 architecture](docs/c4.md) | [ADRs](docs/adr/README.md) | [Implementation boundary](docs/implementation-boundary.md)
 
@@ -54,6 +54,8 @@ InspectIQ keeps condition facts, spending decisions, authorized work, quality co
 8. Apply a snapshotted Consignor Authorization Policy or route the item to a Consignor Approver.
 9. Generate work orders only for authorized items, block overruns for reauthorization, and record QC.
 10. Release the vehicle only when the backend sale-readiness assessment has no blockers.
+
+Published history is never reopened or silently reapproved. An authorized user can start a separately audited reinspection linked to the exact original report version. Only intake metadata carries forward; photos, findings, grades, report approvals, recon authorization, and work must be collected or decided anew. Historical reports and exports explicitly disclose their current-policy limitation. See [ADR 0014](docs/adr/0014-audited-reinspection-with-immutable-history.md).
 
 ## Product Tour
 
@@ -108,7 +110,7 @@ Operational views:
 | CR and recon comparison | The live Recon Operations queue contrasts a published 4.7 CR with no confirmed repair findings and `$0` recon against a preliminary 4.1 CR with confirmed rear damage and a `$1,200–$2,500` repair range. The range comes from confirmed damage, not a score-to-dollar lookup. |
 | Vehicle reference | NHTSA vPIC decodes a complete VIN into reference metadata. It is not a vehicle-history report, proprietary condition score, or replacement for evidence review. |
 | Operations | Platform Health exposes queue state, outbox delivery, EventBridge/DLQ status, projector health, model usage, and recovery controls. |
-| Verification | [InspectIQ CI at `2b49dee`](https://github.com/manynames3/inspectiq/actions/runs/38339742074) passed all eight jobs, including Postgres integration, browser E2E, and responsive visual/accessibility regression. [Android CI at the same commit](https://github.com/manynames3/inspectiq/actions/runs/38339742078) passed the native evaluation journey and internal arm64 APK build. These prove this branch's workflow, not a `main` merge or physical-device camera quality. |
+| Verification | [InspectIQ CI at `6deeb1b`](https://github.com/manynames3/inspectiq/actions/runs/38359124729) passed all eight jobs, including Postgres integration, browser E2E, and responsive visual/accessibility regression. [Android CI at `2b49dee`](https://github.com/manynames3/inspectiq/actions/runs/38339742078) passed the native evaluation journey and internal arm64 APK build used in the tour. These prove the tested branch workflow, not a `main` merge, successful backend promotion, or physical-device camera quality. |
 
 The marketplace run is one traceable workflow proof, not an accuracy benchmark. The source image is not committed to this repository.
 Review decisions and damage entries created in the Evaluation Workspace stay in browser session storage and never mutate the production inspection record.

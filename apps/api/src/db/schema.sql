@@ -345,3 +345,14 @@ create index if not exists idx_report_versions_report_version on report_versions
 create index if not exists idx_audit_inspection_created on audit_events(inspection_id, created_at);
 create index if not exists idx_domain_events_status_created on domain_events(status, created_at);
 create index if not exists idx_domain_events_inspection_created on domain_events(inspection_id, created_at);
+
+-- Reinspection lineage: historical inspection and report records stay immutable.
+alter table inspections
+  add column if not exists reinspection_source_inspection_id text references inspections(id),
+  add column if not exists reinspection_source_report_id text references final_reports(id),
+  add column if not exists reinspection_source_report_version integer,
+  add column if not exists reinspection_reason text,
+  add column if not exists reinspection_operation_id uuid;
+
+create unique index if not exists idx_inspections_reinspection_operation
+  on inspections(reinspection_source_inspection_id, reinspection_operation_id);

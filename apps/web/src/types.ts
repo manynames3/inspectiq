@@ -40,6 +40,11 @@ export type Inspection = {
   completenessPercentage: number;
   updatedAt: string;
   finalizedAt: string | null;
+  reinspectionSourceInspectionId?: string | null;
+  reinspectionSourceReportId?: string | null;
+  reinspectionSourceReportVersion?: number | null;
+  reinspectionReason?: string | null;
+  reinspectionOperationId?: string | null;
   conditionGrade?: ConditionGrade | null;
   humanReviewFlag?: boolean;
   buyerVisibleReady?: boolean;
@@ -195,6 +200,7 @@ export type AuditEvent = {
 };
 
 export type InspectionBundle = {
+  requiresReinspection?: boolean;
   conditionQc?: import("@inspectiq/shared").ConditionQcAssessment;
   inspection: Inspection;
   photos: VehiclePhoto[];
@@ -210,6 +216,13 @@ export type InspectionBundle = {
   auditEvents: AuditEvent[];
   readinessIssues: ReadinessIssue[];
   buyerVisibleReady: boolean;
+};
+
+export type ReinspectionRequest = import("@inspectiq/shared").ReinspectionRequest;
+
+export type ReinspectionResult = {
+  inspection: Inspection;
+  reused: boolean;
 };
 
 export type VehicleReference = {

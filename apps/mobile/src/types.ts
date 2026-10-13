@@ -37,6 +37,11 @@ export type Inspection = {
   createdAt: string;
   updatedAt: string;
   finalizedAt: string | null;
+  reinspectionSourceInspectionId?: string | null;
+  reinspectionSourceReportId?: string | null;
+  reinspectionSourceReportVersion?: number | null;
+  reinspectionReason?: string | null;
+  reinspectionOperationId?: string | null;
 };
 
 export type VehiclePhoto = {
@@ -130,6 +135,7 @@ export type AuditEvent = {
 };
 
 export type InspectionBundle = {
+  requiresReinspection?: boolean;
   conditionQc?: import("@inspectiq/shared").ConditionQcAssessment;
   inspection: Inspection;
   photos: VehiclePhoto[];

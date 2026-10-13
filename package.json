@@ -28,7 +28,7 @@
     "test:projector": "python3 -m pytest services/operations-projector",
     "test:postgres": "npm run test:postgres -w @inspectiq/api",
     "test:screenshots": "node apps/web/scripts/screenshot-regression.mjs",
-    "test:workflows": "node --test scripts/workflow-contracts.test.mjs",
+    "test:workflows": "node --test scripts/workflow-contracts.test.mjs scripts/check-aws-code-plan.test.mjs",
     "test:live-upload": "node scripts/live-upload-review-proof.mjs",
     "proof:video": "node apps/web/scripts/proof-video.mjs",
     "typecheck": "npm run build -w @inspectiq/shared && npm run typecheck -w @inspectiq/api && npm run typecheck -w @inspectiq/web && npm run typecheck -w @inspectiq/mobile"

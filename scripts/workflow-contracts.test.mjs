@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+test("AWS code promotion validates the exact saved plan before applying it", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/deploy-aws.yml", import.meta.url), "utf8");
+  const guard = workflow.indexOf("terraform -chdir=infra/terraform show -json tfplan | node scripts/check-aws-code-plan.mjs");
+  const apply = workflow.indexOf("terraform -chdir=infra/terraform apply -input=false -auto-approve tfplan");
+  assert.ok(guard >= 0 && apply > guard, "fresh apply plans must reject unrelated infrastructure or configuration changes");
+});
+
 test("Expo Android jobs do not initialize Gradle caching before prebuild", async () => {
   const workflow = await readFile(
     new URL("../.github/workflows/mobile-android-e2e.yml", import.meta.url),

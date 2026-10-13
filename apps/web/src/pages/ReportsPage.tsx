@@ -50,6 +50,7 @@ export function ReportsPage() {
 
   const reportRecords = useMemo(() => records.filter(({ bundle }) => bundle.finalReport), [records]);
   const finalizedCount = reportRecords.filter(({ bundle }) => bundle.finalReport?.finalizedAt).length;
+  const historicalCount = reportRecords.filter(({ bundle }) => bundle.finalReport?.finalizedAt && bundle.requiresReinspection !== false).length;
   const approvedCount = reportRecords.filter(({ bundle }) => !bundle.finalReport?.finalizedAt && bundle.finalReport?.approvalStatus === "approved").length;
   const draftCount = reportRecords.length - finalizedCount - approvedCount;
   const partialDetailCount = records.filter((record) => record.bundleLoadError).length;
@@ -84,7 +85,7 @@ export function ReportsPage() {
           <strong>{draftCount}</strong>
         </article>
         <article className="summary-card">
-          <span>Finalized</span>
+          <span>{historicalCount > 0 ? "Published history" : "Finalized"}</span>
           <strong>{finalizedCount}</strong>
         </article>
         <article className="summary-card">
@@ -118,7 +119,7 @@ export function ReportsPage() {
             <tbody>
               {records.map((record) => {
                 const { inspection, bundle } = record;
-                const status = bundle.finalReport?.finalizedAt ? "Finalized" : bundle.finalReport?.approvalStatus === "approved" ? "Approved" : bundle.finalReport ? "Draft" : "Not started";
+                const status = bundle.finalReport?.finalizedAt ? bundle.requiresReinspection ? "Historical release" : bundle.requiresReinspection === undefined ? "Published history" : "Finalized" : bundle.finalReport?.approvalStatus === "approved" ? "Approved" : bundle.finalReport ? "Draft" : "Not started";
                 const readiness = deriveMarketplaceReadiness(bundle);
                 return (
                   <tr key={inspection.id}>

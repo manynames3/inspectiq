@@ -9,6 +9,7 @@ InspectIQ is production-shaped, not a claim that a portfolio corpus and low-volu
 | Workflow | Inspector capture, SQS/Bedrock analysis, reviewer accept/reject/edit, damage, grading, report version approval/finalization, export, and audit are covered by API/browser tests. |
 | Native mobile | Expo/React Native roles, Cognito PKCE, SecureStore, SQLite assignment/operation cache, sandboxed photos, offline Inspector capture, bounded sync retries, local QA, and Android build/Maestro workflows. |
 | Relational integrity | Numbered migrations, `schema_migrations`, normalized Neon rows, changed-row transactions, conditional versions, `409 VERSION_CONFLICT`, and business/audit/outbox co-commit. |
+| Published history | Fresh-evidence, role-scoped reinspection with an audited reason and immutable source version; real Postgres legacy-schema upgrade, rollback, cold-start, and duplicate-request tests. Implemented on the branch; see release status for deployment. |
 | Event reliability | Versioned `DomainEventV1` outbox, EventBridge, Python projector, transactional DynamoDB duplicate suppression, TTL timelines, latest state, domain-event DLQ, alarms, and Admin replay. |
 | AI governance | Strict schemas, no-fallback promotion workflow, model/prompt/latency/token/cost/failure metadata, monthly reservations, reviewer approval, and buyer-output redaction. |
 | Auth | Cognito OIDC/PKCE, JWT/JWKS validation, role claims, RBAC, object authorization, isolated session-only evaluation actions, and no role switching for authenticated users. |
@@ -19,7 +20,7 @@ InspectIQ is production-shaped, not a claim that a portfolio corpus and low-volu
 
 ### Backend Upgrade Compatibility
 
-The active QC backend cannot be promoted blindly over legacy finalized records: old grades/reports lack the new evidence/source fingerprints, while finalized inspections remain immutable. The [release safety gate](release-status.md) records the verified production shape and the required explicit legacy-record policy. Do not infer that fresh demo seeds or passing contract tests upgrade historical approvals.
+Old grades/reports lack the new evidence/source fingerprints, while finalized inspections remain immutable. The active branch implements the authorized policy: disclose historical status, preserve original artifacts, and offer a separately audited reinspection that requires new evidence and approvals. Persisted legacy-upgrade tests verify the additive migration without rewriting the old report. The [release safety gate](release-status.md) records the rollout and model-test status. Passing these tests does not recertify a historical publication or prove field model accuracy.
 
 ### 1. Field Model Evidence
 

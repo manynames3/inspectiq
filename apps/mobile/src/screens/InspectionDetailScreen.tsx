@@ -7,6 +7,7 @@ import { useAuth } from "../auth/AuthContext";
 import { EvidenceImage } from "../components/EvidenceImage";
 import { EvidencePhotoViewer } from "../components/EvidencePhotoViewer";
 import { ConditionQcPanel } from "../components/ConditionQcPanel";
+import { ReinspectionPanel } from "../components/ReinspectionPanel";
 import { ActionButton, Card, Notice, PageHeading, Screen, Section, StatusPill } from "../components/Primitives";
 import type { RootStackParamList } from "../navigation/types";
 import { colors } from "../theme";
@@ -27,13 +28,16 @@ const labels: Record<RequiredPhotoAngle, string> = {
 
 export function InspectionDetailScreen({ route, navigation }: Props) {
   const { session, canMutate } = useAuth();
-  const { bundleById, refresh, request, online, loading, pendingUploads } = useWorkspace();
+  const { bundleById, refresh, request, online, loading, pendingUploads, error: workspaceError } = useWorkspace();
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
   const bundle = bundleById(route.params.inspectionId);
   if (!session || !bundle) {
-    return <Screen><Notice tone="warn" title="Inspection unavailable" message="Refresh assignments while online to cache this inspection." /></Screen>;
+    return <Screen refresh={() => void refresh()} refreshing={loading}>
+      <Notice tone={online ? "warn" : "offline"} title="Inspection not cached" message="Reconnect and tap Refresh to load this inspection. If creation already completed, the new record exists on the server; refresh here rather than creating another reinspection." />
+      {workspaceError ? <Notice tone="bad" title="Refresh not completed" message={workspaceError} /> : null}
+    </Screen>;
   }
   const { inspection } = bundle;
   const selectedPhoto = selectedPhotoIndex == null ? null : bundle.photos[selectedPhotoIndex] ?? null;
@@ -63,7 +67,8 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
   return (
     <Screen refresh={() => void refresh()} refreshing={loading}>
       <PageHeading title={`${inspection.year} ${inspection.make} ${inspection.model}`} subtitle={`${inspection.vin} · ${inspection.mileage.toLocaleString()} mi · ${inspection.trim}`} />
-      <View style={styles.captureLedger}><Text style={styles.captureLedgerText}>{bundle.photos.filter((photo) => photo.uploadStatus === "uploaded").length} uploaded · {pendingForInspection.length} queued</Text><Text style={styles.captureLedgerText}>{online ? "Online" : "Offline · capture available"}</Text></View>
+      <View style={styles.captureLedger}><Text style={styles.captureLedgerText}>{bundle.photos.filter((photo) => photo.uploadStatus === "uploaded").length} uploaded · {pendingForInspection.length} queued</Text><Text style={styles.captureLedgerText}>{online ? "Online" : inspection.status === "FINALIZED" ? "Offline · historical record" : "Offline · capture available"}</Text></View>
+      <ReinspectionPanel key={`reinspection:${inspection.id}`} bundle={bundle} onOpenInspection={(inspectionId) => navigation.push("InspectionDetail", { inspectionId })} />
       {canMutate && canRole(session.actor.role, "photo:capture") && inspection.status !== "FINALIZED" ? (
         <ActionButton label="Capture required photos" icon={<Camera size={18} color="white" />} onPress={() => navigation.navigate("Capture", { inspectionId: inspection.id })} />
       ) : null}
@@ -121,7 +126,7 @@ export function InspectionDetailScreen({ route, navigation }: Props) {
         </View>
       </Section>
       <View style={styles.actions}>
-        {canMutate && online && canRole(session.actor.role, "photo:analyze") && bundle.photos.length > 0 ? (
+        {canMutate && online && inspection.status !== "FINALIZED" && canRole(session.actor.role, "photo:analyze") && bundle.photos.length > 0 ? (
           <ActionButton label={busy ? "Submitting…" : "Analyze photos"} tone="secondary" disabled={busy} icon={<Play size={17} color={colors.ink} />} onPress={() => void runAction(`/api/inspections/${inspection.id}/photos/analyze`, {}, `mobile-analysis:${inspection.id}`)} />
         ) : null}
         {canMutate && online && canRole(session.actor.role, "grade:calculate") && ["READY_FOR_GRADING", "GRADED", "HUMAN_REVIEW_REQUIRED", "AI_DRAFTED", "REPORT_FAILED"].includes(inspection.status) ? (

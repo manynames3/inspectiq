@@ -42,4 +42,20 @@ describe("InspectionCard", () => {
     await fireEvent.press(view.getByLabelText("Open 2022 Ford Escape"));
     expect(onPress).toHaveBeenCalledTimes(1);
   });
+
+  it("does not present a historical legacy release as current-QC ready", async () => {
+    const historical = { ...bundle, inspection: { ...bundle.inspection, status: "FINALIZED" as const }, requiresReinspection: true, readinessIssues: [], buyerVisibleReady: true };
+    const view = await render(<InspectionCard bundle={historical} onPress={jest.fn()} />);
+    expect(view.getByText("Historical release")).toBeTruthy();
+    expect(view.getByText("Fresh inspection required by current QC rules")).toBeTruthy();
+    expect(view.queryByText("Buyer-visible")).toBeNull();
+  });
+
+  it("does not certify an older cached finalized record without a current QC flag", async () => {
+    const cached = { ...bundle, inspection: { ...bundle.inspection, status: "FINALIZED" as const }, readinessIssues: [], buyerVisibleReady: true };
+    const view = await render(<InspectionCard bundle={cached} onPress={jest.fn()} />);
+    expect(view.getByText("Published history")).toBeTruthy();
+    expect(view.getByText("Current-QC release status unverified · refresh online")).toBeTruthy();
+    expect(view.queryByText("Buyer-visible")).toBeNull();
+  });
 });

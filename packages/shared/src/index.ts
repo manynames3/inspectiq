@@ -92,7 +92,8 @@ export const roleActions = [
   "quality_control:decide",
   "sale_readiness:assess",
   "ops:view",
-  "ops:recover"
+  "ops:recover",
+  "inspection:reinspect"
 ] as const;
 
 export const InspectionStatusSchema = z.enum(inspectionStatuses);
@@ -222,7 +223,8 @@ export const rolePermissions: Record<UserRole, RoleAction[]> = {
     "vehicle:check_in",
     "photo:capture",
     "photo:analyze",
-    "damage:create"
+    "damage:create",
+    "inspection:reinspect"
   ],
   reviewer: [
     "inspection:workflow",
@@ -235,7 +237,8 @@ export const rolePermissions: Record<UserRole, RoleAction[]> = {
     "report:edit",
     "report:approve",
     "report:finalize",
-    "report:retry"
+    "report:retry",
+    "inspection:reinspect"
   ],
   recon_coordinator: [
     "recon:estimate",
@@ -255,6 +258,7 @@ export const rolePermissions: Record<UserRole, RoleAction[]> = {
 
 export const roleActionLabels: Record<RoleAction, string> = {
   "inspection:create": "create inspections",
+  "inspection:reinspect": "start an audited reinspection",
   "inspection:update": "edit inspection records",
   "inspection:assign": "assign inspections",
   "inspection:workflow": "advance inspection workflow states",
@@ -318,6 +322,14 @@ export const PatchInspectionSchema = CreateInspectionSchema.partial().extend({
   assignedToUserId: z.string().trim().min(1).max(120).nullable().optional(),
   expectedVersion: z.coerce.number().int().min(1).optional()
 });
+
+export const ReinspectionRequestSchema = z.object({
+  reason: z.string().trim().min(10).max(1000),
+  operationId: z.string().uuid().transform((value) => value.toLowerCase()),
+  expectedReportVersion: z.number().int().min(1)
+}).strict();
+
+export type ReinspectionRequest = z.infer<typeof ReinspectionRequestSchema>;
 
 export const UploadPhotoSchema = z.object({
   originalFilename: z.string().trim().min(1).max(180),

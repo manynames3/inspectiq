@@ -3,6 +3,7 @@ import {
   DamageCandidateSchema,
   ImageQualitySchema,
   PhotoAngleSchema,
+  ReinspectionRequestSchema,
   estimateDamageRepairCost,
   requiredPhotoAngles,
   type CreateInspectionSchema,
@@ -11,6 +12,7 @@ import {
   type InspectionStatus,
   type PhotoAngle,
   type ReadinessIssue,
+  type ReinspectionRequest,
   type UserRole,
   type VisionOutput
 } from "@inspectiq/shared";
@@ -39,6 +41,7 @@ import { conflict, notFound, versionConflict } from "./errors.js";
 import { currentCorrelationId } from "./requestContext.js";
 import { assertTransition, canTransition } from "./stateMachine.js";
 import { ReconStore } from "./reconStore.js";
+import { requireAction, requireInspectionAccess } from "./rbac.js";
 import { assessConditionQc, inspectorObservations } from "./conditionQc.js";
 import { visualConditionSections } from "./reportProvider.js";
 import type { InspectorObservationSchema, ConditionQcReviewSchema } from "@inspectiq/shared";
@@ -321,7 +324,12 @@ export class MemoryStore {
       version: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
-      finalizedAt: null
+      finalizedAt: null,
+      reinspectionSourceInspectionId: null,
+      reinspectionSourceReportId: null,
+      reinspectionSourceReportVersion: null,
+      reinspectionReason: null,
+      reinspectionOperationId: null
     };
     this.inspections.set(inspection.id, inspection);
     this.addAudit(inspection.id, actor, "inspection.created", { status: inspection.status, vin: inspection.vin });
@@ -332,6 +340,63 @@ export class MemoryStore {
       model: inspection.model
     });
     return inspection;
+  }
+
+  createReinspection(sourceInspectionId: string, request: ReinspectionRequest, actor: Actor): { inspection: Inspection; reused: boolean } {
+    const input = ReinspectionRequestSchema.parse(request);
+    requireAction(actor, "inspection:reinspect");
+    const source = this.getInspection(sourceInspectionId);
+    requireInspectionAccess(actor, source, "start a reinspection of this vehicle");
+    const report = this.latestFinalReport(sourceInspectionId);
+    if (source.status !== "FINALIZED" || !source.finalizedAt || !report?.finalizedAt) {
+      throw conflict("A reinspection must start from a finalized inspection and report.");
+    }
+    this.assertExpectedVersion("Source report", input.expectedReportVersion, report.version);
+    const existing = [...this.inspections.values()].find((inspection) =>
+      inspection.reinspectionSourceInspectionId === sourceInspectionId &&
+      inspection.reinspectionOperationId === input.operationId
+    );
+    if (existing) {
+      if (existing.reinspectionSourceReportId !== report.id ||
+        existing.reinspectionSourceReportVersion !== input.expectedReportVersion ||
+        existing.reinspectionReason !== input.reason) {
+        throw conflict("This reinspection operation was already used with a different request.");
+      }
+      return { inspection: existing, reused: true };
+    }
+    const inspection = this.createInspection({
+      vin: source.vin, year: source.year, make: source.make, model: source.model,
+      trim: source.trim, mileage: source.mileage, exteriorColor: source.exteriorColor,
+      sellerSource: source.sellerSource, inspectorName: source.inspectorName
+    }, actor);
+    Object.assign(inspection, {
+      assignedToUserId: source.assignedToUserId,
+      reinspectionSourceInspectionId: source.id,
+      reinspectionSourceReportId: report.id,
+      reinspectionSourceReportVersion: report.version,
+      reinspectionReason: input.reason,
+      reinspectionOperationId: input.operationId
+    });
+    const lineage = {
+      sourceInspectionId: source.id,
+      sourceReportId: report.id,
+      sourceReportVersion: report.version,
+      replacementInspectionId: inspection.id,
+      operationId: input.operationId,
+      reason: input.reason,
+      actor: { ...actor }
+    };
+    this.addAudit(source.id, actor, "inspection.reinspection_requested", lineage);
+    this.addAudit(inspection.id, actor, "inspection.reinspection_created", lineage);
+    return { inspection, reused: false };
+  }
+
+  requiresReinspection(inspectionId: string): boolean {
+    const inspection = this.getInspection(inspectionId);
+    if (inspection.status !== "FINALIZED" || !this.latestFinalReport(inspectionId)?.finalizedAt) return false;
+    const grade = this.latestGrade(inspectionId)?.explanationJson as { gradeEvidenceFingerprint?: string } | undefined;
+    const draft = this.latestReportDraft(inspectionId)?.inputSummaryJson as { sourceFingerprint?: string } | undefined;
+    return !grade?.gradeEvidenceFingerprint || !draft?.sourceFingerprint;
   }
 
   patchInspection(idValue: string, patch: Partial<CreateInspectionInput> & {
@@ -850,9 +915,10 @@ export class MemoryStore {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
-  reconcileDuplicateSuggestions(actor: Actor): number {
+  reconcileDuplicateSuggestions(actor: Actor, eligibleInspectionIds?: ReadonlySet<string>): number {
     const groups = new Map<string, VisionSuggestion[]>();
     for (const suggestion of this.suggestions.values()) {
+      if (eligibleInspectionIds && !eligibleInspectionIds.has(suggestion.inspectionId)) continue;
       const key = suggestionSemanticKey(suggestion);
       groups.set(key, [...(groups.get(key) ?? []), suggestion]);
     }
@@ -1541,6 +1607,12 @@ export class MemoryStore {
       ? damage.map((item) => `- ${item.location}: ${item.severity} ${item.damageType.replaceAll("_", " ")}. ${item.notes}`)
       : ["- No confirmed damage items."];
     const body = [
+      ...(this.requiresReinspection(inspection.id) ? [
+        "HISTORICAL PUBLISHED REPORT — REINSPECTION REQUIRED",
+        "Preserved historical publication. Not certified under the current condition-report quality-control policy.",
+        "A fresh inspection and human review are required before a new buyer-visible release.",
+        ""
+      ] : []),
       `Condition Report: ${inspection.year} ${inspection.make} ${inspection.model} ${inspection.trim}`.trim(),
       `VIN: ${inspection.vin}`,
       `VIN verification: ${conditionQc.identity.vin.status.replaceAll("_", " ")}`,
@@ -1834,6 +1906,7 @@ export class MemoryStore {
     const photos = this.listPhotos(inspectionId);
     const photoIds = new Set(photos.map((photo) => photo.id));
     return {
+      requiresReinspection: this.requiresReinspection(inspectionId),
       inspection: this.getInspection(inspectionId),
       photos,
       photoAnalysisResults: [...this.analyses.values()]

@@ -10,6 +10,17 @@ function fail(message) {
   throw new Error(`[inspectiq-live-smoke] ${message}`);
 }
 
+function withoutUrlCredentials(message) {
+  return message.replace(/https?:\/\/[^\s"')<>]+/g, (value) => {
+    try {
+      const url = new URL(value);
+      return `${url.origin}${url.pathname}`;
+    } catch {
+      return "[redacted URL]";
+    }
+  });
+}
+
 async function bodyText(page) {
   return page.locator("body").innerText({ timeout: 15_000 });
 }
@@ -47,13 +58,19 @@ const page = await context.newPage();
 page.setDefaultTimeout(15_000);
 page.setDefaultNavigationTimeout(30_000);
 const consoleIssues = [];
+page.on("response", (response) => {
+  if (response.status() < 400) return;
+  // Keep signed preview query strings and other credentials out of failure logs.
+  const url = new URL(response.url());
+  consoleIssues.push(`http: ${response.status()} ${url.origin}${url.pathname}`);
+});
 page.on("console", (message) => {
   if (message.type() === "error" || message.type() === "warning") {
-    consoleIssues.push(`${message.type()}: ${message.text()}`);
+    consoleIssues.push(`${message.type()}: ${withoutUrlCredentials(message.text())}`);
   }
 });
 page.on("pageerror", (error) => {
-  consoleIssues.push(`pageerror: ${error.message}`);
+  consoleIssues.push(`pageerror: ${withoutUrlCredentials(error.message)}`);
 });
 
 try {

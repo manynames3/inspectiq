@@ -4,6 +4,19 @@ import { findSampleImage, sampleImages, samplePhotoSets } from "./sampleImages.j
 import { reconcileReferenceEvidence, seedStore } from "./seedData.js";
 import { MemoryStore } from "./store.js";
 
+function makeUnpublishedReferenceFixture(store: MemoryStore, inspectionId: string): void {
+  const inspection = store.getInspection(inspectionId);
+  inspection.status = "HUMAN_REVIEW_REQUIRED";
+  inspection.finalizedAt = null;
+  const report = store.latestFinalReport(inspectionId)!;
+  report.finalizedAt = null;
+  report.finalizedBy = null;
+  report.approvalStatus = "in_review";
+  report.approvedBy = null;
+  report.approvedAt = null;
+  for (const version of store.reportVersionsFor(report.id)) store.reportVersions.delete(version.id);
+}
+
 describe("reference evidence reconciliation", () => {
   it("keeps each vehicle reference set mapped to one image per required angle", () => {
     for (const set of samplePhotoSets) {
@@ -224,10 +237,11 @@ describe("reference evidence reconciliation", () => {
     expect([...store.auditEvents.values()].some((event) => event.eventType === "reference_evidence.mapped")).toBe(true);
   });
 
-  it("repairs the exact unsupported Ford scratch in an already-persisted reference record", () => {
+  it("repairs the exact unsupported Ford scratch in an unpublished reference record", () => {
     const store = new MemoryStore();
     seedStore(store);
     const ford = [...store.inspections.values()].find((inspection) => inspection.vin === "1FMCU9H6XNUB81389")!;
+    makeUnpublishedReferenceFixture(store, ford.id);
     const driverPhoto = [...store.photos.values()].find((photo) =>
       photo.inspectionId === ford.id && photo.declaredAngle === "driver_side"
     )!;
@@ -266,6 +280,7 @@ describe("reference evidence reconciliation", () => {
     seedStore(store);
     const reviewer = { id: "review-lead", name: "Review Lead", role: "reviewer" as const };
     const nissan = [...store.inspections.values()].find((inspection) => inspection.vin === "KNMAT2MV6KP514068")!;
+    makeUnpublishedReferenceFixture(store, nissan.id);
     const nissanRear = store.listPhotos(nissan.id).find((photo) => photo.originalFilename === "2019-nissan-rogue-rear.jpg")!;
     const honda = [...store.inspections.values()].find((inspection) => inspection.vin === "1HGCV1F49LA129627")!;
     const hondaRear = store.listPhotos(honda.id).find((photo) => photo.originalFilename === "2020-honda-accord-rear.jpg")!;

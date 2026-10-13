@@ -21,6 +21,21 @@ Deployed operations walkthrough:
 npm run ops:walkthrough
 ```
 
+Audited reinspection:
+
+1. Open the finalized inspection as an authorized Inspector, Reviewer, or Admin. Evaluation access is read-only; native reinspection requires an online authenticated session.
+2. Record a 10–1,000 character reason and create a separate inspection. `POST /api/inspections/:id/reinspections` requires `operationId` (UUID) and the exact `expectedReportVersion`.
+3. If the response is lost, retry the identical payload. A changed reason/version with the same operation ID conflicts; a definite stale-version response requires refreshing authoritative history.
+4. Verify the new draft's source inspection/report/version and audit reason. No evidence, grades, approvals, spending authority, or work orders carry forward. Capture fresh evidence and follow normal review/QC/finalization.
+5. Keep the original publication available as historical evidence with its current-policy limitation, including exports. Never modify the old report body or synthesize fingerprints to make it appear current.
+
+AWS code promotion:
+
+1. Run `make verify-full` with a disposable real `TEST_DATABASE_URL`; verify the legacy upgrade and concurrent startup tests. Run the no-fallback Bedrock gate with explicitly approved AWS test spending before promoting model/prompt changes.
+2. Verify a recoverable database snapshot and record before/after digests of published inspection/report/grade/version rows. Migration `0008_audited_reinspections.sql` is additive; startup serializes schema/ledger writes across API and worker cold starts.
+3. Dispatch `deploy-aws.yml` with `action=plan` at the exact release ref and review its artifact. An `apply` dispatch creates a fresh plan: the workflow validates that saved plan immediately before apply, allowing only code/computed-attribute updates to the three existing InspectIQ Lambdas. It rejects infrastructure/configuration changes and all creates/deletes/replacements. Those require separate review, not weakening the guard.
+4. After apply, verify ledger `0008`, unchanged historical digests, authenticated reinspection/history behavior, and repeated public/API/browser smoke. One warmed health request is not sufficient evidence of recovered concurrency.
+
 Postgres persistence smoke:
 
 1. Start Postgres and create an `inspectiq` database.

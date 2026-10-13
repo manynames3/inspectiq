@@ -10,10 +10,11 @@ import { colors } from "../theme";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import type { ReportVersion } from "../types";
 import { BrandWordmark } from "../components/BrandWordmark";
+import { ReinspectionPanel } from "../components/ReinspectionPanel";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ReportEditor">;
 
-export function ReportEditorScreen({ route }: Props) {
+export function ReportEditorScreen({ route, navigation }: Props) {
   const { session, canMutate } = useAuth();
   const { bundleById, request, refresh, online } = useWorkspace();
   const bundle = bundleById(route.params.inspectionId);
@@ -46,6 +47,7 @@ export function ReportEditorScreen({ route }: Props) {
   if (!session || !bundle) return <Screen><Notice tone="warn" title="Report unavailable" message="Refresh the inspection while online." /></Screen>;
   const unsavedText = Boolean(report && body !== report.reportBody);
   const unsavedComment = Boolean(report && comment !== (report.reviewerComment ?? ""));
+  const qcStatusUnknown = Boolean(report?.finalizedAt && bundle.requiresReinspection === undefined);
 
   const action = async (path: string, payload: Record<string, unknown>) => {
     setBusy(true);
@@ -68,6 +70,7 @@ export function ReportEditorScreen({ route }: Props) {
   return (
     <Screen>
       <PageHeading title="Condition report" subtitle={`${bundle.inspection.year} ${bundle.inspection.make} ${bundle.inspection.model} · ${bundle.inspection.vin}`} />
+      <ReinspectionPanel key={bundle.inspection.id} bundle={bundle} onOpenInspection={(inspectionId) => navigation.push("InspectionDetail", { inspectionId })} />
       {!online ? <Notice tone="offline" title="Connection required" message="Report edits, approval, and finalization are online-only." /> : null}
       {error ? <Notice tone="bad" title="Report not updated" message={error} /> : null}
       <Card>
@@ -84,13 +87,13 @@ export function ReportEditorScreen({ route }: Props) {
                 : "Reviewer-approved InspectIQ Reference Grade"}
             </Text>
           </View>
-          <StatusPill label={report ? report.approvalStatus.replaceAll("_", " ") : "Not started"} tone={report?.finalizedAt ? "good" : report ? "info" : "neutral"} />
+          <StatusPill label={bundle.requiresReinspection ? "Reinspection required" : qcStatusUnknown ? "QC unverified" : report ? report.approvalStatus.replaceAll("_", " ") : "Not started"} tone={bundle.requiresReinspection || qcStatusUnknown ? "warn" : report?.finalizedAt ? "good" : report ? "info" : "neutral"} />
         </View>
         {report ? <Text style={styles.version}>Version {report.version}{report.approvedBy ? ` · approved by ${report.approvedBy}` : ""}</Text> : null}
       </Card>
       {report ? <Card style={styles.document}>
         <BrandWordmark />
-        <Text style={styles.documentState}>{body !== report.reportBody ? "UNSAVED DRAFT · NOT REVIEWED" : report.finalizedAt ? `FINALIZED · VERSION ${report.version}` : report.approvalStatus === "approved" ? "APPROVED · AWAITING RELEASE" : "DRAFT · NOT APPROVED FOR BUYER RELEASE"}</Text>
+        <Text style={styles.documentState}>{body !== report.reportBody ? "UNSAVED DRAFT · NOT REVIEWED" : bundle.requiresReinspection ? `HISTORICAL RELEASE · VERSION ${report.version} · QC REINSPECTION REQUIRED` : qcStatusUnknown ? `PUBLISHED HISTORY · VERSION ${report.version} · REFRESH QC STATUS` : report.finalizedAt ? `FINALIZED · VERSION ${report.version}` : report.approvalStatus === "approved" ? "APPROVED · AWAITING RELEASE" : "DRAFT · NOT APPROVED FOR BUYER RELEASE"}</Text>
         <Text style={styles.documentTitle}>{bundle.inspection.year} {bundle.inspection.make} {bundle.inspection.model}</Text>
         <Text style={styles.documentIdentity}>VIN: {bundle.conditionQc?.identity.vin.status.replaceAll("_", " ") ?? "not verified"} · Mileage: {bundle.conditionQc?.identity.odometer.status.replaceAll("_", " ") ?? "not verified"}</Text>
         <Text style={styles.documentBody}>{body}</Text>

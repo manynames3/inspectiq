@@ -1,5 +1,5 @@
 import { findSampleImageByObjectKey, sampleBundles, sampleImages, type SampleImage } from "./sampleImages.js";
-import type { Actor, DamageItem, VehiclePhoto } from "./domain.js";
+import type { Actor, DamageItem, Inspection, VehiclePhoto } from "./domain.js";
 import { MemoryStore } from "./store.js";
 import type { AiReportOutput, PhotoAngle, VisionOutput } from "@inspectiq/shared";
 import { visualConditionSections } from "./reportProvider.js";
@@ -126,9 +126,16 @@ function findReferenceSampleForPhoto(photo: VehiclePhoto): SampleImage | undefin
   return undefined;
 }
 
+function canReconcileReferenceInspection(store: MemoryStore, inspectionId: string): boolean {
+  const inspection = store.getInspection(inspectionId);
+  return inspection.status !== "FINALIZED" && !inspection.finalizedAt &&
+    !store.latestFinalReport(inspectionId)?.finalizedAt && !inspection.reinspectionSourceInspectionId;
+}
+
 export function reconcileReferenceEvidence(store: MemoryStore): boolean {
   let changed = false;
   for (const photo of store.photos.values()) {
+    if (!canReconcileReferenceInspection(store, photo.inspectionId)) continue;
     const sample = findReferenceSampleForPhoto(photo);
     if (!sample) continue;
 
@@ -242,7 +249,10 @@ export function reconcileReferenceEvidence(store: MemoryStore): boolean {
   changed = removeUnsupportedReferenceQualityClaims(store) || changed;
   changed = removeUnsupportedReferenceClaims(store) || changed;
   changed = removeReferenceMetadataOcrClaims(store) || changed;
-  changed = store.reconcileDuplicateSuggestions(systemActor) > 0 || changed;
+  const eligibleInspectionIds = new Set([...store.inspections.values()]
+    .filter((inspection) => canReconcileReferenceInspection(store, inspection.id))
+    .map((inspection) => inspection.id));
+  changed = store.reconcileDuplicateSuggestions(systemActor, eligibleInspectionIds) > 0 || changed;
   return changed;
 }
 
@@ -253,6 +263,7 @@ function analyzeImportedPhoto(store: MemoryStore, input: {
   originalFilename: string;
   angle: PhotoAngle;
 }, actor: Actor): void {
+  if (!canReconcileReferenceInspection(store, input.inspectionId)) return;
   const photo = store.getPhoto(input.photoId);
   const sample = sampleImages.find((item) => item.filename === input.originalFilename);
   store.saveReferenceMapping(photo, {
@@ -380,6 +391,7 @@ const unsupportedReferenceClaims = [
 ] as const;
 
 function repairReferenceReport(store: MemoryStore, inspectionId: string): void {
+  if (!canReconcileReferenceInspection(store, inspectionId)) return;
   const inspection = store.getInspection(inspectionId);
   const grade = store.latestGrade(inspection.id);
   if (grade && typeof grade.explanationJson === "object" && grade.explanationJson !== null) {
@@ -434,7 +446,7 @@ function removeUnsupportedReferenceClaims(store: MemoryStore): boolean {
   let changed = false;
   for (const claim of unsupportedReferenceClaims) {
     const inspection = [...store.inspections.values()].find((item) => item.vin === claim.vin);
-    if (!inspection) continue;
+    if (!inspection || !canReconcileReferenceInspection(store, inspection.id)) continue;
     const matchingPhotoIds = new Set(
       store.listPhotos(inspection.id)
         .filter((photo) => photo.originalFilename === claim.filename)
@@ -487,6 +499,7 @@ function removeUnsupportedReferenceClaims(store: MemoryStore): boolean {
 function removeUnsupportedReferenceQualityClaims(store: MemoryStore): boolean {
   let changed = false;
   for (const photo of store.photos.values()) {
+    if (!canReconcileReferenceInspection(store, photo.inspectionId)) continue;
     if (photo.captureSource !== "reference") continue;
     const analyses = [...store.analyses.values()].filter((analysis) => analysis.photoId === photo.id);
     const hasModelAnalysis = analyses.some((analysis) =>
@@ -522,6 +535,7 @@ function removeUnsupportedReferenceQualityClaims(store: MemoryStore): boolean {
 function removeReferenceMetadataOcrClaims(store: MemoryStore): boolean {
   let changed = false;
   for (const photo of store.photos.values()) {
+    if (!canReconcileReferenceInspection(store, photo.inspectionId)) continue;
     if (photo.captureSource !== "reference") continue;
     const analyses = [...store.analyses.values()].filter((analysis) => analysis.photoId === photo.id);
     const hasModelAnalysis = analyses.some((analysis) => analysis.provider !== "referenceManifestProvider" && analysis.provider !== "referenceImportProvider");
@@ -551,6 +565,7 @@ function removeReferenceMetadataOcrClaims(store: MemoryStore): boolean {
 }
 
 function acceptAllOpenSuggestions(store: MemoryStore, inspectionId: string, actor: Actor): void {
+  if (!canReconcileReferenceInspection(store, inspectionId)) return;
   for (const suggestion of store.listSuggestions(inspectionId)) {
     if (suggestion.status === "pending" || suggestion.status === "edited") {
       store.acceptSuggestion(suggestion.id, actor);
@@ -559,6 +574,7 @@ function acceptAllOpenSuggestions(store: MemoryStore, inspectionId: string, acto
 }
 
 function createReferenceReport(store: MemoryStore, input: ReferenceInspectionInput, inspectionId: string, actor: Actor): void {
+  if (!canReconcileReferenceInspection(store, inspectionId)) return;
   if (!input.reportState) return;
   if (input.reportState === "finalized") {
     acceptAllOpenSuggestions(store, inspectionId, actor);
@@ -821,7 +837,7 @@ export function seedStore(store: MemoryStore): void {
     createReferenceReport(store, input, inspection.id, reviewerActor);
   }
 
-  reconcileReconOperations(store);
+  reconcileReconOperations(store, { freshSeed: true });
   store.addAudit([...store.inspections.values()][0].id, systemActor, "inspection.queue.loaded", {
     inspections: store.inspections.size,
     note: "Initial inspection queue loaded."
@@ -835,9 +851,8 @@ function ensureSeedUser(
   return store.users.get(input.id ?? "") ?? store.addUser(input);
 }
 
-function reconcileMissingReconIntakes(store: MemoryStore): boolean {
-  const missing = [...store.inspections.values()]
-    .filter((inspection) => !store.recon.intakeForInspection(inspection.id));
+function reconcileMissingReconIntakes(store: MemoryStore, inspections: Inspection[]): boolean {
+  const missing = inspections.filter((inspection) => !store.recon.intakeForInspection(inspection.id));
   if (missing.length === 0) return false;
 
   const account = [...store.consignorAccounts.values()]
@@ -884,9 +899,13 @@ function reconcileMissingReconIntakes(store: MemoryStore): boolean {
   return true;
 }
 
-export function reconcileReconOperations(store: MemoryStore): boolean {
-  if (store.inspections.size === 0) return false;
-  if (store.vehicleIntakes.size > 0) return reconcileMissingReconIntakes(store);
+export function reconcileReconOperations(store: MemoryStore, options: { freshSeed?: true } = {}): boolean {
+  // Only fresh demo construction may add recon after creating its published fixtures.
+  const inspections = [...store.inspections.values()].filter((inspection) =>
+    !inspection.reinspectionSourceInspectionId && (options.freshSeed || canReconcileReferenceInspection(store, inspection.id))
+  );
+  if (inspections.length === 0) return false;
+  if (store.vehicleIntakes.size > 0) return reconcileMissingReconIntakes(store, inspections);
 
   const inspector = ensureSeedUser(store, { id: "inspector-john-smith", name: "John Smith", role: "inspector" });
   const maria = ensureSeedUser(store, { id: "inspector-maria-lee", name: "Maria Lee", role: "inspector" });
@@ -959,7 +978,6 @@ export function reconcileReconOperations(store: MemoryStore): boolean {
   }, adminActor);
 
   const seedClock = Date.parse(process.env.INSPECTIQ_FIXED_NOW ?? new Date().toISOString());
-  const inspections = [...store.inspections.values()];
   const saleOffsetsHours = [48, 18, 30, 72, 5, 12];
   inspections.forEach((inspection, index) => {
     const fleetVehicle = inspection.vin === "4S4BTAFC8P3204430";
